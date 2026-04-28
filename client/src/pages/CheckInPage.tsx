@@ -1,0 +1,298 @@
+import { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
+import { useApi } from '../hooks/useApi';
+import { format, parseISO } from 'date-fns';
+import { zhCN } from 'date-fns/locale';
+
+interface ScheduleInfo {
+  id: string;
+  script_name: string;
+  room_name: string;
+  start_time: string;
+  end_time: string;
+  player_roles?: string[];
+  player_count?: number;
+  taken_roles?: string[];
+}
+
+export default function CheckInPage() {
+  const { scheduleId } = useParams<{ scheduleId: string }>();
+  const { get, post, loading } = useApi();
+  
+  const [schedule, setSchedule] = useState<ScheduleInfo | null>(null);
+  const [guestName, setGuestName] = useState('');
+  const [guestPhone, setGuestPhone] = useState('');
+  const [selectedRole, setSelectedRole] = useState('');
+  const [checkedIn, setCheckedIn] = useState(false);
+  const [error, setError] = useState('');
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  // 尝试从 localStorage 获取已保存的客人信息
+  useEffect(() => {
+    const savedName = localStorage.getItem('guest_name');
+    const savedPhone = localStorage.getItem('guest_phone');
+    if (savedName) setGuestName(savedName);
+    if (savedPhone) setGuestPhone(savedPhone);
+  }, []);
+
+  // 加载排期信息
+  useEffect(() => {
+    if (scheduleId) {
+      loadSchedule();
+    }
+  }, [scheduleId]);
+
+  const loadSchedule = async () => {
+    const res = await get<ScheduleInfo>(`/schedules/${scheduleId}/public`);
+    if (res.success && res.data) {
+      setSchedule(res.data);
+    } else {
+      setError('无效的二维码或排期已取消');
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+
+    if (!guestName.trim()) {
+      setError('请输入您的称呼');
+      return;
+    }
+
+    if (!selectedRole) {
+      setError('请选择您想扮演的角色');
+      return;
+    }
+
+    setShowConfirm(true);
+  };
+
+  const handleConfirmCheckIn = async () => {
+    if (!scheduleId) return;
+
+    // 保存客人信息到 localStorage
+    localStorage.setItem('guest_name', guestName);
+    localStorage.setItem('guest_phone', guestPhone);
+
+    const res = await post(`/schedules/${scheduleId}/checkin`, {
+      name: guestName,
+      phone: guestPhone || null,
+      role: selectedRole,
+      avatar: null
+    });
+
+    if (res.success) {
+      setCheckedIn(true);
+      setShowConfirm(false);
+    } else {
+      setError(res.error || '上车失败，请重试');
+      setShowConfirm(false);
+    }
+  };
+
+  if (error && !schedule) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-lg p-8 text-center max-w-sm w-full">
+          <div className="text-5xl mb-4">⚠️</div>
+          <h2 className="text-xl font-bold text-gray-800 mb-2">出错了</h2>
+          <p className="text-gray-600">{error}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (checkedIn) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-lg p-8 text-center max-w-sm w-full">
+          <div className="text-5xl mb-4">🎉</div>
+          <h2 className="text-xl font-bold text-green-600 mb-2">上车成功！</h2>
+          <p className="text-gray-600 mb-4">
+            欢迎 {guestName}，客服已收到您的上车信息
+          </p>
+          <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-600">
+            <p className="font-medium">{schedule?.script_name}</p>
+            <p>{schedule && format(parseISO(schedule.start_time), 'MM月dd日 HH:mm', { locale: zhCN })}</p>
+            <p>{schedule?.room_name}</p>
+          </div>
+          <p className="text-xs text-gray-400 mt-4">
+            您可以关闭此页面
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-lg p-6 max-w-sm w-full">
+        <div className="text-center mb-6">
+          <div className="text-4xl mb-2">🎭</div>
+          <h1 className="text-xl font-bold text-gray-800">剧本杀上车</h1>
+        </div>
+
+        {schedule && (
+          <div className="bg-blue-50 rounded-lg p-4 mb-6">
+            <h2 className="font-medium text-blue-900 mb-1">{schedule.script_name}</h2>
+            <p className="text-sm text-blue-700">
+              {format(parseISO(schedule.start_time), 'MM月dd日 HH:mm', { locale: zhCN })}
+            </p>
+            <p className="text-sm text-blue-700">{schedule.room_name}</p>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              您的称呼 <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={guestName}
+              onChange={(e) => setGuestName(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="怎么称呼您"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              手机号（选填）
+            </label>
+            <input
+              type="tel"
+              value={guestPhone}
+              onChange={(e) => setGuestPhone(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="方便客服联系您"
+            />
+          </div>
+
+          {(() => {
+            const availableRoles = schedule?.player_roles?.filter(
+              role => !schedule.taken_roles?.includes(role)
+            ) || [];
+            const isFull = availableRoles.length === 0 && (schedule?.player_roles?.length || 0) > 0;
+            
+            if (isFull) {
+              return (
+                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <p className="text-yellow-800 text-sm text-center">
+                    🚫 该场次所有角色已被选完
+                  </p>
+                </div>
+              );
+            }
+            
+            if (availableRoles.length > 0) {
+              return (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    选择角色 <span className="text-red-500">*</span>
+                    {(schedule?.taken_roles?.length ?? 0) > 0 && (
+                      <span className="text-xs text-gray-400 ml-2">
+                        已选 {schedule?.taken_roles?.length ?? 0}/{schedule?.player_roles?.length ?? 0} 人
+                      </span>
+                    )}
+                  </label>
+                  <select
+                    value={selectedRole}
+                    onChange={(e) => setSelectedRole(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    required
+                  >
+                    <option value="">请选择您想扮演的角色</option>
+                    {availableRoles.map((role) => (
+                      <option key={role} value={role}>
+                        {role}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              );
+            }
+            
+            return null;
+          })()}
+
+          {error && (
+            <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 disabled:opacity-50 transition-colors"
+          >
+            下一步
+          </button>
+        </form>
+
+          <p className="text-xs text-gray-400 mt-4">
+          填写信息后确认即可上车
+        </p>
+      </div>
+
+      {/* 确认弹窗 */}
+      {showConfirm && schedule && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-lg p-6 max-w-sm w-full">
+            <div className="text-center mb-4">
+              <div className="text-4xl mb-2">📋</div>
+              <h3 className="text-lg font-bold text-gray-800">请确认您的信息</h3>
+            </div>
+
+            <div className="bg-gray-50 rounded-lg p-4 mb-6 space-y-2">
+              <div className="flex justify-between">
+                <span className="text-gray-500">剧本</span>
+                <span className="font-medium">{schedule.script_name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">时间</span>
+                <span className="font-medium">
+                  {format(parseISO(schedule.start_time), 'MM月dd日 HH:mm', { locale: zhCN })}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">房间</span>
+                <span className="font-medium">{schedule.room_name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">称呼</span>
+                <span className="font-medium">{guestName}</span>
+              </div>
+              {selectedRole && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">角色</span>
+                  <span className="font-medium text-blue-600">{selectedRole}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <button
+                onClick={handleConfirmCheckIn}
+                disabled={loading}
+                className="w-full py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 disabled:opacity-50"
+              >
+                {loading ? '确认中...' : '确认上车'}
+              </button>
+              <button
+                onClick={() => setShowConfirm(false)}
+                disabled={loading}
+                className="w-full py-3 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300 disabled:opacity-50"
+              >
+                返回修改
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

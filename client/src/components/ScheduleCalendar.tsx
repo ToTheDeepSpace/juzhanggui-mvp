@@ -1,0 +1,352 @@
+import { useState, useEffect, useMemo } from 'react';
+import { useApi } from '../hooks/useApi';
+import type { Room, Actor, Script } from '../types';
+import type { ScheduleWithDetails, ScheduleFormData, SelectedActor } from '../types/schedule';
+import { format, addDays, isSameDay, parseISO } from 'date-fns';
+import { zhCN } from 'date-fns/locale';
+
+// 子组件
+import PendingScheduleCard from './PendingScheduleCard';
+import ScheduleCalendarModal from './ScheduleCalendarModal';
+import QRCodeModal from './QRCodeModal';
+import ConfirmScheduleModal from './ConfirmScheduleModal';
+
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'scheduled': return 'bg-blue-500';
+    case 'ongoing': return 'bg-green-500';
+    case 'completed': return 'bg-gray-500';
+    case 'cancelled': return 'bg-red-500';
+    default: return 'bg-blue-500';
+  }
+};
+
+export default function ScheduleCalendar() {
+  const { get, post, put, del, loading } = useApi();
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [actors, setActors] = useState<Actor[]>([]);
+  const [scripts, setScripts] = useState<Script[]>([]);
+  const [schedules, setSchedules] = useState<ScheduleWithDetails[]>([]);
+  const [currentDate, setCurrentDate] = useState(new Date());
+
+  // 弹窗状态
+  const [showModal, setShowModal] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<ScheduleWithDetails | null>(null);
+  const [isPendingMode, setIsPendingMode] = useState(false);
+
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [qrSchedule, setQrSchedule] = useState<ScheduleWithDetails | null>(null);
+
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [confirmingSchedule, setConfirmingSchedule] = useState<ScheduleWithDetails | null>(null);
+  const [confirmRoomId, setConfirmRoomId] = useState('');
+
+  // 表单状态
+  const [formData, setFormData] = useState<ScheduleFormData>({
+    roomId: '', scriptId: '', date: format(new Date(), 'yyyy-MM-dd'),
+    startTime: '14:00', customerName: '', customerPhone: '',
+    playerCount: '', note: '',
+  });
+  const [selectedActors, setSelectedActors] = useState<SelectedActor[]>([]);
+
+  // 时间轴时段（9:00 - 23:00，每半小时）
+  const timeSlots = useMemo(() => {
+    const slots = [];
+    for (let hour = 9; hour <= 23; hour++) {
+      for (let minute = 0; minute < 60; minute += 30) {
+        if (hour === 23 && minute === 30) break; // 只到23:00
+        slots.push(`${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`);
+      }
+    }
+    return slots;
+  }, []);
+
+  // 解析时间段字符串为日期时间
+  const parseTimeSlot = (slot: string, baseDate: Date): Date => {
+    const [hours, minutes] = slot.split(':').map(Number);
+    const date = new Date(baseDate);
+    date.setHours(hours, minutes, 0, 0);
+    return date;
+  };
+
+  // 获取剧本在指定时间段的排期
+  const getSchedulesForScriptTime = (scriptId: string, startTime: Date, endTime: Date) => {
+    return schedules.filter(s => {
+      if (s.script_id !== scriptId || s.status === 'cancelled') return false;
+      const sStart = parseISO(s.start_time);
+      const sEnd = parseISO(s.end_time);
+      // 只显示选中日期的排期
+      if (!isSameDay(sStart, startTime)) return false;
+      // 排期与时间段有重叠
+      return sStart < endTime && sEnd > startTime;
+    });
+  };
+
+  // 打开为剧本创建排期的弹窗
+  const openCreateScheduleForScript = (scriptId: string, startTime: Date) => {
+    const script = scripts.find(s => s.id === scriptId);
+    if (!script) return;
+    resetForm();
+    setFormData({
+      roomId: '', scriptId, date: format(startTime, 'yyyy-MM-dd'),
+      startTime: format(startTime, 'HH:mm'), customerName: '', customerPhone: '',
+      playerCount: '', note: '',
+    });
+    setSelectedActors([]);
+    setIsPendingMode(false);
+    setEditingSchedule(null);
+    setShowModal(true);
+  };
+
+  // 加载数据
+  useEffect(() => { loadData(); }, []);
+
+  const loadData = async () => {
+    const [roomsRes, actorsRes, scriptsRes, schedulesRes] = await Promise.all([
+      get<Room[]>('/rooms'), get<Actor[]>('/actors'),
+      get<Script[]>('/scripts'), get<ScheduleWithDetails[]>('/schedules'),
+    ]);
+    if (roomsRes.success) setRooms(roomsRes.data || []);
+    if (actorsRes.success) setActors(actorsRes.data || []);
+    if (scriptsRes.success) setScripts(scriptsRes.data || []);
+    if (schedulesRes.success) setSchedules(schedulesRes.data || []);
+  };
+
+  // 重置表单
+  const resetForm = () => {
+    setFormData({
+      roomId: '', scriptId: '', date: format(new Date(), 'yyyy-MM-dd'),
+      startTime: '14:00', customerName: '', customerPhone: '',
+      playerCount: '', note: '',
+    });
+    setSelectedActors([]);
+  };
+  // 分离待排期 / 已确定
+  const { pendingSchedules, confirmedSchedules: _confirmedSchedules } = useMemo(() => {
+    const pending: ScheduleWithDetails[] = [];
+    const confirmed: ScheduleWithDetails[] = [];
+    schedules.forEach(s => {
+      if (s.status === 'cancelled') return;
+      if (!s.room_id) pending.push(s); else confirmed.push(s);
+    });
+    return { pendingSchedules: pending, confirmedSchedules: confirmed };
+  }, [schedules]);
+
+
+
+  // 踢出客人
+  const handleKickGuest = async (scheduleId: string, guestName: string, role: string) => {
+    if (!confirm(`确定要踢出 "${guestName}"（${role}）吗？`)) return;
+    const res = await post(`/schedules/${scheduleId}/checkins/kick`, { guestName, role });
+    if (res.success) { alert('已踢出'); loadData(); }
+    else alert('踢出失败：' + res.error);
+  };
+
+  // 确认排期
+  const handleConfirmSchedule = async () => {
+    if (!confirmingSchedule || !confirmRoomId) { alert('请选择房间'); return; }
+    const res = await put(`/schedules/${confirmingSchedule.id}/confirm`, { roomId: confirmRoomId });
+    if (res.success) {
+      setShowConfirmModal(false); setConfirmingSchedule(null); setConfirmRoomId(''); loadData();
+    } else alert('确认失败：' + (res.error || '未知错误'));
+  };
+
+  // 打开弹窗
+  const openCreatePendingModal = () => {
+    setEditingSchedule(null); setIsPendingMode(true);
+    setFormData({ roomId: '', scriptId: '', date: format(new Date(), 'yyyy-MM-dd'),
+      startTime: '14:00', customerName: '', customerPhone: '', playerCount: '', note: '' });
+    setSelectedActors([]); setShowModal(true);
+  };
+
+
+
+  const openEditModal = (schedule: ScheduleWithDetails) => {
+    setEditingSchedule(schedule); setIsPendingMode(!schedule.room_id);
+    const startDateTime = parseISO(schedule.start_time);
+    setFormData({
+      roomId: schedule.room_id || '', scriptId: schedule.script_id,
+      date: format(startDateTime, 'yyyy-MM-dd'), startTime: format(startDateTime, 'HH:mm'),
+      customerName: schedule.customer_name || '', customerPhone: schedule.customer_phone || '',
+      playerCount: schedule.player_count ? String(schedule.player_count) : '', note: schedule.note || '',
+    });
+    setSelectedActors((schedule.actors || []).map(a => ({
+      actorId: a.actor_id, roleName: a.role_name, startOffset: 0, duration: 240,
+    })));
+    setShowModal(true);
+  };
+
+  const openConfirmModal = (schedule: ScheduleWithDetails) => {
+    setConfirmingSchedule(schedule); setConfirmRoomId(''); setShowConfirmModal(true);
+  };
+
+  const openQRModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
+    e.stopPropagation(); setQrSchedule(schedule); setShowQRModal(true);
+  };
+
+  // 提交表单
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const startDateTime = new Date(`${formData.date}T${formData.startTime}`);
+    const script = scripts.find(s => s.id === formData.scriptId);
+    const duration = script?.duration || 240;
+    const endDateTime = new Date(startDateTime.getTime() + duration * 60000);
+    const data = {
+      roomId: formData.roomId || undefined, scriptId: formData.scriptId,
+      startTime: startDateTime.toISOString(), endTime: endDateTime.toISOString(),
+      status: formData.roomId ? 'scheduled' : 'pending',
+      customerName: formData.customerName || undefined,
+      customerPhone: formData.customerPhone || undefined,
+      playerCount: formData.playerCount ? parseInt(formData.playerCount) : undefined,
+      note: formData.note || undefined,
+      actors: selectedActors.map(sa => {
+        const actorStart = new Date(startDateTime.getTime() + sa.startOffset * 60000);
+        const actorEnd = new Date(actorStart.getTime() + sa.duration * 60000);
+        return { actorId: sa.actorId, roleName: sa.roleName, startTime: actorStart.toISOString(), endTime: actorEnd.toISOString() };
+      }),
+    };
+    const result = editingSchedule
+      ? await put(`/schedules/${editingSchedule.id}`, data)
+      : await post('/schedules', data);
+    if (result.success) { setShowModal(false); loadData(); }
+    else alert('保存失败: ' + (result.error || '未知错误'));
+  };
+
+  const handleDelete = async () => {
+    if (!editingSchedule || !confirm('确定要删除这个排期吗？')) return;
+    const result = await del(`/schedules/${editingSchedule.id}`);
+    if (result.success) { setShowModal(false); loadData(); }
+    else alert('删除失败: ' + (result.error || '未知错误'));
+  };
+
+  // ===== 布局 =====
+  return (
+    <div className="flex h-[calc(100vh-200px)] gap-4">
+      {/* 左边：待排期列表 */}
+      <div className="w-96 bg-white rounded-lg shadow p-4 flex flex-col">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-bold text-gray-800">待排期</h3>
+          <button onClick={openCreatePendingModal}
+            className="px-3 py-1 bg-orange-500 text-white text-sm rounded hover:bg-orange-600">
+            + 新建
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto space-y-3">
+          {pendingSchedules.length === 0
+            ? <p className="text-gray-400 text-center py-8">暂无待排期</p>
+            : pendingSchedules.map(s => (
+              <PendingScheduleCard
+                key={s.id}
+                schedule={s}
+                script={scripts.find(sc => sc.id === s.script_id)}
+                onEdit={openEditModal}
+                onConfirm={openConfirmModal}
+              />
+            ))
+          }
+        </div>
+      </div>
+
+      {/* 右边：剧本时间轴视图 */}
+      <div className="flex-1 bg-white rounded-lg shadow p-4 overflow-hidden flex flex-col">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-bold text-gray-800">剧本时间轴（新版）</h3>
+          <div className="flex items-center gap-4">
+            <button onClick={() => setCurrentDate(addDays(currentDate, -1))}
+              className="px-3 py-1 text-gray-600 hover:bg-gray-100 rounded">← 前一天</button>
+            <span className="text-gray-700">
+              {format(currentDate, 'yyyy年MM月dd日')} ({format(currentDate, 'EEE', { locale: zhCN })})
+            </span>
+            <button onClick={() => setCurrentDate(addDays(currentDate, 1))}
+              className="px-3 py-1 text-gray-600 hover:bg-gray-100 rounded">后一天 →</button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-auto">
+          <div className="min-w-[1200px]">
+            {/* 时间轴表头 */}
+            <div className="grid" style={{ gridTemplateColumns: `150px repeat(${timeSlots.length}, 80px)` }}>
+              <div className="p-2 border-b border-r border-gray-200 bg-gray-50 font-medium text-sm">剧本</div>
+              {timeSlots.map((slot, index) => (
+                <div key={index}
+                  className="p-1 border-b border-r border-gray-200 bg-gray-50 text-center text-xs">
+                  {slot}
+                </div>
+              ))}
+            </div>
+
+            {/* 剧本行 */}
+            {scripts.map(script => (
+              <div key={script.id} className="grid" style={{ gridTemplateColumns: `150px repeat(${timeSlots.length}, 80px)` }}>
+                <div className="p-2 border-b border-r border-gray-200 bg-gray-50 font-medium text-sm flex items-center">
+                  {script.name}
+                </div>
+                {timeSlots.map((slot, slotIndex) => {
+                  const slotTime = parseTimeSlot(slot, currentDate);
+                  const slotEndTime = new Date(slotTime.getTime() + 30 * 60000);
+                  const scriptSchedules = getSchedulesForScriptTime(script.id, slotTime, slotEndTime);
+                  return (
+                    <div key={slotIndex}
+                      className="p-1 border-b border-r border-gray-200 min-h-[60px] hover:bg-gray-50 cursor-pointer flex flex-col gap-1"
+                      onClick={() => openCreateScheduleForScript(script.id, slotTime)}>
+                      {scriptSchedules.map(schedule => {
+                        const isPending = !schedule.room_id;
+                        const roomName = schedule.room_name || '待排期';
+                        const bgColor = isPending ? 'bg-gray-400' : getStatusColor(schedule.status);
+                        return (
+                          <div key={schedule.id}
+                            className={`p-1 rounded text-white text-xs cursor-pointer ${bgColor} ${isPending ? 'border-2 border-dashed border-gray-500' : ''}`}
+                            onClick={(e) => { e.stopPropagation(); openEditModal(schedule); }}>
+                            <div className="font-medium truncate">{roomName}</div>
+                            <div className="opacity-90">{format(parseISO(schedule.start_time), 'HH:mm')}</div>
+                            {isPending && (
+                              <div className="text-xs opacity-75">点击确认</div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* 弹窗 */}
+      <ScheduleCalendarModal
+        visible={showModal}
+        editingSchedule={editingSchedule}
+        isPendingMode={isPendingMode}
+        scripts={scripts} rooms={rooms} actors={actors}
+        formData={formData} selectedActors={selectedActors}
+        loading={loading}
+        onClose={() => setShowModal(false)}
+        onSubmit={handleSubmit}
+        onDelete={handleDelete}
+        onFormDataChange={setFormData}
+        onSelectedActorsChange={setSelectedActors}
+        onKickGuest={(name, role) => editingSchedule && handleKickGuest(editingSchedule.id, name, role)}
+        onOpenQRModal={(e) => editingSchedule && openQRModal(editingSchedule, e)}
+      />
+
+      <QRCodeModal
+        schedule={qrSchedule}
+        visible={showQRModal}
+        onClose={() => setShowQRModal(false)}
+        onKickGuest={(name, role) => qrSchedule && handleKickGuest(qrSchedule.id, name, role)}
+      />
+
+      <ConfirmScheduleModal
+        schedule={confirmingSchedule}
+        roomId={confirmRoomId}
+        rooms={rooms}
+        visible={showConfirmModal}
+        onClose={() => setShowConfirmModal(false)}
+        onConfirm={handleConfirmSchedule}
+        onRoomChange={setConfirmRoomId}
+      />
+    </div>
+  );
+}

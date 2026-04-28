@@ -1,0 +1,92 @@
+import express from 'express';
+import cors from 'cors';
+import { initDb, getDb, ScheduleDB } from './db';
+
+// 路由模块
+import roomsRouter from './routes/rooms';
+import actorsRouter from './routes/actors';
+import scriptsRouter from './routes/scripts';
+import schedulesRouter from './routes/schedules';
+import checkinsRouter from './routes/checkins';
+import batchRouter from './routes/batch';
+import customersRouter from './routes/customers';
+import preferencesRouter from './routes/preferences';
+import conflictsRouter from './routes/conflicts';
+import remindersRouter from './routes/reminders';
+import evaluationsRouter from './routes/evaluations';
+import schedulesAdminRouter from './routes/schedules_admin';
+
+// 全局异常捕获
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[unhandledRejection]', reason);
+});
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// 初始化数据库
+await initDb();
+const db = getDb();
+
+// 注册路由
+app.use('/', roomsRouter);
+app.use('/', actorsRouter);
+app.use('/', scriptsRouter);
+app.use('/', schedulesRouter);
+app.use('/', checkinsRouter);
+app.use('/', batchRouter);
+app.use('/', customersRouter);
+app.use('/', preferencesRouter);
+app.use('/', conflictsRouter);
+app.use('/', remindersRouter);
+app.use('/', evaluationsRouter);
+app.use('/', schedulesAdminRouter);
+
+// ===== 健康检查 =====
+app.get('/api/health', (req, res) => {
+  res.json({ success: true, message: '服务正常运行' });
+});
+
+// ===== 清理过期 pending 排期 =====
+app.post('/api/schedules/cleanup', async (req, res) => {
+  try {
+    const count = await ScheduleDB.cleanupExpiredPending();
+    res.json({ success: true, data: { expired: count } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// 启动时自动清理
+setTimeout(async () => {
+  try {
+    const count = await ScheduleDB.cleanupExpiredPending();
+    if (count > 0) console.log(`[cleanup] 已过期 ${count} 条 pending 排期`);
+  } catch { /* 静默失败 */ }
+}, 2000);
+
+// 定时检查排期状态（scheduled → ongoing）
+setInterval(async () => {
+  try {
+    const now = new Date().toISOString();
+    const schedules = await ScheduleDB.getStartedSchedules(now);
+    if (schedules.length > 0) {
+      console.log(`[schedule-start] 发现 ${schedules.length} 个排期已开始，自动更新为 ongoing`);
+    }
+    for (const schedule of schedules) {
+      await ScheduleDB.update(schedule.id, { status: 'ongoing' });
+      console.log(`[schedule-start] 排期 ${schedule.id} 状态: ongoing`);
+    }
+  } catch (error) {
+    console.error('定时检查排期出错:', error);
+  }
+}, 60000);
+
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`服务器运行在 http://localhost:${PORT}`);
+});

@@ -1,0 +1,1058 @@
+import sqlite3 from 'sqlite3';
+import { open, Database } from 'sqlite';
+import { v4 as uuidv4 } from 'uuid';
+
+let db: Database<sqlite3.Database, sqlite3.Statement>;
+
+export async function initDb() {
+  // 确保数据目录存在（在项目根目录的data文件夹中）
+  const fs = await import('fs');
+  const path = await import('path');
+  const { fileURLToPath } = await import('url');
+  
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  const dbDir = path.join(__dirname, '..', 'data');
+  
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+  
+  db = await open({
+    filename: path.join(dbDir, 'scheduler.db'),
+    driver: sqlite3.Database,
+  });
+
+  await db.exec(`
+    -- 房间表
+    CREATE TABLE IF NOT EXISTS rooms (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      capacity INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- 卡司表
+    CREATE TABLE IF NOT EXISTS actors (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      phone TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- 剧本表
+    CREATE TABLE IF NOT EXISTS scripts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      duration INTEGER NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- 剧本玩家角色表
+    CREATE TABLE IF NOT EXISTS script_player_roles (
+      id TEXT PRIMARY KEY,
+      script_id TEXT NOT NULL,
+      role_name TEXT NOT NULL,
+      FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
+    );
+
+    -- 剧本卡司角色表
+    CREATE TABLE IF NOT EXISTS script_actor_roles (
+      id TEXT PRIMARY KEY,
+      script_id TEXT NOT NULL,
+      role_name TEXT NOT NULL,
+      FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
+    );
+
+    -- 卡司技能表
+    CREATE TABLE IF NOT EXISTS actor_skills (
+      id TEXT PRIMARY KEY,
+      actor_id TEXT NOT NULL,
+      script_id TEXT NOT NULL,
+      role_name TEXT NOT NULL,
+      role_type TEXT DEFAULT 'actor',
+      proficiency INTEGER DEFAULT 1,
+      FOREIGN KEY (actor_id) REFERENCES actors(id) ON DELETE CASCADE,
+      FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE,
+      UNIQUE(actor_id, script_id, role_name)
+    );
+
+    -- 剧本角色配置表
+    CREATE TABLE IF NOT EXISTS script_roles (
+      id TEXT PRIMARY KEY,
+      script_id TEXT NOT NULL,
+      role_name TEXT NOT NULL,
+      required_duration INTEGER,
+      start_offset INTEGER DEFAULT 0,
+      FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
+    );
+
+    -- 排期表
+    CREATE TABLE IF NOT EXISTS schedules (
+      id TEXT PRIMARY KEY,
+      room_id TEXT,
+      script_id TEXT NOT NULL,
+      start_time DATETIME NOT NULL,
+      end_time DATETIME NOT NULL,
+      status TEXT DEFAULT 'pending',
+      customer_name TEXT,
+      customer_phone TEXT,
+      player_count INTEGER,
+      note TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE SET NULL,
+      FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
+    );
+
+    -- 排期卡司分配表
+    CREATE TABLE IF NOT EXISTS schedule_actors (
+      id TEXT PRIMARY KEY,
+      schedule_id TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      role_name TEXT NOT NULL,
+      start_time DATETIME NOT NULL,
+      end_time DATETIME NOT NULL,
+      FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
+      FOREIGN KEY (actor_id) REFERENCES actors(id) ON DELETE CASCADE
+    );
+
+    -- 签到记录表
+    CREATE TABLE IF NOT EXISTS checkins (
+      id TEXT PRIMARY KEY,
+      schedule_id TEXT NOT NULL,
+      guest_name TEXT NOT NULL,
+      guest_phone TEXT,
+      guest_avatar TEXT,
+      role TEXT,
+      checked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE
+    );
+
+    -- 评价记录表
+    CREATE TABLE IF NOT EXISTS evaluations (
+      id TEXT PRIMARY KEY,
+      schedule_id TEXT NOT NULL,
+      guest_name TEXT NOT NULL,
+      rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+      comment TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE
+    );
+  `);
+
+  // 迁移函数（幂等调用，只执行一次）
+  async function runMigrations() {
+    // 1. 获取当前 evaluations 表的列信息
+    const cols = await db.all("PRAGMA table_info(evaluations)");
+    const colNames = new Set(cols.map((c: any) => c.name));
+
+    // 2. 补 guest_name 列（SQLite >= 3.35 支持 ADD COLUMN）
+    if (!colNames.has('guest_name')) {
+      await db.exec("ALTER TABLE evaluations ADD COLUMN guest_name TEXT NOT NULL DEFAULT ''");
+    }
+    // 4. 添加剧本时长双字段和角色性别字段
+    const scriptCols = await db.all("PRAGMA table_info(scripts)");
+    const scriptColNames = new Set(scriptCols.map((c: any) => c.name));
+    if (!scriptColNames.has('min_duration')) {
+        await db.exec("ALTER TABLE scripts ADD COLUMN min_duration INTEGER DEFAULT 0");
+        // 将现有duration迁移到min_duration和max_duration
+        await db.exec("UPDATE scripts SET min_duration = duration, max_duration = duration");
+    }
+    if (!scriptColNames.has('max_duration')) {
+        await db.exec("ALTER TABLE scripts ADD COLUMN max_duration INTEGER DEFAULT 0");
+    }
+    
+    const playerRoleCols = await db.all("PRAGMA table_info(script_player_roles)");
+    const playerRoleColNames = new Set(playerRoleCols.map((c: any) => c.name));
+    if (!playerRoleColNames.has('gender')) {
+        await db.exec("ALTER TABLE script_player_roles ADD COLUMN gender TEXT DEFAULT ''");
+    }
+    
+    const actorRoleCols = await db.all("PRAGMA table_info(script_actor_roles)");
+    const actorRoleColNames = new Set(actorRoleCols.map((c: any) => c.name));
+    if (!actorRoleColNames.has('gender')) {
+        await db.exec("ALTER TABLE script_actor_roles ADD COLUMN gender TEXT DEFAULT ''");
+    }
+    
+    const scriptRoleCols = await db.all("PRAGMA table_info(script_roles)");
+    const scriptRoleColNames = new Set(scriptRoleCols.map((c: any) => c.name));
+    if (!scriptRoleColNames.has('gender')) {
+        await db.exec("ALTER TABLE script_roles ADD COLUMN gender TEXT DEFAULT ''");
+    }
+
+
+    // 3. 重建表添加 UNIQUE(schedule_id, guest_name)
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS _evaluations_new (
+        id TEXT PRIMARY KEY,
+        schedule_id TEXT NOT NULL,
+        guest_name TEXT NOT NULL,
+        rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+        comment TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(schedule_id, guest_name)
+      );
+      INSERT OR IGNORE INTO _evaluations_new (id, schedule_id, guest_name, rating, comment, created_at)
+        SELECT id, schedule_id, '' AS guest_name, rating, comment, created_at FROM evaluations;
+      DROP TABLE evaluations;
+      ALTER TABLE _evaluations_new RENAME TO evaluations;
+    `);
+  }
+
+  await runMigrations();
+  // 创建客户表（会员管理）
+  await db.exec(`
+    -- 客户/会员表
+    CREATE TABLE IF NOT EXISTS customers (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      phone TEXT UNIQUE,
+      avatar TEXT,
+      membership_level TEXT NOT NULL DEFAULT 'none', -- 'none', 'bronze', 'silver', 'gold'
+      balance INTEGER DEFAULT 0, -- 余额（分）
+      total_recharged INTEGER DEFAULT 0, -- 累计充值（分）
+      total_consumed INTEGER DEFAULT 0, -- 累计消费（分）
+      last_visit_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    -- 会员交易记录表
+    CREATE TABLE IF NOT EXISTS membership_transactions (
+      id TEXT PRIMARY KEY,
+      customer_id TEXT NOT NULL,
+      schedule_id TEXT, -- 关联排期（消费时记录）
+      amount INTEGER NOT NULL, -- 正数表示充值，负数表示消费
+      transaction_type TEXT NOT NULL, -- 'recharge', 'consume', 'refund'
+      note TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+      FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE SET NULL
+    );
+
+    -- 客户偏好表（记录客户喜欢的卡司）
+    CREATE TABLE IF NOT EXISTS customer_preferences (
+      id TEXT PRIMARY KEY,
+      customer_id TEXT NOT NULL,
+      actor_id TEXT NOT NULL, -- 喜欢的卡司
+      preference_level INTEGER DEFAULT 1, -- 偏好程度 1-5
+      notes TEXT, -- 备注，如“特别喜欢他演的XX角色”
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(customer_id, actor_id),
+      FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+      FOREIGN KEY (actor_id) REFERENCES actors(id) ON DELETE CASCADE
+    );
+
+    -- 矛盾记录表（记录客户与卡司的矛盾及解决方案）
+    CREATE TABLE IF NOT EXISTS conflict_records (
+      id TEXT PRIMARY KEY,
+      schedule_id TEXT NOT NULL, -- 关联的排期
+      customer_id TEXT NOT NULL, -- 客户
+      actor_id TEXT NOT NULL, -- 卡司
+      conflict_type TEXT NOT NULL, -- 矛盾类型：'service_attitude', 'performance', 'communication', 'other'
+      conflict_description TEXT NOT NULL, -- 矛盾描述
+      conflict_date DATETIME NOT NULL, -- 发生日期
+      resolution TEXT, -- 解决方案
+      resolved_by TEXT, -- 解决人
+      resolved_at DATETIME, -- 解决时间
+      status TEXT DEFAULT 'pending', -- 'pending', 'resolved', 'escalated'
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
+      FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+      FOREIGN KEY (actor_id) REFERENCES actors(id) ON DELETE CASCADE
+    );
+
+    -- 提醒表（用于剧本开始和到期提醒）
+    CREATE TABLE IF NOT EXISTS reminders (
+      id TEXT PRIMARY KEY,
+      schedule_id TEXT NOT NULL,
+      reminder_type TEXT NOT NULL, -- 'start'（开始前提醒）, 'end'（结束后提醒）, 'payment'（付款提醒）
+      trigger_time DATETIME NOT NULL, -- 触发时间
+      status TEXT DEFAULT 'pending', -- 'pending', 'sent', 'failed'
+      sent_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE
+    );
+  `);
+  return db;
+}
+
+export function getDb() {
+  return db;
+}
+
+// 数据库操作接口
+export const RoomDB = {
+  getAll: async () => db.all('SELECT * FROM rooms ORDER BY name'),
+  getById: async (id: string) => db.get('SELECT * FROM rooms WHERE id = ?', id),
+  create: async (name: string, capacity?: number) => {
+    const id = uuidv4();
+    await db.run('INSERT INTO rooms (id, name, capacity) VALUES (?, ?, ?)', id, name, capacity || 0);
+    return id;
+  },
+  update: async (id: string, name: string, capacity?: number) => {
+    await db.run('UPDATE rooms SET name = ?, capacity = ? WHERE id = ?', name, capacity || 0, id);
+  },
+  delete: async (id: string) => db.run('DELETE FROM rooms WHERE id = ?', id)
+};
+
+export const ActorDB = {
+  getAll: async () => db.all('SELECT * FROM actors ORDER BY name'),
+  getById: async (id: string) => db.get('SELECT * FROM actors WHERE id = ?', id),
+  create: async (name: string, phone?: string) => {
+    const id = uuidv4();
+    await db.run('INSERT INTO actors (id, name, phone) VALUES (?, ?, ?)', id, name, phone || null);
+    return id;
+  },
+  update: async (id: string, name: string, phone?: string) => {
+    await db.run('UPDATE actors SET name = ?, phone = ? WHERE id = ?', name, phone || null, id);
+  },
+  delete: async (id: string) => db.run('DELETE FROM actors WHERE id = ?', id)
+};
+
+export const ScriptDB = {
+  getAll: async () => {
+    const scripts = await db.all('SELECT id, name, min_duration as duration, min_duration, max_duration, dm_gender, created_at FROM scripts ORDER BY name');
+    // 为每个剧本添加角色数量
+    for (const script of scripts) {
+      const playerRoles = await db.all('SELECT role_name, gender FROM script_player_roles WHERE script_id = ?', script.id);
+      const actorRoles = await db.all('SELECT role_name, gender FROM script_actor_roles WHERE script_id = ?', script.id);
+      script.player_roles = playerRoles.map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
+      script.actor_roles = actorRoles.map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
+      script.player_count = playerRoles.length;
+      script.actor_count = actorRoles.length;
+    }
+    return scripts;
+  },
+  getById: async (id: string) => {
+    const script = await db.get('SELECT id, name, min_duration as duration, min_duration, max_duration, dm_gender, created_at FROM scripts WHERE id = ?', id);
+    if (script) {
+      const playerRoles = await db.all('SELECT role_name, gender FROM script_player_roles WHERE script_id = ?', id);
+      const actorRoles = await db.all('SELECT role_name, gender FROM script_actor_roles WHERE script_id = ?', id);
+      script.player_roles = playerRoles.map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
+      script.actor_roles = actorRoles.map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
+      script.player_count = playerRoles.length;
+      script.actor_count = actorRoles.length;
+    }
+    return script;
+  },
+  create: async (name: string, minDuration: number, maxDuration: number, playerRoles: string[] = [], actorRoles: string[] = []) => {
+    const id = uuidv4();
+    await db.exec('BEGIN TRANSACTION');
+    try {
+      await db.run('INSERT INTO scripts (id, name, min_duration, max_duration) VALUES (?, ?, ?, ?)', id, name, minDuration, maxDuration);
+      
+      // 解析玩家角色（可能包含性别信息，格式：角色名(性别)）
+      for (const roleStr of playerRoles) {
+        const roleMatch = roleStr.match(/^(.+?)\s*\((.*?)\)$/);
+        const roleName = roleMatch ? roleMatch[1].trim() : roleStr.trim();
+        const gender = roleMatch ? roleMatch[2].trim() : '';
+        await db.run('INSERT INTO script_player_roles (id, script_id, role_name, gender) VALUES (?, ?, ?, ?)', 
+                     uuidv4(), id, roleName, gender);
+      }
+      
+      // 解析卡司角色
+      for (const roleStr of actorRoles) {
+        const roleMatch = roleStr.match(/^(.+?)\s*\((.*?)\)$/);
+        const roleName = roleMatch ? roleMatch[1].trim() : roleStr.trim();
+        const gender = roleMatch ? roleMatch[2].trim() : '';
+        await db.run('INSERT INTO script_actor_roles (id, script_id, role_name, gender) VALUES (?, ?, ?, ?)', 
+                     uuidv4(), id, roleName, gender);
+      }
+      await db.exec('COMMIT');
+    } catch (err) {
+      await db.exec('ROLLBACK');
+      throw err instanceof Error ? err : new Error(String(err));
+    }
+    return id;
+  },
+  update: async (id: string, name: string, minDuration: number, maxDuration: number, playerRoles: string[] = [], actorRoles: string[] = []) => {
+    await db.exec('BEGIN TRANSACTION');
+    try {
+      await db.run('UPDATE scripts SET name = ?, min_duration = ?, max_duration = ? WHERE id = ?', name, minDuration, maxDuration, id);
+      await db.run('DELETE FROM script_player_roles WHERE script_id = ?', id);
+      await db.run('DELETE FROM script_actor_roles WHERE script_id = ?', id);
+      
+      // 解析玩家角色
+      for (const roleStr of playerRoles) {
+        const roleMatch = roleStr.match(/^(.+?)\s*\((.*?)\)$/);
+        const roleName = roleMatch ? roleMatch[1].trim() : roleStr.trim();
+        const gender = roleMatch ? roleMatch[2].trim() : '';
+        await db.run('INSERT INTO script_player_roles (id, script_id, role_name, gender) VALUES (?, ?, ?, ?)', 
+                     uuidv4(), id, roleName, gender);
+      }
+      
+      // 解析卡司角色
+      for (const roleStr of actorRoles) {
+        const roleMatch = roleStr.match(/^(.+?)\s*\((.*?)\)$/);
+        const roleName = roleMatch ? roleMatch[1].trim() : roleStr.trim();
+        const gender = roleMatch ? roleMatch[2].trim() : '';
+        await db.run('INSERT INTO script_actor_roles (id, script_id, role_name, gender) VALUES (?, ?, ?, ?)', 
+                     uuidv4(), id, roleName, gender);
+      }
+      await db.exec('COMMIT');
+    } catch (err) {
+      await db.exec('ROLLBACK');
+      throw err instanceof Error ? err : new Error(String(err));
+    }
+  },
+  delete: async (id: string) => db.run('DELETE FROM scripts WHERE id = ?', id)
+};
+export const CustomerDB = {
+  getAll: async () => db.all('SELECT * FROM customers ORDER BY name'),
+  getById: async (id: string) => db.get('SELECT * FROM customers WHERE id = ?', id),
+  getByPhone: async (phone: string) => db.get('SELECT * FROM customers WHERE phone = ?', phone),
+  search: async (query: string) => {
+    const q = `%${query}%`;
+    return db.all('SELECT * FROM customers WHERE name LIKE ? OR phone LIKE ? ORDER BY name LIMIT 20', q, q);
+  },
+  create: async (data: {
+    name: string;
+    phone?: string;
+    avatar?: string;
+    membershipLevel?: string;
+    balance?: number;
+  }) => {
+    const id = uuidv4();
+    await db.run(
+      'INSERT INTO customers (id, name, phone, avatar, membership_level, balance) VALUES (?, ?, ?, ?, ?, ?)',
+      id,
+      data.name,
+      data.phone || null,
+      data.avatar || null,
+      data.membershipLevel || 'none',
+      data.balance || 0
+    );
+    return id;
+  },
+  update: async (id: string, data: {
+    name?: string;
+    phone?: string;
+    avatar?: string;
+    membershipLevel?: string;
+    balance?: number;
+    lastVisitAt?: string;
+  }) => {
+    const updates: string[] = [];
+    const params: any[] = [];
+    
+    if (data.name !== undefined) { updates.push('name = ?'); params.push(data.name); }
+    if (data.phone !== undefined) { updates.push('phone = ?'); params.push(data.phone || null); }
+    if (data.avatar !== undefined) { updates.push('avatar = ?'); params.push(data.avatar || null); }
+    if (data.membershipLevel !== undefined) { updates.push('membership_level = ?'); params.push(data.membershipLevel); }
+    if (data.balance !== undefined) { updates.push('balance = ?'); params.push(data.balance); }
+    if (data.lastVisitAt !== undefined) { updates.push('last_visit_at = ?'); params.push(data.lastVisitAt); }
+    
+    if (updates.length > 0) {
+      updates.push('updated_at = CURRENT_TIMESTAMP');
+      params.push(id);
+      await db.run(`UPDATE customers SET ${updates.join(', ')} WHERE id = ?`, ...params);
+    }
+  },
+  delete: async (id: string) => db.run('DELETE FROM customers WHERE id = ?', id),
+  
+  // 交易记录
+      addTransaction: async (customerId: string, amount: number, transactionType: string, note?: string, scheduleId?: string) => {
+    const id = uuidv4();
+    await db.run(
+      'INSERT INTO membership_transactions (id, customer_id, amount, transaction_type, note, schedule_id) VALUES (?, ?, ?, ?, ?, ?)',
+      id, customerId, amount, transactionType, note || null, scheduleId || null
+    );
+    // 更新客户余额和统计
+    if (transactionType === 'recharge') {
+      // 充值：增加余额和累计充值
+      await db.run('UPDATE customers SET balance = balance + ?, total_recharged = total_recharged + ? WHERE id = ?', amount, amount, customerId);
+    } else if (transactionType === 'consume') {
+      // 消费：减少余额，增加累计消费（amount为正数）
+      await db.run('UPDATE customers SET balance = balance - ?, total_consumed = total_consumed + ? WHERE id = ?', amount, amount, customerId);
+    } else if (transactionType === 'refund') {
+      // 退款：增加余额，减少累计消费（amount为正数）
+      await db.run('UPDATE customers SET balance = balance + ?, total_consumed = total_consumed - ? WHERE id = ?', amount, amount, customerId);
+    }
+    return id;
+  },
+  getTransactions: async (customerId: string, limit = 50) => {
+    return db.all(
+      `SELECT mt.*, 
+              s.start_time as schedule_start,
+              s.end_time as schedule_end,
+              sc.name as script_name
+       FROM membership_transactions mt
+       LEFT JOIN schedules s ON mt.schedule_id = s.id
+       LEFT JOIN scripts sc ON s.script_id = sc.id
+       WHERE mt.customer_id = ? 
+       ORDER BY mt.created_at DESC 
+       LIMIT ?`,
+      customerId, limit
+    );
+  },
+};
+
+export const CustomerPreferenceDB = {
+  // 添加客户偏好
+  create: async (customerId: string, actorId: string, preferenceLevel = 1, notes?: string) => {
+    const id = uuidv4();
+    await db.run(
+      'INSERT INTO customer_preferences (id, customer_id, actor_id, preference_level, notes) VALUES (?, ?, ?, ?, ?)',
+      id, customerId, actorId, preferenceLevel, notes || null
+    );
+    return id;
+  },
+
+  // 更新客户偏好
+  update: async (id: string, preferenceLevel?: number, notes?: string) => {
+    const updates = [];
+    const params = [];
+    if (preferenceLevel !== undefined) {
+      updates.push('preference_level = ?');
+      params.push(preferenceLevel);
+    }
+    if (notes !== undefined) {
+      updates.push('notes = ?');
+      params.push(notes);
+    }
+    if (updates.length === 0) {
+      return;
+    }
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+    params.push(id);
+    await db.run(
+      `UPDATE customer_preferences SET ${updates.join(', ')} WHERE id = ?`,
+      ...params
+    );
+  },
+
+  // 获取客户的偏好列表
+  getByCustomer: async (customerId: string) => {
+    return db.all(
+      `SELECT cp.*, a.name as actor_name, a.avatar as actor_avatar
+       FROM customer_preferences cp
+       JOIN actors a ON cp.actor_id = a.id
+       WHERE cp.customer_id = ?
+       ORDER BY cp.preference_level DESC`,
+      customerId
+    );
+  },
+
+  // 删除偏好
+  delete: async (id: string) => {
+    await db.run('DELETE FROM customer_preferences WHERE id = ?', id);
+  },
+
+  // 检查是否已存在
+  exists: async (customerId: string, actorId: string) => {
+    const result = await db.get(
+      'SELECT id FROM customer_preferences WHERE customer_id = ? AND actor_id = ?',
+      customerId, actorId
+    );
+    return !!result;
+  },
+};
+
+export const ConflictRecordDB = {
+  // 创建矛盾记录
+  create: async (data: {
+    scheduleId: string;
+    customerId: string;
+    actorId: string;
+    conflictType: string;
+    conflictDescription: string;
+    conflictDate: string;
+    resolution?: string;
+    resolvedBy?: string;
+    resolvedAt?: string;
+    status?: string;
+  }) => {
+    const id = uuidv4();
+    await db.run(
+      `INSERT INTO conflict_records 
+       (id, schedule_id, customer_id, actor_id, conflict_type, conflict_description, conflict_date, 
+        resolution, resolved_by, resolved_at, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, data.scheduleId, data.customerId, data.actorId, data.conflictType,
+      data.conflictDescription, data.conflictDate, data.resolution || null,
+      data.resolvedBy || null, data.resolvedAt || null, data.status || 'pending'
+    );
+    return id;
+  },
+
+  // 更新矛盾记录
+  update: async (id: string, data: {
+    conflictType?: string;
+    conflictDescription?: string;
+    resolution?: string;
+    resolvedBy?: string;
+    resolvedAt?: string;
+    status?: string;
+  }) => {
+    const updates = [];
+    const params = [];
+    if (data.conflictType !== undefined) {
+      updates.push('conflict_type = ?');
+      params.push(data.conflictType);
+    }
+    if (data.conflictDescription !== undefined) {
+      updates.push('conflict_description = ?');
+      params.push(data.conflictDescription);
+    }
+    if (data.resolution !== undefined) {
+      updates.push('resolution = ?');
+      params.push(data.resolution);
+    }
+    if (data.resolvedBy !== undefined) {
+      updates.push('resolved_by = ?');
+      params.push(data.resolvedBy);
+    }
+    if (data.resolvedAt !== undefined) {
+      updates.push('resolved_at = ?');
+      params.push(data.resolvedAt);
+    }
+    if (data.status !== undefined) {
+      updates.push('status = ?');
+      params.push(data.status);
+    }
+    if (updates.length === 0) {
+      return;
+    }
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+    params.push(id);
+    await db.run(
+      `UPDATE conflict_records SET ${updates.join(', ')} WHERE id = ?`,
+      ...params
+    );
+  },
+
+  // 获取排期的矛盾记录
+  getBySchedule: async (scheduleId: string) => {
+    return db.all(
+      `SELECT cr.*, c.name as customer_name, a.name as actor_name, s.start_time, s.end_time, sc.name as script_name
+       FROM conflict_records cr
+       JOIN customers c ON cr.customer_id = c.id
+       JOIN actors a ON cr.actor_id = a.id
+       JOIN schedules s ON cr.schedule_id = s.id
+       JOIN scripts sc ON s.script_id = sc.id
+       WHERE cr.schedule_id = ?
+       ORDER BY cr.conflict_date DESC`,
+      scheduleId
+    );
+  },
+
+  // 获取客户的矛盾记录
+  getByCustomer: async (customerId: string, limit = 20) => {
+    return db.all(
+      `SELECT cr.*, a.name as actor_name, s.start_time, sc.name as script_name
+       FROM conflict_records cr
+       JOIN actors a ON cr.actor_id = a.id
+       JOIN schedules s ON cr.schedule_id = s.id
+       JOIN scripts sc ON s.script_id = sc.id
+       WHERE cr.customer_id = ?
+       ORDER BY cr.conflict_date DESC
+       LIMIT ?`,
+      customerId, limit
+    );
+  },
+
+  // 获取未解决的矛盾记录
+  getPending: async () => {
+    return db.all(
+      `SELECT cr.*, c.name as customer_name, a.name as actor_name, sc.name as script_name, s.start_time
+       FROM conflict_records cr
+       JOIN customers c ON cr.customer_id = c.id
+       JOIN actors a ON cr.actor_id = a.id
+       JOIN schedules s ON cr.schedule_id = s.id
+       JOIN scripts sc ON s.script_id = sc.id
+       WHERE cr.status = 'pending'
+       ORDER BY cr.conflict_date`
+    );
+  },
+
+  // 删除矛盾记录
+  delete: async (id: string) => {
+    await db.run('DELETE FROM conflict_records WHERE id = ?', id);
+  },
+};
+
+export const ReminderDB = {
+  // 创建提醒
+  create: async (scheduleId: string, reminderType: string, triggerTime: string) => {
+    const id = uuidv4();
+    await db.run(
+      'INSERT INTO reminders (id, schedule_id, reminder_type, trigger_time) VALUES (?, ?, ?, ?)',
+      id, scheduleId, reminderType, triggerTime
+    );
+    return id;
+  },
+
+  // 标记提醒为已发送
+  markSent: async (id: string) => {
+    await db.run(
+      'UPDATE reminders SET status = \'sent\', sent_at = CURRENT_TIMESTAMP WHERE id = ?',
+      id
+    );
+  },
+
+  // 获取待处理的提醒
+  getPending: async (before?: string) => {
+    let sql = 'SELECT * FROM reminders WHERE status = \'pending\'';
+    const params = [];
+    if (before) {
+      sql += ' AND trigger_time <= ?';
+      params.push(before);
+    }
+    sql += ' ORDER BY trigger_time';
+    return db.all(sql, ...params);
+  },
+
+  // 获取排期的提醒
+  getBySchedule: async (scheduleId: string) => {
+    return db.all(
+      'SELECT * FROM reminders WHERE schedule_id = ? ORDER BY trigger_time',
+      scheduleId
+    );
+  },
+
+  // 删除提醒
+  delete: async (id: string) => {
+    await db.run('DELETE FROM reminders WHERE id = ?', id);
+  },
+};
+
+export const ActorSkillDB = {
+  getByActor: async (actorId: string) => {
+    return db.all(`
+      SELECT s.*, scripts.name as script_name, scripts.duration
+      FROM actor_skills s
+      JOIN scripts ON s.script_id = scripts.id
+      WHERE s.actor_id = ?
+      ORDER BY scripts.name, s.role_name
+    `, actorId);
+  },
+  getByScript: async (scriptId: string) => {
+    return db.all(`
+      SELECT s.*, actors.name as actor_name
+      FROM actor_skills s
+      JOIN actors ON s.actor_id = actors.id
+      WHERE s.script_id = ?
+      ORDER BY s.role_name, actors.name
+    `, scriptId);
+  },
+  create: async (actorId: string, scriptId: string, roleName: string, roleType: string = 'actor', proficiency?: number) => {
+    const id = uuidv4();
+    try {
+      await db.run(
+        'INSERT INTO actor_skills (id, actor_id, script_id, role_name, role_type, proficiency) VALUES (?, ?, ?, ?, ?, ?)',
+        id, actorId, scriptId, roleName, roleType, proficiency || 1
+      );
+      return id;
+    } catch (e) {
+      return null;
+    }
+  },
+  delete: async (actorId: string, scriptId: string, roleName: string) => {
+    await db.run('DELETE FROM actor_skills WHERE actor_id = ? AND script_id = ? AND role_name = ?', actorId, scriptId, roleName);
+  }
+};
+
+export const ScriptRoleDB = {
+  getByScript: async (scriptId: string) => {
+    return db.all('SELECT * FROM script_roles WHERE script_id = ? ORDER BY start_offset', scriptId);
+  },
+  create: async (scriptId: string, roleName: string, requiredDuration?: number, startOffset?: number) => {
+    const id = uuidv4();
+    await db.run(
+      'INSERT INTO script_roles (id, script_id, role_name, required_duration, start_offset) VALUES (?, ?, ?, ?, ?)',
+      id, scriptId, roleName, requiredDuration || null, startOffset || 0
+    );
+    return id;
+  },
+  delete: async (id: string) => db.run('DELETE FROM script_roles WHERE id = ?', id)
+};
+
+export const ScheduleDB = {
+  getAll: async (startDate?: string, endDate?: string) => {
+    let sql = `
+      SELECT s.*, 
+        rooms.name as room_name,
+        scripts.name as script_name, scripts.duration as script_duration,
+        (SELECT COUNT(*) FROM checkins c WHERE c.schedule_id = s.id) as checkin_count,
+        (SELECT GROUP_CONCAT(role_name) FROM script_player_roles spr WHERE spr.script_id = s.script_id) as player_roles
+      FROM schedules s
+      LEFT JOIN rooms ON s.room_id = rooms.id
+      JOIN scripts ON s.script_id = scripts.id
+    `;
+    if (startDate && endDate) {
+      sql += ' WHERE s.start_time >= ? AND s.start_time <= ? ORDER BY s.start_time';
+      return db.all(sql, startDate, endDate);
+    }
+    sql += ' ORDER BY s.start_time DESC LIMIT 100';
+    return db.all(sql);
+  },
+  getById: async (id: string) => {
+    return db.get(`
+      SELECT s.*, 
+        rooms.name as room_name,
+        scripts.name as script_name, scripts.duration as script_duration
+      FROM schedules s
+      LEFT JOIN rooms ON s.room_id = rooms.id
+      JOIN scripts ON s.script_id = scripts.id
+      WHERE s.id = ?
+    `, id);
+  },
+  getByRoom: async (roomId: string, startDate: string, endDate: string) => {
+    return db.all(`
+      SELECT s.*, scripts.name as script_name, scripts.duration as script_duration
+      FROM schedules s
+      JOIN scripts ON s.script_id = scripts.id
+      WHERE s.room_id = ? AND s.start_time >= ? AND s.start_time <= ? AND s.status != 'cancelled'
+      ORDER BY s.start_time
+    `, roomId, startDate, endDate);
+  },
+  getByActor: async (actorId: string, startDate: string, endDate: string) => {
+    return db.all(`
+      SELECT sa.*, s.room_id, s.script_id, s.status,
+        rooms.name as room_name,
+        scripts.name as script_name
+      FROM schedule_actors sa
+      JOIN schedules s ON sa.schedule_id = s.id
+      LEFT JOIN rooms ON s.room_id = rooms.id
+      JOIN scripts ON s.script_id = scripts.id
+      WHERE sa.actor_id = ? AND sa.end_time > ? AND sa.start_time < ? AND s.status != 'cancelled'
+      ORDER BY sa.start_time
+    `, actorId, startDate, endDate);
+  },
+
+  // 将超时的 pending 排期标记为 expired
+  // 判断：排期开始时间已过但状态仍为 pending，视为超时未确认
+  cleanupExpiredPending: async () => {
+    const now = new Date().toISOString();
+    const result = await db.run(`
+      UPDATE schedules SET status = 'expired'
+      WHERE status = 'pending' AND start_time < ?
+    `, now);
+    return result.changes;
+  },
+  create: async (data: {
+    roomId?: string;
+    scriptId: string;
+    startTime: string;
+    endTime: string;
+    customerName?: string;
+    customerPhone?: string;
+    playerCount?: number;
+    note?: string;
+    status?: string;
+  }) => {
+    const id = uuidv4();
+    await db.run(`
+      INSERT INTO schedules (id, room_id, script_id, start_time, end_time, status, customer_name, customer_phone, player_count, note)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, id, data.roomId || null, data.scriptId, data.startTime, data.endTime,
+      data.status || 'pending', data.customerName || null, data.customerPhone || null, data.playerCount || null, data.note || null);
+    return id;
+  },
+  update: async (id: string, data: Partial<{
+    roomId: string;
+    scriptId: string;
+    startTime: string;
+    endTime: string;
+    status: string;
+    customerName: string;
+    customerPhone: string;
+    playerCount: number;
+    note: string;
+  }>) => {
+    const sets: string[] = [];
+    const values: any[] = [];
+    
+    if (data.roomId !== undefined) { sets.push('room_id = ?'); values.push(data.roomId || null); }
+    if (data.scriptId !== undefined) { sets.push('script_id = ?'); values.push(data.scriptId); }
+    if (data.startTime !== undefined) { sets.push('start_time = ?'); values.push(data.startTime); }
+    if (data.endTime !== undefined) { sets.push('end_time = ?'); values.push(data.endTime); }
+    if (data.status !== undefined) { sets.push('status = ?'); values.push(data.status); }
+    if (data.customerName !== undefined) { sets.push('customer_name = ?'); values.push(data.customerName); }
+    if (data.customerPhone !== undefined) { sets.push('customer_phone = ?'); values.push(data.customerPhone); }
+    if (data.playerCount !== undefined) { sets.push('player_count = ?'); values.push(data.playerCount); }
+    if (data.note !== undefined) { sets.push('note = ?'); values.push(data.note); }
+    
+    values.push(id);
+    await db.run(`UPDATE schedules SET ${sets.join(', ')} WHERE id = ?`, values);
+  },
+  delete: async (id: string) => db.run('DELETE FROM schedules WHERE id = ?', id),
+  confirm: async (id: string, roomId: string) => {
+    await db.run(
+      'UPDATE schedules SET room_id = ?, status = ? WHERE id = ?',
+      roomId, 'scheduled', id
+    );
+  },
+
+  // 获取已开始但状态仍为 scheduled 的排期
+  getStartedSchedules: async (nowISO: string) => {
+    return db.all(`
+      SELECT s.*, scripts.name as script_name
+      FROM schedules s
+      JOIN scripts ON s.script_id = scripts.id
+      WHERE s.status = 'scheduled' AND s.start_time <= ?
+      ORDER BY s.start_time
+    `, nowISO);
+  }
+};
+
+export const ScheduleActorDB = {
+  getBySchedule: async (scheduleId: string) => {
+    return db.all(`
+      SELECT sa.*, actors.name as actor_name
+      FROM schedule_actors sa
+      JOIN actors ON sa.actor_id = actors.id
+      WHERE sa.schedule_id = ?
+    `, scheduleId);
+  },
+  create: async (scheduleId: string, actorId: string, roleName: string, startTime: string, endTime: string) => {
+    const id = uuidv4();
+    await db.run(
+      'INSERT INTO schedule_actors (id, schedule_id, actor_id, role_name, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)',
+      id, scheduleId, actorId, roleName, startTime, endTime
+    );
+    return id;
+  },
+  deleteBySchedule: async (scheduleId: string) => {
+    await db.run('DELETE FROM schedule_actors WHERE schedule_id = ?', scheduleId);
+  },
+  delete: async (id: string) => db.run('DELETE FROM schedule_actors WHERE id = ?', id)
+};
+
+// 签到记录数据库操作
+export const CheckInDB = {
+  getBySchedule: async (scheduleId: string) => {
+    return db.all(`
+      SELECT * FROM checkins 
+      WHERE schedule_id = ? 
+      ORDER BY checked_at DESC
+    `, scheduleId);
+  },
+  create: async (scheduleId: string, guestName: string, guestPhone?: string, role?: string, guestAvatar?: string) => {
+    const id = uuidv4();
+    await db.run(
+      'INSERT INTO checkins (id, schedule_id, guest_name, guest_phone, role, guest_avatar) VALUES (?, ?, ?, ?, ?, ?)',
+      id, scheduleId, guestName, guestPhone || null, role || null, guestAvatar || null
+    );
+    return id;
+  },
+  delete: async (id: string) => db.run('DELETE FROM checkins WHERE id = ?', id),
+  deleteByGuestAndRole: async (scheduleId: string, guestName: string, role: string) => {
+    await db.run(
+      'DELETE FROM checkins WHERE schedule_id = ? AND guest_name = ? AND role = ?',
+      scheduleId, guestName, role
+    );
+  },
+  getStats: async (scheduleId: string) => {
+    const result = await db.get(
+      'SELECT COUNT(*) as count FROM checkins WHERE schedule_id = ?',
+      scheduleId
+    );
+    return result?.count || 0;
+  }
+};
+
+// 评价记录数据库操作
+export const EvaluationDB = {
+  // 查询某场排期的评价
+  getBySchedule: async (scheduleId: string) => {
+    return db.all('SELECT * FROM evaluations WHERE schedule_id = ? ORDER BY created_at DESC', scheduleId);
+  },
+  // 提交或更新评价（每人只能评一次，用 schedule_id + guest_name 唯一）
+  upsert: async (scheduleId: string, guestName: string, rating: number, comment?: string) => {
+    const id = uuidv4();
+    await db.run(
+      `INSERT INTO evaluations (id, schedule_id, guest_name, rating, comment)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(schedule_id, guest_name) DO UPDATE SET rating = excluded.rating, comment = excluded.comment`,
+      id, scheduleId, guestName, rating, comment || null
+    );
+  },
+  // 查询某剧本的所有评价（含聚合）
+  getByScript: async (scriptId: string) => {
+    return db.all(`
+      SELECT e.*, scripts.name as script_name, s.start_time
+      FROM evaluations e
+      JOIN schedules s ON e.schedule_id = s.id
+      JOIN scripts ON s.script_id = scripts.id
+      WHERE s.script_id = ?
+      ORDER BY e.created_at DESC
+    `, scriptId);
+  },
+  // 查询某剧本的评分聚合
+  getScriptStats: async (scriptId: string) => {
+    const result = await db.get(`
+      SELECT
+        COUNT(*) as total,
+        AVG(rating) as avg_rating,
+        MIN(rating) as min_rating,
+        MAX(rating) as max_rating
+      FROM evaluations e
+      JOIN schedules s ON e.schedule_id = s.id
+      WHERE s.script_id = ?
+    `, scriptId);
+    return {
+      total: result?.total || 0,
+      avgRating: result?.avg_rating ? Math.round(Number(result.avg_rating) * 10) / 10 : null,
+      minRating: result?.min_rating || null,
+      maxRating: result?.max_rating || null,
+    };
+  }
+};
+
+// 检查冲突的辅助函数
+export const ConflictChecker = {
+  checkRoomConflict: async (roomId: string, startTime: string, endTime: string, excludeScheduleId?: string) => {
+    let sql = `
+      SELECT COUNT(*) as count FROM schedules
+      WHERE room_id = ? AND status != 'cancelled'
+      AND ((start_time < ? AND end_time > ?) OR (start_time < ? AND end_time > ?) OR (start_time >= ? AND end_time <= ?))
+    `;
+    const params: any[] = [roomId, endTime, startTime, endTime, startTime, startTime, endTime];
+    if (excludeScheduleId) {
+      sql += ' AND id != ?';
+      params.push(excludeScheduleId);
+    }
+    const result = await db.get(sql, params);
+    return (result?.count as number) > 0;
+  },
+  
+  checkActorConflict: async (actorId: string, startTime: string, endTime: string, excludeScheduleId?: string) => {
+    let sql = `
+      SELECT COUNT(*) as count FROM schedule_actors sa
+      JOIN schedules s ON sa.schedule_id = s.id
+      WHERE sa.actor_id = ? AND s.status != 'cancelled'
+      AND ((sa.start_time < ? AND sa.end_time > ?) OR (sa.start_time < ? AND sa.end_time > ?) OR (sa.start_time >= ? AND sa.end_time <= ?))
+    `;
+    const params: any[] = [actorId, endTime, startTime, endTime, startTime, startTime, endTime];
+    if (excludeScheduleId) {
+      sql += ' AND s.id != ?';
+      params.push(excludeScheduleId);
+    }
+    const result = await db.get(sql, params);
+    return (result?.count as number) > 0;
+  },
+
+  getActorAvailability: async (actorId: string, date: string) => {
+    // 查 date 当天的占用情况（包含跨日排期）
+    // 用 Date 对象计算 dayStart/nextDayStart（两者都是本地时间），转为 ISO 字符串后与 DB 中的 UTC ISO 字符串比较
+    const dayStart = new Date(`${date}T00:00:00`);
+    const nextDayStart = new Date(dayStart);
+    nextDayStart.setDate(nextDayStart.getDate() + 1);
+    return db.all(`
+      SELECT sa.*, s.room_id, rooms.name as room_name, scripts.name as script_name
+      FROM schedule_actors sa
+      JOIN schedules s ON sa.schedule_id = s.id
+      LEFT JOIN rooms ON s.room_id = rooms.id
+      JOIN scripts ON s.script_id = scripts.id
+      WHERE sa.actor_id = ?
+        AND sa.end_time > ?
+        AND sa.start_time < ?
+        AND s.status != 'cancelled'
+      ORDER BY sa.start_time
+    `, actorId, dayStart.toISOString(), nextDayStart.toISOString());
+  }
+};
