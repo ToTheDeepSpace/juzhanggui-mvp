@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { initDb, getDb, ScheduleDB } from './db';
+import { initDb, getDb, ScheduleDB, NotificationDB } from './db';
 import { authMiddleware } from './middleware/auth';
 
 // 路由模块
@@ -16,6 +16,7 @@ import preferencesRouter from './routes/preferences';
 import conflictsRouter from './routes/conflicts';
 import remindersRouter from './routes/reminders';
 import evaluationsRouter from './routes/evaluations';
+import notificationsRouter from './routes/notifications';
 import schedulesAdminRouter from './routes/schedules_admin';
 
 // 全局异常捕获
@@ -50,6 +51,7 @@ app.use('/', preferencesRouter);
 app.use('/', conflictsRouter);
 app.use('/', remindersRouter);
 app.use('/', evaluationsRouter);
+app.use('/', notificationsRouter);
 app.use('/', schedulesAdminRouter);
 
 // ===== 健康检查 =====
@@ -75,17 +77,35 @@ setTimeout(async () => {
   } catch { /* 静默失败 */ }
 }, 2000);
 
-// 定时检查排期状态（scheduled → ongoing）
+// 定时检查排期状态（scheduled → ongoing → completed）
 setInterval(async () => {
   try {
     const now = new Date().toISOString();
-    const schedules = await ScheduleDB.getStartedSchedules(now);
-    if (schedules.length > 0) {
-      console.log(`[schedule-start] 发现 ${schedules.length} 个排期已开始，自动更新为 ongoing`);
-    }
-    for (const schedule of schedules) {
+    
+    // 检查应该开始的排期
+    const startedSchedules = await ScheduleDB.getStartedSchedules(now);
+    for (const schedule of startedSchedules) {
       await ScheduleDB.update(schedule.id, { status: 'ongoing' });
-      console.log(`[schedule-start] 排期 ${schedule.id} 状态: ongoing`);
+      await NotificationDB.create(
+        'schedule_start',
+        '排期已开始',
+        `《${schedule.script_name || '未知剧本'}》已开始`,
+        schedule.id
+      );
+      console.log(`[schedule-start] ${schedule.id} → ongoing`);
+    }
+    
+    // 检查应该结束的排期
+    const endedSchedules = await ScheduleDB.getEndedSchedules(now);
+    for (const schedule of endedSchedules) {
+      await ScheduleDB.update(schedule.id, { status: 'completed' });
+      await NotificationDB.create(
+        'schedule_end',
+        '排期已结束',
+        `《${schedule.script_name || '未知剧本'}》已结束，记得收款`,
+        schedule.id
+      );
+      console.log(`[schedule-end] ${schedule.id} → completed`);
     }
   } catch (error) {
     console.error('定时检查排期出错:', error);

@@ -1,4 +1,13 @@
 import { getDb } from './database';
+// lazy db proxy — defers to getDb() at call time
+const db = new Proxy({} as any, {
+  get(_: any, prop: string) {
+    const realDb = getDb();
+    if (!realDb) throw new Error("Database not initialized");
+    const val = (realDb as any)[prop];
+    return typeof val === "function" ? val.bind(realDb) : val;
+  },
+});
 import { v4 as uuidv4 } from 'uuid';
 
 export const ScheduleDB = {
@@ -126,6 +135,17 @@ export const ScheduleDB = {
       JOIN scripts ON s.script_id = scripts.id
       WHERE s.status = 'scheduled' AND s.start_time <= ?
       ORDER BY s.start_time
+    `, nowISO);
+  },
+
+  // 获取已结束但状态仍为 ongoing 的排期
+  getEndedSchedules: async (nowISO: string) => {
+    return db.all(`
+      SELECT s.*, scripts.name as script_name
+      FROM schedules s
+      JOIN scripts ON s.script_id = scripts.id
+      WHERE s.status = 'ongoing' AND s.end_time <= ?
+      ORDER BY s.end_time
     `, nowISO);
   }
 };

@@ -6,3 +6,4 @@ export { CustomerDB, CustomerPreferenceDB, ConflictRecordDB, ReminderDB } from '
 export { ScheduleDB, ScheduleActorDB, ConflictChecker } from './schedules';
 export { CheckInDB } from './checkins';
 export { EvaluationDB } from './evaluations';
+export { NotificationDB } from './notifications';

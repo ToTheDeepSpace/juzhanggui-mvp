@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import NotificationBell from './NotificationBell';
 import RoomManager from './RoomManager';
 import ActorManager from './ActorManager';
 import ScriptManager from './ScriptManager';
@@ -40,12 +41,15 @@ export default function MainLayout() {
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between mb-4">
             <h1 className="text-2xl font-bold text-gray-800">剧本杀排期系统</h1>
-            <button
-              onClick={logout}
-              className="px-3 py-1.5 text-sm text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-            >
-              退出登录
-            </button>
+            <div className="flex items-center gap-2">
+              <NotificationBell />
+              <button
+                onClick={logout}
+                className="px-3 py-1.5 text-sm text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+              >
+                退出登录
+              </button>
+            </div>
           </div>
           <nav className="flex space-x-2">
             {tabs.map((tab) => (

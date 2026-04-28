@@ -12,7 +12,7 @@ export async function initDb() {
   
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
-  const dbDir = path.join(__dirname, '..', 'data');
+  const dbDir = path.join(__dirname, '..', '..', 'data');
   
   if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, { recursive: true });
@@ -45,6 +45,7 @@ export async function initDb() {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       duration INTEGER NOT NULL,
+      dm_gender TEXT DEFAULT '未指定',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -276,6 +277,18 @@ export async function initDb() {
       sent_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE
+    );
+
+    -- 站内通知表
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      schedule_id TEXT,
+      is_read INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE SET NULL
     );
   `);
   return db;

@@ -1,4 +1,13 @@
 import { getDb } from './database';
+// lazy db proxy — defers to getDb() at call time
+const db = new Proxy({} as any, {
+  get(_: any, prop: string) {
+    const realDb = getDb();
+    if (!realDb) throw new Error("Database not initialized");
+    const val = (realDb as any)[prop];
+    return typeof val === "function" ? val.bind(realDb) : val;
+  },
+});
 import { v4 as uuidv4 } from 'uuid';
 
 export const ScriptDB = {
