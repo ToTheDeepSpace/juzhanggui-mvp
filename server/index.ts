@@ -1,8 +1,10 @@
 import express from 'express';
 import cors from 'cors';
 import { initDb, getDb, ScheduleDB } from './db';
+import { authMiddleware } from './middleware/auth';
 
 // 路由模块
+import authRouter from './routes/auth';
 import roomsRouter from './routes/rooms';
 import actorsRouter from './routes/actors';
 import scriptsRouter from './routes/scripts';
@@ -32,7 +34,11 @@ app.use(express.json());
 await initDb();
 const db = getDb();
 
-// 注册路由
+// 认证中间件（保护管理后台 API）
+app.use(authMiddleware);
+
+// 注册路由（auth 在最前，公开路径优先）
+app.use('/', authRouter);
 app.use('/', roomsRouter);
 app.use('/', actorsRouter);
 app.use('/', scriptsRouter);

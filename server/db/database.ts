@@ -155,11 +155,13 @@ export async function initDb() {
     const scriptColNames = new Set(scriptCols.map((c: any) => c.name));
     if (!scriptColNames.has('min_duration')) {
         await db.exec("ALTER TABLE scripts ADD COLUMN min_duration INTEGER DEFAULT 0");
-        // 将现有duration迁移到min_duration和max_duration
-        await db.exec("UPDATE scripts SET min_duration = duration, max_duration = duration");
     }
     if (!scriptColNames.has('max_duration')) {
         await db.exec("ALTER TABLE scripts ADD COLUMN max_duration INTEGER DEFAULT 0");
+    }
+    // 将现有 duration 迁移到 min_duration 和 max_duration
+    if (!scriptColNames.has('min_duration') || !scriptColNames.has('max_duration')) {
+        await db.exec("UPDATE scripts SET min_duration = duration, max_duration = duration WHERE min_duration = 0 AND max_duration = 0");
     }
     
     const playerRoleCols = await db.all("PRAGMA table_info(script_player_roles)");

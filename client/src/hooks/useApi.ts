@@ -27,7 +27,11 @@ async function fetchApi<T>(
 
   try {
     const response = await fetch(`${API_BASE}${endpoint}`, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        // 自动附加认证 token
+        ...(localStorage.getItem('auth_token') ? { Authorization: `Bearer ${localStorage.getItem('auth_token')}` } : {}),
+      },
       ...options,
       signal: controller.signal,
     });

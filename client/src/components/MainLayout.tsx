@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import RoomManager from './RoomManager';
 import ActorManager from './ActorManager';
 import ScriptManager from './ScriptManager';
@@ -20,6 +21,7 @@ const tabs = [
 export default function MainLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { logout } = useAuth();
   
   const currentPath = location.pathname;
   const activeTab = tabs.find(t => t.path === currentPath)?.id || 'schedule';
@@ -36,7 +38,15 @@ export default function MainLayout() {
       {/* 顶部导航 */}
       <header className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-4">
-          <h1 className="text-2xl font-bold text-gray-800 mb-4">剧本杀排期系统</h1>
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-2xl font-bold text-gray-800">剧本杀排期系统</h1>
+            <button
+              onClick={logout}
+              className="px-3 py-1.5 text-sm text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            >
+              退出登录
+            </button>
+          </div>
           <nav className="flex space-x-2">
             {tabs.map((tab) => (
               <button
