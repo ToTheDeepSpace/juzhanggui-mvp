@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { ScriptDB, ScheduleDB, CheckInDB, CustomerDB } from '../db';
-import { getDb } from '../db/database';
 
 const router = Router();
 router.get('/api/schedules/:id/public', async (req, res) => {

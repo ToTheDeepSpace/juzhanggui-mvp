@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { RoomDB, ScriptDB, ScheduleDB, ScheduleActorDB, ConflictChecker } from '../db';
-import { getDb } from '../db/database';
 
 const router = Router();
 router.get('/api/schedules', async (req, res) => {

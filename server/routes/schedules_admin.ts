@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { ScheduleDB, ConflictChecker } from '../db';
-import { getDb } from '../db/database';
 
 const router = Router();
 router.put('/api/schedules/:id/confirm', async (req, res) => {

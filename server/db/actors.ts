@@ -1,62 +1,76 @@
-import { getDb } from './database';
-// lazy db proxy — defers to getDb() at call time
-const db = new Proxy({} as any, {
-  get(_: any, prop: string) {
-    const realDb = getDb();
-    if (!realDb) throw new Error("Database not initialized");
-    const val = (realDb as any)[prop];
-    return typeof val === "function" ? val.bind(realDb) : val;
-  },
-});
-import { v4 as uuidv4 } from 'uuid';
+import { supabase } from '../lib/supabase';
 
 export const ActorDB = {
-  getAll: async () => db.all('SELECT * FROM actors ORDER BY name'),
-  getById: async (id: string) => db.get('SELECT * FROM actors WHERE id = ?', id),
+  getAll: async () => {
+    const { data, error } = await supabase.from('actors').select('*').order('name');
+    if (error) throw error;
+    return data;
+  },
+  getById: async (id: string) => {
+    const { data, error } = await supabase.from('actors').select('*').eq('id', id).single();
+    if (error && error.code !== 'PGRST116') throw error;
+    return data;
+  },
   create: async (name: string, phone?: string) => {
-    const id = uuidv4();
-    await db.run('INSERT INTO actors (id, name, phone) VALUES (?, ?, ?)', id, name, phone || null);
-    return id;
+    const { data, error } = await supabase.from('actors').insert({ name, phone: phone || null }).select().single();
+    if (error) throw error;
+    return data.id;
   },
   update: async (id: string, name: string, phone?: string) => {
-    await db.run('UPDATE actors SET name = ?, phone = ? WHERE id = ?', name, phone || null, id);
+    const { error } = await supabase.from('actors').update({ name, phone: phone || null }).eq('id', id);
+    if (error) throw error;
   },
-  delete: async (id: string) => db.run('DELETE FROM actors WHERE id = ?', id)
+  delete: async (id: string) => {
+    const { error } = await supabase.from('actors').delete().eq('id', id);
+    if (error) throw error;
+  },
+  getSchedules: async (actorId: string, startDate?: string, endDate?: string) => {
+    let q = supabase.from('schedule_actors').select('*, schedules(*)').eq('actor_id', actorId);
+    if (startDate) q = q.gte('schedules.start_time', startDate);
+    if (endDate) q = q.lte('schedules.end_time', endDate);
+    const { data, error } = await q;
+    if (error) throw error;
+    return data;
+  },
+  getAvailability: async (actorId: string, date: string) => {
+    const startOfDay = `${date}T00:00:00`;
+    const endOfDay = `${date}T23:59:59`;
+    const { data, error } = await supabase
+      .from('schedule_actors')
+      .select('start_time, end_time')
+      .eq('actor_id', actorId)
+      .gte('start_time', startOfDay)
+      .lte('start_time', endOfDay)
+      .order('start_time');
+    if (error) throw error;
+    const occupied = (data || []).map((r: any) => ({ start: r.start_time, end: r.end_time }));
+    const slots = [];
+    let cursor = `${date}T09:00:00`;
+    const dayEnd = `${date}T23:00:00`;
+    for (const o of occupied) {
+      if (cursor < o.start) slots.push({ start: cursor, end: o.start });
+      if (o.end > cursor) cursor = o.end;
+    }
+    if (cursor < dayEnd) slots.push({ start: cursor, end: dayEnd });
+    return slots;
+  },
 };
-
 
 export const ActorSkillDB = {
   getByActor: async (actorId: string) => {
-    return db.all(`
-      SELECT s.*, scripts.name as script_name, scripts.duration
-      FROM actor_skills s
-      JOIN scripts ON s.script_id = scripts.id
-      WHERE s.actor_id = ?
-      ORDER BY scripts.name, s.role_name
-    `, actorId);
+    const { data, error } = await supabase.from('actor_skills').select('*, scripts(name)').eq('actor_id', actorId);
+    if (error) throw error;
+    return data;
   },
-  getByScript: async (scriptId: string) => {
-    return db.all(`
-      SELECT s.*, actors.name as actor_name
-      FROM actor_skills s
-      JOIN actors ON s.actor_id = actors.id
-      WHERE s.script_id = ?
-      ORDER BY s.role_name, actors.name
-    `, scriptId);
+  add: async (actorId: string, scriptId: string, roleName: string, roleType: string, proficiency: number) => {
+    const { error } = await supabase.from('actor_skills').insert({
+      actor_id: actorId, script_id: scriptId, role_name: roleName, role_type: roleType, proficiency
+    });
+    if (error) throw error;
   },
-  create: async (actorId: string, scriptId: string, roleName: string, roleType: string = 'actor', proficiency?: number) => {
-    const id = uuidv4();
-    try {
-      await db.run(
-        'INSERT INTO actor_skills (id, actor_id, script_id, role_name, role_type, proficiency) VALUES (?, ?, ?, ?, ?, ?)',
-        id, actorId, scriptId, roleName, roleType, proficiency || 1
-      );
-      return id;
-    } catch (e) {
-      return null;
-    }
+  remove: async (actorId: string, scriptId: string, roleName: string) => {
+    const { error } = await supabase.from('actor_skills').delete()
+      .eq('actor_id', actorId).eq('script_id', scriptId).eq('role_name', roleName);
+    if (error) throw error;
   },
-  delete: async (actorId: string, scriptId: string, roleName: string) => {
-    await db.run('DELETE FROM actor_skills WHERE actor_id = ? AND script_id = ? AND role_name = ?', actorId, scriptId, roleName);
-  }
 };

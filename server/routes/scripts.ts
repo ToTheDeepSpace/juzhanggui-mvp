@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { ScriptDB, ScriptRoleDB, ActorSkillDB } from '../db';
-import { getDb } from '../db/database';
 
 const router = Router();
 router.get('/api/scripts', async (req, res) => {

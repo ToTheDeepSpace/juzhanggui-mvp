@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { ReminderDB } from '../db';
-import { getDb } from '../db/database';
 
 const router = Router();
 router.get('/api/schedules/:id/reminders', async (req, res) => {

@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import { CustomerPreferenceDB } from '../db';
-import { getDb } from '../db/database';
 
 const router = Router();
 router.get('/api/customers/:id/preferences', async (req, res) => {
