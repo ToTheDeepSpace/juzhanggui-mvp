@@ -58,7 +58,7 @@ router.post('/api/actors/:id/skills', async (req, res) => {
     if (!roleName || typeof roleName !== 'string' || !roleName.trim()) {
       return res.status(400).json({ success: false, error: '请填写角色名称' });
     }
-    const result = await ActorSkillDB.add(req.params.id, scriptId, roleName.trim(), roleType || 'actor', proficiency || 1);
+    const result = await ActorSkillDB.create(req.params.id, scriptId, roleName.trim(), roleType || 'actor', proficiency || 1);
     if (result) {
       res.json({ success: true, data: { id: result } });
     } else {
@@ -70,7 +70,7 @@ router.post('/api/actors/:id/skills', async (req, res) => {
 });
 router.delete('/api/actors/:actorId/skills/:scriptId/:roleName', async (req, res) => {
   try {
-    await ActorSkillDB.remove(req.params.actorId, req.params.scriptId, decodeURIComponent(req.params.roleName));
+    await ActorSkillDB.delete(req.params.actorId, req.params.scriptId, decodeURIComponent(req.params.roleName));
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: String(error) });
