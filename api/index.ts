@@ -1,4 +1,6 @@
-// Minimal Vercel serverless handler
 import app from '../server/index';
 
-export default app;
+// Vercel serverless handler
+export default function handler(req: any, res: any) {
+  return app(req, res);
+}
