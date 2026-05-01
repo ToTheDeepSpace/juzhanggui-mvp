@@ -87,6 +87,16 @@ export const ScheduleDB = {
     if (error) throw error;
     return (data || []).map((s: any) => ({ ...s, script_name: s.scripts?.name }));
   },
+  getByActor: async (actorId: string, startDate?: string, endDate?: string) => {
+    let q = supabase.from('schedule_actors')
+      .select('schedule_id, start_time, end_time, role_name, schedules(*, scripts(name), rooms(name))')
+      .eq('actor_id', actorId);
+    if (startDate) q = q.gte('schedules.start_time', startDate);
+    if (endDate) q = q.lte('schedules.end_time', endDate);
+    const { data, error } = await q.order('start_time');
+    if (error) throw error;
+    return data;
+  },
 };
 
 export const ScheduleActorDB = {

@@ -21,9 +21,16 @@ export const CustomerDB = {
     if (error && error.code !== 'PGRST116') throw error;
     return data;
   },
-  create: async (name: string, phone?: string, membershipLevel?: string, balance?: number) => {
+  create: async (nameOrObj: any, phone?: string, membershipLevel?: string, balance?: number) => {
+    let name: string, ph: string | null, ml: string, bal: number;
+    if (typeof nameOrObj === 'object') {
+      name = nameOrObj.name; ph = nameOrObj.phone || null;
+      ml = nameOrObj.membershipLevel || 'none'; bal = nameOrObj.balance || 0;
+    } else {
+      name = nameOrObj; ph = phone || null; ml = membershipLevel || 'none'; bal = balance || 0;
+    }
     const { data, error } = await supabase.from('customers').insert({
-      name, phone: phone || null, membership_level: membershipLevel || 'none', balance: balance || 0
+      name, phone: ph, membership_level: ml, balance: bal
     }).select().single();
     if (error) throw error;
     return data.id;
@@ -41,7 +48,7 @@ export const CustomerDB = {
     const { error } = await supabase.from('customers').delete().eq('id', id);
     if (error) throw error;
   },
-  updateBalance: async (id: string, amount: number, type: string, note?: string, scheduleId?: string) => {
+  addTransaction: async (id: string, amount: number, type: string, note?: string, scheduleId?: string) => {
     const { data: customer } = await supabase.from('customers').select('balance, total_recharged, total_consumed').eq('id', id).single();
     if (!customer) throw new Error('客户不存在');
     const newBalance = type === 'recharge' ? customer.balance + amount : customer.balance - amount;
@@ -71,7 +78,7 @@ export const CustomerPreferenceDB = {
     if (error) throw error;
     return data;
   },
-  add: async (customerId: string, actorId: string, preferenceLevel?: number, notes?: string) => {
+  create: async (customerId: string, actorId: string, preferenceLevel?: number, notes?: string) => {
     const { data, error } = await supabase.from('customer_preferences').insert({
       customer_id: customerId, actor_id: actorId, preference_level: preferenceLevel || 1, notes: notes || null
     }).select().single();
@@ -101,6 +108,12 @@ export const ConflictRecordDB = {
   },
   getPending: async () => {
     const { data, error } = await supabase.from('conflict_records').select('*, customers(name), actors(name)').eq('status', 'pending').order('conflict_date', { ascending: false });
+    if (error) throw error;
+    return data;
+  },
+  getBySchedule: async (scheduleId: string) => {
+    const { data, error } = await supabase.from('conflict_records')
+      .select('*, customers(name), actors(name)').eq('schedule_id', scheduleId).order('conflict_date', { ascending: false });
     if (error) throw error;
     return data;
   },

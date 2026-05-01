@@ -44,7 +44,7 @@ export const ActorDB = {
       .order('start_time');
     if (error) throw error;
     const occupied = (data || []).map((r: any) => ({ start: r.start_time, end: r.end_time }));
-    const slots = [];
+    const slots: { start: string; end: string }[] = [];
     let cursor = `${date}T09:00:00`;
     const dayEnd = `${date}T23:00:00`;
     for (const o of occupied) {
@@ -62,13 +62,19 @@ export const ActorSkillDB = {
     if (error) throw error;
     return data;
   },
-  add: async (actorId: string, scriptId: string, roleName: string, roleType: string, proficiency: number) => {
+  getByScript: async (scriptId: string) => {
+    const { data, error } = await supabase.from('actor_skills').select('*, actors(name)').eq('script_id', scriptId);
+    if (error) throw error;
+    return data;
+  },
+  create: async (actorId: string, scriptId: string, roleName: string, roleType: string, proficiency: number) => {
     const { error } = await supabase.from('actor_skills').insert({
       actor_id: actorId, script_id: scriptId, role_name: roleName, role_type: roleType, proficiency
     });
     if (error) throw error;
+    return true;
   },
-  remove: async (actorId: string, scriptId: string, roleName: string) => {
+  delete: async (actorId: string, scriptId: string, roleName: string) => {
     const { error } = await supabase.from('actor_skills').delete()
       .eq('actor_id', actorId).eq('script_id', scriptId).eq('role_name', roleName);
     if (error) throw error;
