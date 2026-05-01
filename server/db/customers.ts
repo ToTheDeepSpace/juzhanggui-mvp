@@ -85,7 +85,14 @@ export const CustomerPreferenceDB = {
     if (error) throw error;
     return data;
   },
-  update: async (id: string, updates: any) => {
+  update: async (id: string, preferenceLevel?: number | any, notes?: string) => {
+    const updates: any = {};
+    if (typeof preferenceLevel === 'object') {
+      Object.assign(updates, preferenceLevel);
+    } else {
+      if (preferenceLevel !== undefined) updates.preference_level = preferenceLevel;
+      if (notes !== undefined) updates.notes = notes;
+    }
     const { error } = await supabase.from('customer_preferences').update(updates).eq('id', id);
     if (error) throw error;
   },
