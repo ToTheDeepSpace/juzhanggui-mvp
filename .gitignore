@@ -45,3 +45,5 @@ ios/
 
 # Capacitor 资源
 resources/
+
+.vercel

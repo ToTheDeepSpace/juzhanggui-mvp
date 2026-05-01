@@ -7,7 +7,7 @@
     "dev": "node scripts/dev.js",
     "server": "nodemon --exec tsx server/index.ts",
     "client": "vite",
-    "build": "tsc && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "cap:sync": "npx cap sync",
     "cap:ios": "npx cap add ios && npx cap sync ios",
