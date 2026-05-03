@@ -3,7 +3,12 @@
   "outputDirectory": "dist/client",
   "framework": "vite",
   "rewrites": [
-    { "source": "/api/health2", "destination": "/api/health" },
     { "source": "/api/(.*)", "destination": "/api/index" }
-  ]
+  ],
+  "functions": {
+    "api/index.ts": {
+      "runtime": "@vercel/node@3",
+      "maxDuration": 30
+    }
+  }
 }
