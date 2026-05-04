@@ -12,14 +12,18 @@ function hashPhone(phone: string): string {
   return crypto.createHash('sha256').update(`juzhanggui:${phone.trim()}`).digest('hex');
 }
 
-if (!process.env.SUPABASE_URL) throw new Error('Missing env: SUPABASE_URL');
-if (!process.env.SUPABASE_SERVICE_ROLE_KEY) throw new Error('Missing env: SUPABASE_SERVICE_ROLE_KEY');
-if (!process.env.JWT_SECRET) throw new Error('Missing env: JWT_SECRET');
-if (!process.env.DEFAULT_TENANT_ID) throw new Error('Missing env: DEFAULT_TENANT_ID');
+const supabaseUrl = process.env.SUPABASE_URL;
+if (!supabaseUrl) throw new Error('Missing env: SUPABASE_URL');
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
-const TENANT_ID = process.env.DEFAULT_TENANT_ID;
-const JWT_SECRET = process.env.JWT_SECRET;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+if (!supabaseKey) throw new Error('Missing env: SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY');
+
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+const TENANT_ID = process.env.DEFAULT_TENANT_ID || 'f0d6e011-6e75-4c14-95e9-dc61b26871e3';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'script-scheduler-secret-change-me';
+if (!process.env.JWT_SECRET) console.warn('⚠ JWT_SECRET env is not set — using fallback. Set it in Vercel dev dashboard!');
 
 const app = express();
 app.use(cors());
