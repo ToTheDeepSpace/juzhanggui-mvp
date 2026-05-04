@@ -1,70 +1,13 @@
+// 本地开发入口 — 加载 dotenv + 启动端口监听 + 后台任务
 import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
+import app from '../api/app';
 import { ScheduleDB, NotificationDB } from './db';
-import { authMiddleware } from './middleware/auth';
-
-// 路由模块
-import authRouter from './routes/auth';
-import roomsRouter from './routes/rooms';
-import actorsRouter from './routes/actors';
-import scriptsRouter from './routes/scripts';
-import schedulesRouter from './routes/schedules';
-import checkinsRouter from './routes/checkins';
-import batchRouter from './routes/batch';
-import customersRouter from './routes/customers';
-import preferencesRouter from './routes/preferences';
-import conflictsRouter from './routes/conflicts';
-import remindersRouter from './routes/reminders';
-import evaluationsRouter from './routes/evaluations';
-import notificationsRouter from './routes/notifications';
-import schedulesAdminRouter from './routes/schedules_admin';
-import playerRouter from './routes/player';
 
 process.on('uncaughtException', (err) => {
   console.error('[uncaughtException]', err);
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection]', reason);
-});
-
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-// 认证中间件
-app.use(authMiddleware);
-
-// 注册路由
-app.use('/', authRouter);
-app.use('/', roomsRouter);
-app.use('/', actorsRouter);
-app.use('/', scriptsRouter);
-app.use('/', schedulesRouter);
-app.use('/', checkinsRouter);
-app.use('/', batchRouter);
-app.use('/', customersRouter);
-app.use('/', preferencesRouter);
-app.use('/', conflictsRouter);
-app.use('/', remindersRouter);
-app.use('/', evaluationsRouter);
-app.use('/', notificationsRouter);
-app.use('/', schedulesAdminRouter);
-app.use('/', playerRouter);
-
-// ===== 健康检查 =====
-app.get('/api/health', (_req, res) => {
-  res.json({ success: true, message: '服务正常运行' });
-});
-
-// ===== 清理过期 pending 排期 =====
-app.post('/api/schedules/cleanup', async (_req, res) => {
-  try {
-    const count = await ScheduleDB.cleanupExpiredPending();
-    res.json({ success: true, data: { expired: count } });
-  } catch (error) {
-    res.status(500).json({ success: false, error: String(error) });
-  }
 });
 
 // ===== 后台任务（仅本地开发环境，Vercel Serverless 不执行）=====

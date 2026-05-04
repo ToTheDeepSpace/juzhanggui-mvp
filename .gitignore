@@ -21,6 +21,9 @@ dist/
 *.log
 npm-debug.log*
 
+# Vercel 构建产物
+api/index.js
+
 # 调试输出文件
 *.txt
 *.bak
