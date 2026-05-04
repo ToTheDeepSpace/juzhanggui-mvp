@@ -6,12 +6,20 @@ import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 
-const supabaseUrl = process.env.SUPABASE_URL || 'https://sntrybbtdkifgjfjgmuw.supabase.co';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
-const TENANT_ID = process.env.DEFAULT_TENANT_ID || 'f0d6e011-6e75-4c14-95e9-dc61b26871e3';
-const JWT_SECRET = process.env.JWT_SECRET || 'script-scheduler-secret-change-me';
+function hashPhone(phone: string): string {
+  return crypto.createHash('sha256').update(`juzhanggui:${phone.trim()}`).digest('hex');
+}
+
+if (!process.env.SUPABASE_URL) throw new Error('Missing env: SUPABASE_URL');
+if (!process.env.SUPABASE_SERVICE_ROLE_KEY) throw new Error('Missing env: SUPABASE_SERVICE_ROLE_KEY');
+if (!process.env.JWT_SECRET) throw new Error('Missing env: JWT_SECRET');
+if (!process.env.DEFAULT_TENANT_ID) throw new Error('Missing env: DEFAULT_TENANT_ID');
+
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+const TENANT_ID = process.env.DEFAULT_TENANT_ID;
+const JWT_SECRET = process.env.JWT_SECRET;
 
 const app = express();
 app.use(cors());
@@ -33,7 +41,14 @@ app.use((req: any, res: any, next: any) => {
   if (isPublicPath(req.path) || req.method === 'OPTIONS') return next();
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ success: false, error: '未登录' });
-  try { req.user = jwt.verify(auth.substring(7), JWT_SECRET); next(); }
+  try {
+    const decoded = jwt.verify(auth.substring(7), JWT_SECRET) as any;
+    req.user = decoded;
+    if (!req.path.startsWith('/api/player/') && decoded.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '无管理员权限' });
+    }
+    next();
+  }
   catch { res.status(401).json({ success: false, error: '登录已过期' }); }
 });
 
@@ -51,7 +66,12 @@ app.post('/api/auth/login', async (req: any, res: any) => {
   if (!await bcrypt.compare(password, hash)) return res.status(401).json(err(new Error('密码错误')));
   res.json(ok({ token: jwt.sign({ role: 'admin' }, JWT_SECRET, { expiresIn: '24h' }) }));
 });
-app.get('/api/auth/verify', (_: any, res: any) => res.json(ok({ valid: true })));
+app.get('/api/auth/verify', (req: any, res: any) => {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) return res.json(ok({ valid: false }));
+  try { jwt.verify(auth.substring(7), JWT_SECRET); res.json(ok({ valid: true })); }
+  catch { res.json(ok({ valid: false })); }
+});
 
 // ===== Rooms =====
 app.get('/api/rooms', async (_: any, res: any) => {
@@ -112,40 +132,36 @@ app.post('/api/actors/:id/skills', async (req: any, res: any) => {
 // ===== Scripts =====
 app.get('/api/scripts', async (_: any, res: any) => {
   try {
-    const { data: scripts } = await supabase.from('scripts').select('*').eq('tenant_id', TENANT_ID).order('name');
+    const { data: scripts } = await supabase.from('scripts').select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender)').eq('tenant_id', TENANT_ID).order('name');
     for (const s of scripts || []) {
-      const [pr, ar] = await Promise.all([
-        supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.id),
-        supabase.from('script_actor_roles').select('role_name, gender').eq('script_id', s.id)
-      ]);
-      s.player_roles = (pr.data || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
-      s.actor_roles = (ar.data || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
-      s.player_count = pr.data?.length || 0;
-      s.actor_count = ar.data?.length || 0;
+      s.player_roles = (s.script_player_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
+      s.actor_roles = (s.script_actor_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
+      s.player_count = s.script_player_roles?.length || 0;
+      s.actor_count = s.script_actor_roles?.length || 0;
       s.duration = s.duration_minutes || 0;
       s.min_duration = s.min_duration_hours ? Math.round(s.min_duration_hours * 60) : 0;
       s.max_duration = s.max_duration_hours ? Math.round(s.max_duration_hours * 60) : 0;
+      delete s.script_player_roles;
+      delete s.script_actor_roles;
     }
     res.json(ok(scripts || []));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.get('/api/scripts/:id', async (req: any, res: any) => {
   try {
-    const { data: s } = await supabase.from('scripts').select('*').eq('id', req.params.id).eq('tenant_id', TENANT_ID).single();
+    const { data: s } = await supabase.from('scripts').select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender)').eq('id', req.params.id).eq('tenant_id', TENANT_ID).single();
     if (!s) return res.status(404).json(err(new Error('不存在')));
-    const [pr, ar, skills] = await Promise.all([
-      supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.id),
-      supabase.from('script_actor_roles').select('role_name, gender').eq('script_id', s.id),
-      supabase.from('actor_skills').select('*, actors(name)').eq('script_id', s.id)
-    ]);
-    s.player_roles = (pr.data || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
-    s.actor_roles = (ar.data || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
-    s.skilled_actors = skills.data || [];
-    s.player_count = pr.data?.length || 0;
-    s.actor_count = ar.data?.length || 0;
+    const { data: skills } = await supabase.from('actor_skills').select('*, actors(name)').eq('script_id', s.id);
+    s.player_roles = (s.script_player_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
+    s.actor_roles = (s.script_actor_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
+    s.skilled_actors = skills || [];
+    s.player_count = s.script_player_roles?.length || 0;
+    s.actor_count = s.script_actor_roles?.length || 0;
     s.duration = s.duration_minutes || 0;
     s.min_duration = s.min_duration_hours ? Math.round(s.min_duration_hours * 60) : 0;
     s.max_duration = s.max_duration_hours ? Math.round(s.max_duration_hours * 60) : 0;
+    delete s.script_player_roles;
+    delete s.script_actor_roles;
     res.json(ok(s));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -218,7 +234,7 @@ app.post('/api/schedules', async (req: any, res: any) => {
       status: d.status || 'pending', customer_name: d.customerName, customer_phone: d.customerPhone,
       player_count: d.playerCount, note: d.note
     }).select().single();
-    if (d.actors) for (const a of d.actors) await supabase.from('schedule_actors').insert({ schedule_id: data!.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime });
+    if (d.actors && d.actors.length) await supabase.from('schedule_actors').insert(d.actors.map((a: any) => ({ schedule_id: data!.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime })));
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -238,7 +254,7 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
     await supabase.from('schedules').update(fields).eq('id', req.params.id);
     if (d.actors) {
       await supabase.from('schedule_actors').delete().eq('schedule_id', req.params.id);
-      for (const a of d.actors) await supabase.from('schedule_actors').insert({ schedule_id: req.params.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime });
+      if (d.actors.length) await supabase.from('schedule_actors').insert(d.actors.map((a: any) => ({ schedule_id: req.params.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime })));
     }
     res.json(ok());
   } catch (e) { res.status(500).json(err(e)); }
@@ -268,7 +284,7 @@ app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
   try {
     const { name, phone, role, avatar } = req.body;
     if (!name) return res.status(400).json(err(new Error('请填写姓名')));
-    const { data } = await supabase.from('checkins').insert({ schedule_id: req.params.id, guest_name: name, guest_phone: phone || null, role, guest_avatar: avatar || null }).select().single();
+    const { data } = await supabase.from('checkins').insert({ schedule_id: req.params.id, guest_name: name, guest_phone: phone ? hashPhone(phone) : null, role, guest_avatar: avatar || null }).select().single();
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -371,9 +387,10 @@ app.post('/api/player/login', async (req: any, res: any) => {
     const { phone, displayName } = req.body;
     if (!phone) return res.status(400).json(err(new Error('请填写手机号')));
     if (!displayName) return res.status(400).json(err(new Error('请填写昵称')));
-    let { data: p } = await supabase.from('players').select('*').eq('phone_hash', phone.trim()).eq('tenant_id', TENANT_ID).maybeSingle();
+    const phoneHash = hashPhone(phone);
+    let { data: p } = await supabase.from('players').select('*').eq('phone_hash', phoneHash).eq('tenant_id', TENANT_ID).maybeSingle();
     if (p) { await supabase.from('players').update({ display_name: displayName.trim() }).eq('id', p.id); }
-    else { const r = await supabase.from('players').insert({ phone_hash: phone.trim(), display_name: displayName.trim(), name_encrypted: displayName.trim(), tenant_id: TENANT_ID }).select().single(); p = r.data; }
+    else { const r = await supabase.from('players').insert({ phone_hash: phoneHash, display_name: displayName.trim(), name_encrypted: displayName.trim(), tenant_id: TENANT_ID }).select().single(); p = r.data; }
     const token = jwt.sign({ role: 'player', playerId: p!.id, tenantId: TENANT_ID }, JWT_SECRET, { expiresIn: '24h' });
     res.json(ok({ token, player: { id: p!.id, displayName: p!.display_name, phone: phone.trim(), totalGames: p!.total_games || 0 } }));
   } catch (e) { res.status(500).json(err(e)); }
@@ -390,55 +407,6 @@ app.get('/api/player/schedules', async (req: any, res: any) => {
       schedule: c.schedules ? { id: c.schedules.id, scriptName: c.schedules.scripts?.name, roomName: c.schedules.rooms?.name, startTime: c.schedules.start_time, endTime: c.schedules.end_time, status: c.schedules.status, customerName: c.schedules.customer_name, playerCount: c.schedules.player_count } : null,
     }))));
   } catch (e) { res.status(500).json(err(e)); }
-});
-
-// ===== 灵契表设置（开发用，执行一次即可）=====
-app.get('/api/lc/setup', async (_: any, res: any) => {
-  try {
-    const sql = \`
-      CREATE TABLE IF NOT EXISTS lc_profiles (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        phone TEXT UNIQUE NOT NULL,
-        display_name TEXT NOT NULL,
-        avatar TEXT, bio TEXT,
-        tags JSONB DEFAULT '[]'::jsonb, city TEXT,
-        role_type TEXT NOT NULL DEFAULT 'creator',
-        social_links JSONB DEFAULT '{}'::jsonb,
-        wechat TEXT, is_visible BOOLEAN DEFAULT true,
-        created_at TIMESTAMPTZ DEFAULT now(),
-        updated_at TIMESTAMPTZ DEFAULT now()
-      );
-      CREATE TABLE IF NOT EXISTS lc_services (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        creator_id UUID NOT NULL REFERENCES lc_profiles(id) ON DELETE CASCADE,
-        service_type TEXT NOT NULL, price DECIMAL(10,2) NOT NULL DEFAULT 0,
-        duration TEXT, description TEXT, is_active BOOLEAN DEFAULT true,
-        created_at TIMESTAMPTZ DEFAULT now()
-      );
-      CREATE TABLE IF NOT EXISTS lc_availability (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        creator_id UUID NOT NULL REFERENCES lc_profiles(id) ON DELETE CASCADE,
-        date DATE NOT NULL, start_time TIME NOT NULL, end_time TIME NOT NULL,
-        is_booked BOOLEAN DEFAULT false, note TEXT,
-        created_at TIMESTAMPTZ DEFAULT now()
-      );
-      CREATE TABLE IF NOT EXISTS lc_portfolio (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        creator_id UUID NOT NULL REFERENCES lc_profiles(id) ON DELETE CASCADE,
-        image_url TEXT NOT NULL, caption TEXT,
-        created_at TIMESTAMPTZ DEFAULT now()
-      );
-    \`;
-    // 逐条执行（每条语句之间用 ; 分隔）
-    const stmts = sql.split(';').filter((s: string) => s.trim().length > 0);
-    for (const stmt of stmts) {
-      const { error } = await supabase.rpc('exec_sql', { query: stmt + ';' });
-      if (error && !error.message?.includes('already exists')) {
-        console.log('SQL error:', error.message);
-      }
-    }
-    res.json(ok({ message: 'Setup complete' }));
-  } catch (e: any) { res.status(500).json(err(e)); }
 });
 
 export default app;
