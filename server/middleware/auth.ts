@@ -9,6 +9,7 @@ const PUBLIC_PATHS = [
   '/api/health',
   '/api/auth/login',
   '/api/auth/verify',
+  '/api/player/login',
 ];
 
 // 公开路径前缀（所有匹配前缀的路径都开放）

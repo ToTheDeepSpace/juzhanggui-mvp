@@ -4,6 +4,8 @@ import MainLayout from './components/MainLayout';
 import LoginPage from './pages/LoginPage';
 import CheckInPage from './pages/CheckInPage';
 import EvaluationPage from './pages/EvaluationPage';
+import PlayerLogin from './pages/PlayerLogin';
+import PlayerDashboard from './pages/PlayerDashboard';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
@@ -49,6 +51,10 @@ function App() {
           {/* 公开页面：签到、评价 */}
           <Route path="/checkin/:scheduleId" element={<CheckInPage />} />
           <Route path="/evaluate/:scheduleId" element={<EvaluationPage />} />
+
+          {/* 玩家端 */}
+          <Route path="/player/login" element={<PlayerLogin />} />
+          <Route path="/player/dashboard" element={<PlayerDashboard />} />
           
           {/* 登录页：已登录自动跳转 */}
           <Route path="/login" element={

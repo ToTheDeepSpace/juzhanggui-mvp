@@ -19,6 +19,7 @@ import remindersRouter from './routes/reminders';
 import evaluationsRouter from './routes/evaluations';
 import notificationsRouter from './routes/notifications';
 import schedulesAdminRouter from './routes/schedules_admin';
+import playerRouter from './routes/player';
 
 process.on('uncaughtException', (err) => {
   console.error('[uncaughtException]', err);
@@ -49,6 +50,7 @@ app.use('/', remindersRouter);
 app.use('/', evaluationsRouter);
 app.use('/', notificationsRouter);
 app.use('/', schedulesAdminRouter);
+app.use('/', playerRouter);
 
 // ===== 健康检查 =====
 app.get('/api/health', (_req, res) => {
