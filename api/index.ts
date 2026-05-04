@@ -38,9 +38,9 @@ function authMiddleware(req: any, res: any, next: any) {
 function ok(data?: any) { return { success: true, data }; }
 function err(e: any) { return { success: false, error: e?.message || String(e) }; }
 
-async function handle(handler: () => Promise<any>, res: any) {
-  try { res.json(ok(await handler())); }
-  catch (e: any) { res.status(500).json(err(e)); }
+async function handle(handler: () => any, res: any) {
+  try { const result = await handler(); res.json(ok(result)); }
+  catch (e: any) { if (!res.headersSent) res.status(500).json(err(e)); }
 }
 
 // ===== App =====
