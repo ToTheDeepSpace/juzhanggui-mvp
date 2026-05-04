@@ -7,7 +7,7 @@
     "dev": "node scripts/dev.js",
     "server": "nodemon --exec tsx server/index.ts",
     "client": "vite",
-    "build": "vite build && npx esbuild api/index.ts --bundle --platform=node --format=esm --outfile=api/index.js --external:./node_modules/* --external:sqlite3 --external:better-sqlite3",
+    "build": "vite build && npx esbuild api/entry.ts --bundle --platform=node --format=esm --outfile=api/index.js --external:./node_modules/* --external:sqlite3 --external:better-sqlite3",
     "preview": "vite preview",
     "cap:sync": "npx cap sync",
     "cap:ios": "npx cap add ios && npx cap sync ios",

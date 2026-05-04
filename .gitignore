@@ -21,7 +21,7 @@ dist/
 *.log
 npm-debug.log*
 
-# Vercel 构建产物
+# Vercel 构建产物（由 esbuild 在 npm run build 时生成）
 api/index.js
 
 # 调试输出文件
