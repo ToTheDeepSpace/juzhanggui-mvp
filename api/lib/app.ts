@@ -20,6 +20,12 @@ app.use((req, _res, next) => {
 
 app.use(authMiddleware);
 
+// 调试：记录所有请求路径
+app.use((req, _res, next) => {
+  console.log(`[route] ${req.method} ${(req as any).originalUrl || req.url} (path=${req.path}, url=${req.url})`);
+  next();
+});
+
 // ===== 路由 =====
 app.post('/api/auth/login', async (req, res) => {
   try {
@@ -34,7 +40,10 @@ app.post('/api/auth/login', async (req, res) => {
   } catch (e) { res.status(500).json({ success: false, error: String(e) }); }
 });
 app.get('/api/auth/verify', (_req, res) => res.json({ success: true, data: { valid: true } }));
-app.get('/api/health', (_req, res) => res.json({ success: true, message: '服务正常运行' }));
+app.get('/api/health', (req, res) => {
+  console.log(`[health] originalUrl=${(req as any).originalUrl}, url=${req.url}, path=${req.path}`);
+  res.json({ success: true, message: '服务正常运行' });
+});
 
 app.post('/api/schedules/cleanup', async (_req, res) => {
   try { const count = await ScheduleDB.cleanupExpiredPending(); res.json({ success: true, data: { expired: count } }); }
