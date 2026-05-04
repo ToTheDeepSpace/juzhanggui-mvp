@@ -1,6 +1,6 @@
 // 本地开发入口 — 加载 dotenv + 启动端口监听 + 后台任务
 import 'dotenv/config';
-import app from '../api/app';
+import app from '../api/lib/app';
 import { ScheduleDB, NotificationDB } from './db';
 
 process.on('uncaughtException', (err) => {

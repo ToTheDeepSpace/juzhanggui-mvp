@@ -1,20 +1,16 @@
-// ==========================================
-// 共享 Express App — Vercel + 本地开发共用
-// 所有路由注册在此统一维护
-// ==========================================
+// ===== 共享 Express App — api/lib 子目录，Vercel 不编译子目录 =====
 
 import express from 'express';
 import cors from 'cors';
-import { supabase, DEFAULT_TENANT_ID } from '../server/lib/supabase';
-import { authMiddleware, generateToken } from '../server/middleware/auth';
-import { ScheduleDB } from '../server/db';
+import { supabase, DEFAULT_TENANT_ID } from '../../server/lib/supabase';
+import { authMiddleware, generateToken } from '../../server/middleware/auth';
+import { ScheduleDB } from '../../server/db';
 
 const app = express();
 app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json());
 
-// 修正 Vercel serverless 上的 req.url（重写后可能丢失原始路径）
 app.use((req, _res, next) => {
   if ((req as any).originalUrl && (req as any).originalUrl !== req.url) {
     req.url = (req as any).originalUrl;
@@ -24,7 +20,7 @@ app.use((req, _res, next) => {
 
 app.use(authMiddleware);
 
-// ===== 路由 — 全部直接注册在 app 上（避免 Vercel serverless 上 Router 兼容问题）=====
+// ===== 路由 =====
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { password } = req.body;
@@ -35,23 +31,14 @@ app.post('/api/auth/login', async (req, res) => {
     if (!valid) return res.status(401).json({ success: false, error: '密码错误' });
     const token = generateToken({ role: 'admin' });
     res.json({ success: true, data: { token } });
-  } catch (e) {
-    res.status(500).json({ success: false, error: String(e) });
-  }
+  } catch (e) { res.status(500).json({ success: false, error: String(e) }); }
 });
 app.get('/api/auth/verify', (_req, res) => res.json({ success: true, data: { valid: true } }));
-
-// 健康检查
 app.get('/api/health', (_req, res) => res.json({ success: true, message: '服务正常运行' }));
 
-// 清理过期排期
 app.post('/api/schedules/cleanup', async (_req, res) => {
-  try {
-    const count = await ScheduleDB.cleanupExpiredPending();
-    res.json({ success: true, data: { expired: count } });
-  } catch (e) {
-    res.status(500).json({ success: false, error: String(e) });
-  }
+  try { const count = await ScheduleDB.cleanupExpiredPending(); res.json({ success: true, data: { expired: count } }); }
+  catch (e) { res.status(500).json({ success: false, error: String(e) }); }
 });
 
 // 房间
