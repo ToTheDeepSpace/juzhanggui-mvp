@@ -10,13 +10,14 @@ import ConflictResolutionPage from '../pages/ConflictResolutionPage';
 
 type Tab = 'rooms' | 'actors' | 'scripts' | 'schedule' | 'customers' | 'conflicts';
 
+const basePath = '/store/manage';
 const tabs = [
-  { id: 'schedule' as Tab, label: '📅 排期管理', color: 'bg-blue-500', path: '/schedule' },
-  { id: 'rooms' as Tab, label: '🚪 房间管理', color: 'bg-green-500', path: '/rooms' },
-  { id: 'actors' as Tab, label: '🎭 卡司管理', color: 'bg-purple-500', path: '/actors' },
-  { id: 'scripts' as Tab, label: '📖 剧本管理', color: 'bg-orange-500', path: '/scripts' },
-  { id: 'customers' as Tab, label: '⭐ 会员管理', color: 'bg-yellow-500', path: '/customers' },
-  { id: 'conflicts' as Tab, label: '⚖️ 矛盾调解', color: 'bg-red-500', path: '/conflicts' },
+  { id: 'schedule' as Tab, label: '📅 排期管理', color: 'bg-blue-500', path: `${basePath}/schedule` },
+  { id: 'rooms' as Tab, label: '🚪 房间管理', color: 'bg-green-500', path: `${basePath}/rooms` },
+  { id: 'actors' as Tab, label: '🎭 卡司管理', color: 'bg-purple-500', path: `${basePath}/actors` },
+  { id: 'scripts' as Tab, label: '📖 剧本管理', color: 'bg-orange-500', path: `${basePath}/scripts` },
+  { id: 'customers' as Tab, label: '⭐ 会员管理', color: 'bg-yellow-500', path: `${basePath}/customers` },
+  { id: 'conflicts' as Tab, label: '⚖️ 矛盾调解', color: 'bg-red-500', path: `${basePath}/conflicts` },
 ];
 
 export default function MainLayout() {
@@ -72,13 +73,13 @@ export default function MainLayout() {
       {/* 主内容区 */}
       <main className="max-w-7xl mx-auto px-4 py-6">
         <Routes>
-          <Route path="/rooms" element={<RoomManager />} />
-          <Route path="/actors" element={<ActorManager />} />
-          <Route path="/scripts" element={<ScriptManager />} />
-          <Route path="/schedule" element={<ScheduleCalendar />} />
-          <Route path="/customers" element={<CustomerManager />} />
-          <Route path="/conflicts" element={<ConflictResolutionPage />} />
-          <Route path="/" element={<Navigate to="/schedule" replace />} />
+          <Route path="rooms" element={<RoomManager />} />
+          <Route path="actors" element={<ActorManager />} />
+          <Route path="scripts" element={<ScriptManager />} />
+          <Route path="schedule" element={<ScheduleCalendar />} />
+          <Route path="customers" element={<CustomerManager />} />
+          <Route path="conflicts" element={<ConflictResolutionPage />} />
+          <Route path="" element={<Navigate to={`${basePath}/schedule`} replace />} />
         </Routes>
       </main>
     </div>

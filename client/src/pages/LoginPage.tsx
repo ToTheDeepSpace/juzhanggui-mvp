@@ -23,7 +23,7 @@ export default function LoginPage() {
     setSubmitting(false);
 
     if (result.success) {
-      navigate('/schedule', { replace: true });
+      navigate('/store/manage', { replace: true });
     } else {
       setError(result.error || '登录失败');
     }
