@@ -1,6 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.SUPABASE_URL || 'https://sntrybbtdkifgjfjgmuw.supabase.co';
-const supabaseKey = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNudHJ5YmJ0ZGtpZmdqZmpnbXV3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzczNTMxNjUsImV4cCI6MjA5MjkyOTE2NX0.uwhCV5_9EmQqYJCYxVeS1Rtnmoaxvs58DgLdRfFH8EU';
+// 服务端使用 service_role 密钥（绕过 RLS 限制）
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
+
+// 临时默认店铺 ID（后续从 JWT token 中解析）
+export const DEFAULT_TENANT_ID = process.env.DEFAULT_TENANT_ID || 'f0d6e011-6e75-4c14-95e9-dc61b26871e3';

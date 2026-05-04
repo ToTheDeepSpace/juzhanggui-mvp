@@ -8,6 +8,7 @@ export default function RoomManager() {
   const [editingRoom, setEditingRoom] = useState<Room | null>(null);
   const [formData, setFormData] = useState({ name: '', capacity: '' });
   const [showForm, setShowForm] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
     loadRooms();
@@ -22,15 +23,22 @@ export default function RoomManager() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMsg(null);
     const data = {
       name: formData.name,
       capacity: parseInt(formData.capacity) || 0,
     };
 
+    let result;
     if (editingRoom) {
-      await put(`/rooms/${editingRoom.id}`, data);
+      result = await put(`/rooms/${editingRoom.id}`, data);
     } else {
-      await post('/rooms', data);
+      result = await post('/rooms', data);
+    }
+
+    if (!result.success) {
+      setErrorMsg(result.error || '保存失败，请重试');
+      return;
     }
 
     setFormData({ name: '', capacity: '' });
@@ -67,6 +75,12 @@ export default function RoomManager() {
           + 添加房间
         </button>
       </div>
+
+      {errorMsg && (
+        <div className="mb-4 p-3 bg-red-100 border border-red-300 text-red-700 rounded-lg">
+          {errorMsg}
+        </div>
+      )}
 
       {showForm && (
         <div className="mb-6 p-4 bg-gray-50 rounded-lg">
