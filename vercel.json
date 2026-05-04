@@ -2,7 +2,13 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist/client",
   "framework": "vite",
+  "functions": {
+    "api/index.ts": {
+      "includeFiles": "server/**"
+    }
+  },
   "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/index.html" },
     { "source": "/api/(.*)", "destination": "/api/index" }
   ]
 }
