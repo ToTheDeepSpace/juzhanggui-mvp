@@ -1,25 +1,14 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 import type { Room, Actor, Script } from '../types';
 import type { ScheduleWithDetails, ScheduleFormData, SelectedActor } from '../types/schedule';
-import { format, addDays, isSameDay, parseISO } from 'date-fns';
+import { format, addDays, parseISO } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 
 // 子组件
-import PendingScheduleCard from './PendingScheduleCard';
 import ScheduleCalendarModal from './ScheduleCalendarModal';
 import QRCodeModal from './QRCodeModal';
 import ConfirmScheduleModal from './ConfirmScheduleModal';
-
-const getStatusColor = (status: string) => {
-  switch (status) {
-    case 'scheduled': return 'bg-blue-500';
-    case 'ongoing': return 'bg-green-500';
-    case 'completed': return 'bg-gray-500';
-    case 'cancelled': return 'bg-red-500';
-    default: return 'bg-blue-500';
-  }
-};
 
 export default function ScheduleCalendar() {
   const { get, post, put, del, loading } = useApi();
@@ -49,55 +38,6 @@ export default function ScheduleCalendar() {
   });
   const [selectedActors, setSelectedActors] = useState<SelectedActor[]>([]);
 
-  // 时间轴时段（9:00 - 23:00，每半小时）
-  const timeSlots = useMemo(() => {
-    const slots = [];
-    for (let hour = 9; hour <= 23; hour++) {
-      for (let minute = 0; minute < 60; minute += 30) {
-        if (hour === 23 && minute === 30) break; // 只到23:00
-        slots.push(`${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`);
-      }
-    }
-    return slots;
-  }, []);
-
-  // 解析时间段字符串为日期时间
-  const parseTimeSlot = (slot: string, baseDate: Date): Date => {
-    const [hours, minutes] = slot.split(':').map(Number);
-    const date = new Date(baseDate);
-    date.setHours(hours, minutes, 0, 0);
-    return date;
-  };
-
-  // 获取剧本在指定时间段的排期
-  const getSchedulesForScriptTime = (scriptId: string, startTime: Date, endTime: Date) => {
-    return schedules.filter(s => {
-      if (s.script_id !== scriptId || s.status === 'cancelled') return false;
-      const sStart = parseISO(s.start_time);
-      const sEnd = parseISO(s.end_time);
-      // 只显示选中日期的排期
-      if (!isSameDay(sStart, startTime)) return false;
-      // 排期与时间段有重叠
-      return sStart < endTime && sEnd > startTime;
-    });
-  };
-
-  // 打开为剧本创建排期的弹窗
-  const openCreateScheduleForScript = (scriptId: string, startTime: Date) => {
-    const script = scripts.find(s => s.id === scriptId);
-    if (!script) return;
-    resetForm();
-    setFormData({
-      roomId: '', scriptId, date: format(startTime, 'yyyy-MM-dd'),
-      startTime: format(startTime, 'HH:mm'), customerName: '', customerPhone: '',
-      playerCount: '', note: '',
-    });
-    setSelectedActors([]);
-    setIsPendingMode(false);
-    setEditingSchedule(null);
-    setShowModal(true);
-  };
-
   // 加载数据
   useEffect(() => { loadData(); }, []);
 
@@ -111,28 +51,6 @@ export default function ScheduleCalendar() {
     if (scriptsRes.success) setScripts(scriptsRes.data || []);
     if (schedulesRes.success) setSchedules(schedulesRes.data || []);
   };
-
-  // 重置表单
-  const resetForm = () => {
-    setFormData({
-      roomId: '', scriptId: '', date: format(new Date(), 'yyyy-MM-dd'),
-      startTime: '14:00', customerName: '', customerPhone: '',
-      playerCount: '', note: '',
-    });
-    setSelectedActors([]);
-  };
-  // 分离待排期 / 已确定
-  const { pendingSchedules, confirmedSchedules: _confirmedSchedules } = useMemo(() => {
-    const pending: ScheduleWithDetails[] = [];
-    const confirmed: ScheduleWithDetails[] = [];
-    schedules.forEach(s => {
-      if (s.status === 'cancelled') return;
-      if (!s.room_id) pending.push(s); else confirmed.push(s);
-    });
-    return { pendingSchedules: pending, confirmedSchedules: confirmed };
-  }, [schedules]);
-
-
 
   // 踢出客人
   const handleKickGuest = async (scheduleId: string, guestName: string, role: string) => {
@@ -158,8 +76,6 @@ export default function ScheduleCalendar() {
       startTime: '14:00', customerName: '', customerPhone: '', playerCount: '', note: '' });
     setSelectedActors([]); setShowModal(true);
   };
-
-
 
   const openEditModal = (schedule: ScheduleWithDetails) => {
     setEditingSchedule(schedule); setIsPendingMode(!schedule.room_id);
@@ -334,11 +250,7 @@ export default function ScheduleCalendar() {
 
       {/* 待排期悬浮按钮 */}
       <button onClick={openCreatePendingModal}
-        className="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-500 transition-colors flex items-center justify-center text-2xl">
-        +
-      </button>
-      <button onClick={openCreatePendingModal}
-        className="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-500 transition-colors flex items-center justify-center text-2xl">
+        className="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-500 transition-colors flex items-center justify-center text-2xl z-50">
         +
       </button>
 
