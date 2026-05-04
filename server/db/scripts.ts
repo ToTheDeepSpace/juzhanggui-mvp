@@ -1,8 +1,18 @@
-import { supabase } from '../lib/supabase';
+import { supabase, DEFAULT_TENANT_ID } from '../lib/supabase';
+
+/** 把数据库行转成前端期望的格式 */
+function mapScript(s: any) {
+  if (!s) return null;
+  s.duration = s.duration_minutes || 0;
+  s.min_duration = s.min_duration_hours ? Math.round(s.min_duration_hours * 60) : 0;
+  s.max_duration = s.max_duration_hours ? Math.round(s.max_duration_hours * 60) : 0;
+  return s;
+}
 
 export const ScriptDB = {
   getAll: async () => {
-    const { data: scripts, error } = await supabase.from('scripts').select('*').order('name');
+    const { data: scripts, error } = await supabase
+      .from('scripts').select('*').eq('tenant_id', DEFAULT_TENANT_ID).order('name');
     if (error) throw error;
     for (const s of scripts || []) {
       const { data: pr } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.id);
@@ -11,12 +21,13 @@ export const ScriptDB = {
       s.actor_roles = (ar || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
       s.player_count = (pr || []).length;
       s.actor_count = (ar || []).length;
-      s.duration = s.min_duration;
+      mapScript(s);
     }
     return scripts || [];
   },
   getById: async (id: string) => {
-    const { data: script, error } = await supabase.from('scripts').select('*').eq('id', id).single();
+    const { data: script, error } = await supabase
+      .from('scripts').select('*').eq('id', id).eq('tenant_id', DEFAULT_TENANT_ID).single();
     if (error) throw error;
     if (!script) return null;
     const { data: pr } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', id);
@@ -25,12 +36,15 @@ export const ScriptDB = {
     script.actor_roles = (ar || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
     script.player_count = (pr || []).length;
     script.actor_count = (ar || []).length;
-    script.duration = script.min_duration;
-    return script;
+    return mapScript(script);
   },
   create: async (name: string, minDuration: number, maxDuration: number, playerRoles: string[] = [], actorRoles: string[] = []) => {
     const { data, error } = await supabase.from('scripts').insert({
-      name, min_duration: minDuration, max_duration: maxDuration, duration: minDuration
+      name,
+      duration_minutes: minDuration,
+      min_duration_hours: minDuration / 60,
+      max_duration_hours: maxDuration / 60,
+      tenant_id: DEFAULT_TENANT_ID,
     }).select().single();
     if (error) throw error;
     const scriptId = data.id;
@@ -50,8 +64,11 @@ export const ScriptDB = {
   },
   update: async (id: string, name: string, minDuration: number, maxDuration: number, playerRoles: string[] = [], actorRoles: string[] = []) => {
     const { error } = await supabase.from('scripts').update({
-      name, min_duration: minDuration, max_duration: maxDuration, duration: minDuration
-    }).eq('id', id);
+      name,
+      duration_minutes: minDuration,
+      min_duration_hours: minDuration / 60,
+      max_duration_hours: maxDuration / 60,
+    }).eq('id', id).eq('tenant_id', DEFAULT_TENANT_ID);
     if (error) throw error;
     await supabase.from('script_player_roles').delete().eq('script_id', id);
     await supabase.from('script_actor_roles').delete().eq('script_id', id);
@@ -69,7 +86,7 @@ export const ScriptDB = {
     }
   },
   delete: async (id: string) => {
-    const { error } = await supabase.from('scripts').delete().eq('id', id);
+    const { error } = await supabase.from('scripts').delete().eq('id', id).eq('tenant_id', DEFAULT_TENANT_ID);
     if (error) throw error;
   },
 };
