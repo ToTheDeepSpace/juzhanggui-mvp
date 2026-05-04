@@ -392,4 +392,53 @@ app.get('/api/player/schedules', async (req: any, res: any) => {
   } catch (e) { res.status(500).json(err(e)); }
 });
 
+// ===== 灵契表设置（开发用，执行一次即可）=====
+app.get('/api/lc/setup', async (_: any, res: any) => {
+  try {
+    const sql = \`
+      CREATE TABLE IF NOT EXISTS lc_profiles (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        phone TEXT UNIQUE NOT NULL,
+        display_name TEXT NOT NULL,
+        avatar TEXT, bio TEXT,
+        tags JSONB DEFAULT '[]'::jsonb, city TEXT,
+        role_type TEXT NOT NULL DEFAULT 'creator',
+        social_links JSONB DEFAULT '{}'::jsonb,
+        wechat TEXT, is_visible BOOLEAN DEFAULT true,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS lc_services (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        creator_id UUID NOT NULL REFERENCES lc_profiles(id) ON DELETE CASCADE,
+        service_type TEXT NOT NULL, price DECIMAL(10,2) NOT NULL DEFAULT 0,
+        duration TEXT, description TEXT, is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS lc_availability (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        creator_id UUID NOT NULL REFERENCES lc_profiles(id) ON DELETE CASCADE,
+        date DATE NOT NULL, start_time TIME NOT NULL, end_time TIME NOT NULL,
+        is_booked BOOLEAN DEFAULT false, note TEXT,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS lc_portfolio (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        creator_id UUID NOT NULL REFERENCES lc_profiles(id) ON DELETE CASCADE,
+        image_url TEXT NOT NULL, caption TEXT,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+    \`;
+    // 逐条执行（每条语句之间用 ; 分隔）
+    const stmts = sql.split(';').filter((s: string) => s.trim().length > 0);
+    for (const stmt of stmts) {
+      const { error } = await supabase.rpc('exec_sql', { query: stmt + ';' });
+      if (error && !error.message?.includes('already exists')) {
+        console.log('SQL error:', error.message);
+      }
+    }
+    res.json(ok({ message: 'Setup complete' }));
+  } catch (e: any) { res.status(500).json(err(e)); }
+});
+
 export default app;
