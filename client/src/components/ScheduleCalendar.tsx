@@ -220,101 +220,129 @@ export default function ScheduleCalendar() {
   };
 
   // ===== 布局 =====
+  // ===== 按日期分组 =====
+  const todayStr = format(currentDate, 'yyyy-MM-dd');
+  const todaySchedules = schedules.filter(s => s.start_time.startsWith(todayStr) && s.status !== 'cancelled');
+  const futureSchedules = schedules.filter(s => !s.start_time.startsWith(todayStr) && s.status !== 'cancelled' && s.start_time > todayStr)
+    .sort((a, b) => a.start_time.localeCompare(b.start_time));
+
+  const stText: Record<string, string> = {
+    scheduled: '已确认', pending: '待排期', ongoing: '进行中', completed: '已完成', cancelled: '已取消',
+  };
+  const stColor: Record<string, string> = {
+    scheduled: 'text-blue-600 bg-blue-50', pending: 'text-yellow-600 bg-yellow-50',
+    ongoing: 'text-green-600 bg-green-50', completed: 'text-gray-500 bg-gray-100',
+    cancelled: 'text-red-500 bg-red-50',
+  };
+
+  function scheduleRow(s: ScheduleWithDetails, showActions: boolean) {
+    const script = scripts.find(sc => sc.id === s.script_id);
+    const sD = parseISO(s.start_time);
+    const eD = parseISO(s.end_time);
+    return (
+      <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openEditModal(s)}>
+        <td className="px-4 py-3 text-gray-800">{format(sD, 'M/d')}</td>
+        <td className="px-4 py-3 text-gray-500">{format(sD, 'EEEE', { locale: zhCN })}</td>
+        <td className="px-4 py-3">
+          <span className="text-xs px-2 py-0.5 rounded bg-purple-50 text-purple-600">{script?.dm_gender || '未分类'}</span>
+        </td>
+        <td className="px-4 py-3 text-gray-800">{format(sD, 'HH:mm')}-{format(eD, 'HH:mm')}</td>
+        <td className="px-4 py-3 font-medium text-gray-900">{script?.name || '未知剧本'}</td>
+        <td className="px-4 py-3 text-gray-600">{s.room_name || <span className="text-yellow-500 text-xs">待分配</span>}</td>
+        <td className="px-4 py-3 text-gray-600">{s.player_count || '-'}人</td>
+        <td className="px-4 py-3">
+          <span className={`text-xs px-2 py-0.5 rounded-full ${stColor[s.status] || 'bg-gray-50 text-gray-500'}`}>
+            {stText[s.status] || s.status}
+          </span>
+        </td>
+        {showActions && (
+          <td className="px-4 py-3">
+            <button onClick={(e) => { e.stopPropagation(); openEditModal(s); }} className="text-xs text-indigo-600 hover:underline">编辑</button>
+          </td>
+        )}
+      </tr>
+    );
+  }
+
   return (
-    <div className="flex h-[calc(100vh-200px)] gap-4">
-      {/* 左边：待排期列表 */}
-      <div className="w-96 bg-white rounded-lg shadow p-4 flex flex-col">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="font-bold text-gray-800">待排期</h3>
-          <button onClick={openCreatePendingModal}
-            className="px-3 py-1 bg-orange-500 text-white text-sm rounded hover:bg-orange-600">
-            + 新建
-          </button>
+    <div className="space-y-6">
+      {/* 5月5日（今天）大框 */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="bg-indigo-600 px-5 py-3">
+          <h3 className="text-white font-bold">
+            {format(currentDate, 'M月d日')} · 今天 · {format(currentDate, 'EEEE', { locale: zhCN })}
+          </h3>
         </div>
-        <div className="flex-1 overflow-y-auto space-y-3">
-          {pendingSchedules.length === 0
-            ? <p className="text-gray-400 text-center py-8">暂无待排期</p>
-            : pendingSchedules.map(s => (
-              <PendingScheduleCard
-                key={s.id}
-                schedule={s}
-                script={scripts.find(sc => sc.id === s.script_id)}
-                onEdit={openEditModal}
-                onConfirm={openConfirmModal}
-              />
-            ))
-          }
-        </div>
-      </div>
-
-      {/* 右边：剧本时间轴视图 */}
-      <div className="flex-1 bg-white rounded-lg shadow p-4 overflow-hidden flex flex-col">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="font-bold text-gray-800">剧本时间轴（新版）</h3>
-          <div className="flex items-center gap-4">
-            <button onClick={() => setCurrentDate(addDays(currentDate, -1))}
-              className="px-3 py-1 text-gray-600 hover:bg-gray-100 rounded">← 前一天</button>
-            <span className="text-gray-700">
-              {format(currentDate, 'yyyy年MM月dd日')} ({format(currentDate, 'EEE', { locale: zhCN })})
-            </span>
-            <button onClick={() => setCurrentDate(addDays(currentDate, 1))}
-              className="px-3 py-1 text-gray-600 hover:bg-gray-100 rounded">后一天 →</button>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-auto">
-          <div className="min-w-[1200px]">
-            {/* 时间轴表头 */}
-            <div className="grid" style={{ gridTemplateColumns: `150px repeat(${timeSlots.length}, 80px)` }}>
-              <div className="p-2 border-b border-r border-gray-200 bg-gray-50 font-medium text-sm">剧本</div>
-              {timeSlots.map((slot, index) => (
-                <div key={index}
-                  className="p-1 border-b border-r border-gray-200 bg-gray-50 text-center text-xs">
-                  {slot}
-                </div>
-              ))}
-            </div>
-
-            {/* 剧本行 */}
-            {scripts.map(script => (
-              <div key={script.id} className="grid" style={{ gridTemplateColumns: `150px repeat(${timeSlots.length}, 80px)` }}>
-                <div className="p-2 border-b border-r border-gray-200 bg-gray-50 font-medium text-sm flex items-center">
-                  {script.name}
-                </div>
-                {timeSlots.map((slot, slotIndex) => {
-                  const slotTime = parseTimeSlot(slot, currentDate);
-                  const slotEndTime = new Date(slotTime.getTime() + 30 * 60000);
-                  const scriptSchedules = getSchedulesForScriptTime(script.id, slotTime, slotEndTime);
-                  return (
-                    <div key={slotIndex}
-                      className="p-1 border-b border-r border-gray-200 min-h-[60px] hover:bg-gray-50 cursor-pointer flex flex-col gap-1"
-                      onClick={() => openCreateScheduleForScript(script.id, slotTime)}>
-                      {scriptSchedules.map(schedule => {
-                        const isPending = !schedule.room_id;
-                        const roomName = schedule.room_name || '待排期';
-                        const bgColor = isPending ? 'bg-gray-400' : getStatusColor(schedule.status);
-                        return (
-                          <div key={schedule.id}
-                            className={`p-1 rounded text-white text-xs cursor-pointer ${bgColor} ${isPending ? 'border-2 border-dashed border-gray-500' : ''}`}
-                            onClick={(e) => { e.stopPropagation(); openEditModal(schedule); }}>
-                            <div className="font-medium truncate">{roomName}</div>
-                            <div className="opacity-90">{format(parseISO(schedule.start_time), 'HH:mm')}</div>
-                            {isPending && (
-                              <div className="text-xs opacity-75">点击确认</div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">日期</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">星期</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">类型</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">时间</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">剧本</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">房间</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">人数</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              {todaySchedules.length === 0 ? (
+                <tr><td colSpan={8} className="text-center py-10 text-gray-400">今天暂无排班</td></tr>
+              ) : todaySchedules.map(s => scheduleRow(s, false))}
+            </tbody>
+          </table>
         </div>
       </div>
 
-      {/* 弹窗 */}
+      {/* 6号及以后的档期 */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="bg-gray-800 px-5 py-3 flex items-center justify-between">
+          <h3 className="text-white font-bold">近期排班</h3>
+          <div className="flex items-center gap-3">
+            <button onClick={() => setCurrentDate(addDays(currentDate, -7))}
+              className="text-xs text-gray-300 hover:text-white">← 上一周</button>
+            <span className="text-xs text-gray-400">{format(currentDate, 'M月')}</span>
+            <button onClick={() => setCurrentDate(addDays(currentDate, 7))}
+              className="text-xs text-gray-300 hover:text-white">下一周 →</button>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">日期</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">星期</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">类型</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">时间</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">剧本</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">房间</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">人数</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">状态</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {futureSchedules.length === 0 ? (
+                <tr><td colSpan={9} className="text-center py-10 text-gray-400">暂无排班</td></tr>
+              ) : futureSchedules.map(s => scheduleRow(s, true))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* 待排期悬浮按钮 */}
+      <button onClick={openCreatePendingModal}
+        className="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-500 transition-colors flex items-center justify-center text-2xl">
+        +
+      </button>
+      <button onClick={openCreatePendingModal}
+        className="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-500 transition-colors flex items-center justify-center text-2xl">
+        +
+      </button>
+
+      {/* 弹窗保持不变 */}
       <ScheduleCalendarModal
         visible={showModal}
         editingSchedule={editingSchedule}
