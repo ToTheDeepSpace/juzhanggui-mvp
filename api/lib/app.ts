@@ -5,6 +5,8 @@ import cors from 'cors';
 import { supabase, DEFAULT_TENANT_ID } from '../../server/lib/supabase';
 import { authMiddleware, generateToken } from '../../server/middleware/auth';
 import { ScheduleDB } from '../../server/db';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -31,7 +33,6 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const { password } = req.body;
     if (!password) return res.status(400).json({ success: false, error: '请输入密码' });
-    const bcrypt = await import('bcryptjs');
     const hash = process.env.ADMIN_PASSWORD_HASH || bcrypt.hashSync('admin123', 10);
     const valid = await bcrypt.compare(password, hash);
     if (!valid) return res.status(401).json({ success: false, error: '密码错误' });
@@ -168,9 +169,8 @@ app.post('/api/player/login', async (req, res) => {
       const { data: np } = await supabase.from('players').insert({ phone_hash: phone.trim(), display_name: displayName.trim(), name_encrypted: displayName.trim(), tenant_id: DEFAULT_TENANT_ID }).select().single();
       existing = np;
     }
-    const jwt = await import('jsonwebtoken');
     const JWT_SECRET = process.env.JWT_SECRET || 'script-scheduler-secret-change-me';
-    const token = jwt.default.sign({ role: 'player', playerId: existing!.id, tenantId: DEFAULT_TENANT_ID }, JWT_SECRET, { expiresIn: '24h' });
+    const token = jwt.sign({ role: 'player', playerId: existing!.id, tenantId: DEFAULT_TENANT_ID }, JWT_SECRET, { expiresIn: '24h' });
     res.json({ success: true, data: { token, player: { id: existing!.id, displayName: existing!.display_name, phone: phone.trim(), totalGames: existing!.total_games || 0 } } });
   } catch (e) { res.status(500).json({ success: false, error: String(e) }); }
 });
