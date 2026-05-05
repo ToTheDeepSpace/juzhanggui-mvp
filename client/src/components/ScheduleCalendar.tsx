@@ -247,14 +247,8 @@ export default function ScheduleCalendar() {
           <td className="px-4 py-3">
             <div className="flex gap-2">
               <button onClick={(e) => { e.stopPropagation(); openEditModal(s); }} className="text-xs text-indigo-600 hover:underline">编辑</button>
-              {s.status !== 'completed' && s.status !== 'cancelled' && (
+              {s.status !== 'completed' && s.status !== 'cancelled' && s.status !== 'bombed' && s.status !== 'issue' && (
                 <button onClick={(e) => openEndModal(s, e)} className="text-xs text-green-600 hover:underline font-medium">结束登记</button>
-              )}
-              {(s.status === 'scheduled' || s.status === 'pending') && (
-                <button onClick={async (e) => { e.stopPropagation(); if (confirm('确定流车吗？')) { await put(`/schedules/${s.id}/cancel`, {}); loadData(); } }} className="text-xs text-red-400 hover:text-red-600 hover:underline font-medium">流车</button>
-              )}
-              {s.status === 'ongoing' && (
-                <button onClick={async (e) => { e.stopPropagation(); if (confirm('确定炸车吗？该车将取消。')) { await put(`/schedules/${s.id}/cancel`, {}); loadData(); } }} className="text-xs text-orange-500 hover:text-orange-700 hover:underline font-medium">炸车</button>
               )}
             </div>
           </td>
