@@ -97,7 +97,7 @@ export default function ScheduleCalendarModal({
       <div className="bg-white rounded-lg p-6 w-full max-w-2xl my-8">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-bold">
-            {editingSchedule ? '编辑排期' : (isPendingMode ? '新建待排期' : '新建确定排期')}
+            {editingSchedule ? '编辑排期' : '新建排期'}
           </h3>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-700">✕</button>
         </div>
@@ -125,17 +125,16 @@ export default function ScheduleCalendarModal({
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                房间 {isPendingMode && <span className="text-gray-400 font-normal">（车满后分配）</span>}
+                房间 <span className="text-red-500">*</span>
               </label>
               <select
                 value={formData.roomId}
                 onChange={(e) => onFormDataChange({ ...formData, roomId: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                disabled={isPendingMode}
-                required={!isPendingMode}
+                required
               >
-                <option value="">{isPendingMode ? '待分配' : '选择房间'}</option>
-                {!isPendingMode && rooms.map((room) => (
+                <option value="">选择房间</option>
+                {rooms.map((room) => (
                   <option key={room.id} value={room.id}>{room.name}</option>
                 ))}
               </select>
@@ -175,14 +174,6 @@ export default function ScheduleCalendarModal({
             </div>
           </div>
 
-          {/* 待排期提示 */}
-          {isPendingMode && (
-            <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
-              <p className="text-sm text-orange-700">
-                <span className="font-medium">待排期模式：</span>只需确定剧本和时间，房间将在车满后分配。
-              </p>
-            </div>
-          )}
 
           {/* 客户自助上车 */}
           {editingSchedule && (

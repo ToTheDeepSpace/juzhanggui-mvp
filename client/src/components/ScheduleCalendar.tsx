@@ -82,20 +82,12 @@ export default function ScheduleCalendar() {
     } else alert('确认失败：' + (res.error || '未知错误'));
   };
 
-  // 打开创建排期弹窗（可指定日期）
   const openCreateModal = (dateStr?: string) => {
     setEditingSchedule(null); setIsPendingMode(false);
     setFormData({
       roomId: '', scriptId: '', date: dateStr || format(new Date(), 'yyyy-MM-dd'),
       startTime: '14:00', customerName: '', customerPhone: '', playerCount: '', note: '',
     });
-    setSelectedActors([]); setShowModal(true);
-  };
-
-  const openCreatePendingModal = () => {
-    setEditingSchedule(null); setIsPendingMode(true);
-    setFormData({ roomId: '', scriptId: '', date: format(new Date(), 'yyyy-MM-dd'),
-      startTime: '14:00', customerName: '', customerPhone: '', playerCount: '', note: '' });
     setSelectedActors([]); setShowModal(true);
   };
 
@@ -235,7 +227,7 @@ export default function ScheduleCalendar() {
           <h3 className="text-white font-bold">
             {format(currentDate, 'M月d日')} · 今天 · {format(currentDate, 'EEEE', { locale: zhCN })}
           </h3>
-          <button onClick={openCreatePendingModal}
+          <button onClick={() => openCreateModal()}
             className="px-3 py-1 bg-white text-indigo-700 text-sm rounded-lg hover:bg-gray-100 transition-colors font-medium">
             + 添加排期
           </button>
@@ -274,7 +266,7 @@ export default function ScheduleCalendar() {
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="bg-gray-800 px-5 py-3 flex items-center justify-between">
           <h3 className="text-white font-bold">近期排班</h3>
-          <button onClick={openCreatePendingModal}
+          <button onClick={() => openCreateModal()}
             className="px-3 py-1 bg-white text-gray-800 text-sm rounded-lg hover:bg-gray-100 transition-colors font-medium">
             + 添加排期
           </button>
