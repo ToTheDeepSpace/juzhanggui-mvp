@@ -449,16 +449,21 @@ export default function ScheduleCalendar() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-6 max-w-lg w-full mx-4 max-h-[85vh] overflow-y-auto">
             <h3 className="text-lg font-bold text-gray-900 mb-4">结束登记</h3>
-            <div className="space-y-3 mb-5">
+            <label className={`flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 mb-3 ${endType === 'normal' ? 'border-green-400 bg-green-50' : 'border-gray-200'}`}>
+              <input type="radio" name="endType" value="normal" checked={endType === 'normal'} onChange={e => setEndType(e.target.value)} className="mt-0.5" />
+              <div><span className="text-sm font-medium text-gray-900">✅ 正常结束</span><p className="text-xs text-gray-400">剧本顺利开完</p></div>
+            </label>
+            <div className="grid grid-cols-3 gap-2 mb-5">
               {[
-                { value: 'normal', label: '✅ 正常结束', desc: '剧本顺利开完' },
-                { value: 'bomb', label: '💥 炸车', desc: '开了一半因故取消' },
-                { value: 'flow', label: '🚫 流车', desc: '未开成就取消' },
-                { value: 'other', label: '❓ 其他问题', desc: '设备、客诉、意外等' },
+                { value: 'bomb', label: '💥 炸车', desc: '半途取消' },
+                { value: 'flow', label: '🚫 流车', desc: '未开取消' },
+                { value: 'other', label: '❓ 其他', desc: '设备/客诉等' },
               ].map(opt => (
-                <label key={opt.value} className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 ${endType === opt.value ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200'}`}>
-                  <input type="radio" name="endType" value={opt.value} checked={endType === opt.value} onChange={e => setEndType(e.target.value)} className="mt-0.5" />
-                  <div><span className="text-sm font-medium text-gray-900">{opt.label}</span><p className="text-xs text-gray-400">{opt.desc}</p></div>
+                <label key={opt.value} className={`flex flex-col items-center gap-1 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 text-center ${endType === opt.value ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200'}`}>
+                  <input type="radio" name="endType" value={opt.value} checked={endType === opt.value} onChange={e => setEndType(e.target.value)} className="sr-only" />
+                  <span className="text-lg">{opt.label.split(' ')[0]}</span>
+                  <span className="text-xs font-medium text-gray-900">{opt.label.split(' ')[1]}</span>
+                  <span className="text-[10px] text-gray-400">{opt.desc}</span>
                 </label>
               ))}
             </div>
@@ -472,7 +477,7 @@ export default function ScheduleCalendar() {
             </div>
             <textarea value={endNote} onChange={e => setEndNote(e.target.value)} placeholder="备注说明（可选）" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-3 h-16 resize-none focus:outline-none focus:border-indigo-400" />
             {!showConflict ? (
-              <button onClick={() => setShowConflict(true)} className="text-sm text-red-500 hover:text-red-700 mb-4 inline-flex items-center gap-1">⚡ 出现矛盾</button>
+              <button onClick={() => setShowConflict(true)} className="w-full py-2 border border-dashed border-red-300 text-red-500 rounded-lg text-sm hover:bg-red-50 transition-colors mb-4">⚡ 出现矛盾</button>
             ) : (
               <div className="bg-red-50 rounded-lg p-4 mb-4 space-y-3">
                 <div className="flex items-center justify-between"><span className="text-sm font-medium text-red-800">矛盾登记</span><button onClick={() => setShowConflict(false)} className="text-xs text-gray-400 hover:text-gray-600">收起</button></div>
