@@ -281,13 +281,11 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
     if (d.scriptId !== undefined) fields.script_id = d.scriptId;
     if (d.roomId !== undefined) fields.room_id = d.roomId;
     if (d.startTime) {
-      const s = new Date(d.startTime);
-      fields.scheduled_date = s.toISOString().split('T')[0];
-      fields.start_time = `${String(s.getHours()).padStart(2,'0')}:${String(s.getMinutes()).padStart(2,'0')}`;
+      fields.scheduled_date = d.date || d.startTime.split('T')[0];
+      fields.start_time = d.timeStart || d.startTime.split('T')[1]?.substring(0, 5);
     }
     if (d.endTime) {
-      const e = new Date(d.endTime);
-      fields.end_time = `${String(e.getHours()).padStart(2,'0')}:${String(e.getMinutes()).padStart(2,'0')}`;
+      fields.end_time = d.timeEnd || d.endTime.split('T')[1]?.substring(0, 5);
     }
     if (d.status) fields.status = d.status;
     if (d.customerName !== undefined) fields.customer_name = d.customerName;
