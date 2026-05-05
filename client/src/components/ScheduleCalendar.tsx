@@ -30,6 +30,12 @@ export default function ScheduleCalendar() {
   const [confirmingSchedule, setConfirmingSchedule] = useState<ScheduleWithDetails | null>(null);
   const [confirmRoomId, setConfirmRoomId] = useState('');
 
+  // 开始确认状态
+  const [showStartModal, setShowStartModal] = useState(false);
+  const [startingSchedule, setStartingSchedule] = useState<ScheduleWithDetails | null>(null);
+  const [startActors, setStartActors] = useState<SelectedActor[]>([]);
+  const [actualStartTime, setActualStartTime] = useState('');
+
   // 结束确认状态
   const [showEndModal, setShowEndModal] = useState(false);
   const [endingSchedule, setEndingSchedule] = useState<ScheduleWithDetails | null>(null);
@@ -126,6 +132,25 @@ export default function ScheduleCalendar() {
 
   const openEndModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
     e.stopPropagation(); setEndingSchedule(schedule); setEndType('normal'); setEndNote(''); setShowEndModal(true);
+  };
+
+  const openStartModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
+    e.stopPropagation(); setStartingSchedule(schedule);
+    setActualStartTime(schedule.start_time ? schedule.start_time.split('T')[1]?.substring(0, 5) : '');
+    setStartActors([]); setShowStartModal(true);
+  };
+
+  const handleStartConfirm = async () => {
+    if (!startingSchedule) return;
+    const now = new Date();
+    const [h, m] = (actualStartTime || '14:00').split(':').map(Number);
+    now.setHours(h, m, 0, 0);
+    const end = new Date(now.getTime() + 240 * 60000);
+    await put(`/schedules/${startingSchedule.id}`, {
+      status: 'ongoing', timeStart: actualStartTime || '14:00', timeEnd: '18:00',
+      date: format(now, 'yyyy-MM-dd'), startTime: now.toISOString(), endTime: end.toISOString()
+    });
+    setShowStartModal(false); loadData();
   };
 
   const handleEndSubmit = async () => {
@@ -247,7 +272,10 @@ export default function ScheduleCalendar() {
           <td className="px-4 py-3">
             <div className="flex gap-2">
               <button onClick={(e) => { e.stopPropagation(); openEditModal(s); }} className="text-xs text-indigo-600 hover:underline">编辑</button>
-              {s.status !== 'completed' && s.status !== 'cancelled' && s.status !== 'bombed' && s.status !== 'issue' && (
+              {s.status !== 'completed' && s.status !== 'cancelled' && s.status !== 'bombed' && s.status !== 'issue' && s.status !== 'ongoing' && (
+                <button onClick={(e) => openStartModal(s, e)} className="text-xs text-blue-600 hover:underline font-medium">确认开始</button>
+              )}
+              {s.status === 'ongoing' && (
                 <button onClick={(e) => openEndModal(s, e)} className="text-xs text-green-600 hover:underline font-medium">结束登记</button>
               )}
             </div>
@@ -437,6 +465,36 @@ export default function ScheduleCalendar() {
         onConfirm={handleConfirmSchedule}
         onRoomChange={setConfirmRoomId}
       />
+
+      {/* 确认开始弹窗 */}
+      {showStartModal && startingSchedule && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-sm w-full mx-4">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">确认开本</h3>
+            <div className="space-y-4 mb-5">
+              <div>
+                <label className="text-sm text-gray-600 mb-1 block">实际开本时间</label>
+                <input type="time" value={actualStartTime} onChange={e => setActualStartTime(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+              </div>
+              <div>
+                <label className="text-sm text-gray-600 mb-1 block">选择卡司/DM</label>
+                <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" value="" onChange={e => { if (e.target.value) setStartActors([...startActors, { actorId: e.target.value, roleName: 'DM', startOffset: 0, duration: 240 }]); }}>
+                  <option value="">选择卡司...</option>
+                  {actors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+                {startActors.map((sa, i) => {
+                  const actor = actors.find(a => a.id === sa.actorId);
+                  return <div key={i} className="flex items-center justify-between mt-2 p-2 bg-gray-50 rounded-lg text-sm"><span>{actor?.name || '未知'}</span><button onClick={() => setStartActors(startActors.filter((_, j) => j !== i))} className="text-red-400 text-xs">移除</button></div>;
+                })}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setShowStartModal(false)} className="flex-1 py-2.5 border border-gray-200 text-gray-600 rounded-lg text-sm">取消</button>
+              <button onClick={handleStartConfirm} className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">确认开本</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 结束登记弹窗 */}
       {showEndModal && endingSchedule && (
