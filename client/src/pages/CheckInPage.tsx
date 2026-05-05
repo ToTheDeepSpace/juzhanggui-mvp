@@ -4,15 +4,24 @@ import { useApi } from '../hooks/useApi';
 import { format, parseISO } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 
+interface RoleInfo {
+  name: string;
+  gender?: string;
+}
+interface CheckinInfo {
+  role: string;
+  gender?: string;
+}
 interface ScheduleInfo {
   id: string;
   script_name: string;
   room_name: string;
   start_time: string;
   end_time: string;
-  player_roles?: string[];
+  player_roles?: RoleInfo[];
   player_count?: number;
   taken_roles?: string[];
+  checkins?: CheckinInfo[];
 }
 
 export default function CheckInPage() {
@@ -110,22 +119,35 @@ export default function CheckInPage() {
   }
 
   if (checkedIn) {
+    const isStaff = new URLSearchParams(window.location.search).get('staff') === 'true';
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
         <div className="bg-white rounded-xl shadow-lg p-8 text-center max-w-sm w-full">
           <div className="text-5xl mb-4">🎉</div>
           <h2 className="text-xl font-bold text-green-600 mb-2">上车成功！</h2>
           <p className="text-gray-600 mb-4">
-            欢迎 {guestName}，客服已收到您的上车信息
+            欢迎 {guestName}（{guestGender}），已上车
           </p>
-          <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-600">
+          <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-600 mb-4">
             <p className="font-medium">{schedule?.script_name}</p>
             <p>{schedule && format(parseISO(schedule.start_time), 'MM月dd日 HH:mm', { locale: zhCN })}</p>
             <p>{schedule?.room_name}</p>
           </div>
-          <p className="text-xs text-gray-400 mt-4">
-            您可以关闭此页面
-          </p>
+          {isStaff ? (
+            <div className="space-y-2">
+              <button
+                onClick={() => { setCheckedIn(false); setGuestName(''); setGuestPhone(''); setGuestGender(''); setSelectedRole(''); setError(''); }}
+                className="w-full py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 transition-colors"
+              >
+                + 继续添加下一位玩家
+              </button>
+              <button onClick={() => window.close()} className="w-full py-2 text-sm text-gray-500 hover:text-gray-700">
+                完成，关闭页面
+              </button>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400 mt-4">您可以关闭此页面</p>
+          )}
         </div>
       </div>
     );
@@ -197,10 +219,11 @@ export default function CheckInPage() {
           </div>
 
           {(() => {
-            const availableRoles = schedule?.player_roles?.filter(
-              role => !schedule.taken_roles?.includes(role)
-            ) || [];
-            const isFull = availableRoles.length === 0 && (schedule?.player_roles?.length || 0) > 0;
+            const roles = (schedule?.player_roles || []) as RoleInfo[];
+            const takenNames = schedule?.taken_roles || [];
+            const checkinList = (schedule?.checkins || []) as CheckinInfo[];
+            const availableRoles = roles.filter(r => !takenNames.includes(r.name));
+            const isFull = availableRoles.length === 0 && roles.length > 0;
             
             if (isFull) {
               return (
@@ -217,9 +240,9 @@ export default function CheckInPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     选择角色 <span className="text-red-500">*</span>
-                    {(schedule?.taken_roles?.length ?? 0) > 0 && (
+                    {takenNames.length > 0 && (
                       <span className="text-xs text-gray-400 ml-2">
-                        已选 {schedule?.taken_roles?.length ?? 0}/{schedule?.player_roles?.length ?? 0} 人
+                        已选 {takenNames.length}/{roles.length} 人
                       </span>
                     )}
                   </label>
@@ -231,8 +254,8 @@ export default function CheckInPage() {
                   >
                     <option value="">请选择您想扮演的角色</option>
                     {availableRoles.map((role) => (
-                      <option key={role} value={role}>
-                        {role}
+                      <option key={role.name} value={role.name}>
+                        {role.name}{role.gender ? ` (${role.gender})` : ''}
                       </option>
                     ))}
                   </select>

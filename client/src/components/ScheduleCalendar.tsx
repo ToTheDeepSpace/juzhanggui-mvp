@@ -179,7 +179,21 @@ export default function ScheduleCalendar() {
         <td className="px-4 py-3 text-gray-800">{format(sD, 'HH:mm')}-{format(eD, 'HH:mm')}</td>
         <td className="px-4 py-3 font-medium text-gray-900">{script?.name || '未知剧本'}</td>
         <td className="px-4 py-3 text-gray-600">{s.room_name || <span className="text-yellow-500 text-xs">待分配</span>}</td>
-        <td className="px-4 py-3 text-gray-600">{s.player_count || '-'}人</td>
+        <td className="px-4 py-3">
+          <span className="text-sm">{s.player_count || '-'}人</span>
+          {s.player_roles && (s.player_roles as any[]).length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {(s.player_roles as any[]).map((r: any) => {
+                const taken = (s.checkins || []).some((c: any) => c.role === r.name);
+                return (
+                  <span key={r.name} className={`text-[10px] px-1.5 py-0.5 rounded ${taken ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'}`}>
+                    {r.name}{r.gender ? `(${r.gender})` : ''}{taken ? '✓' : ''}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </td>
         <td className="px-4 py-3">
           <span className={`text-xs px-2 py-0.5 rounded-full ${stColor[s.status] || 'bg-gray-50 text-gray-500'}`}>
             {stText[s.status] || s.status}
