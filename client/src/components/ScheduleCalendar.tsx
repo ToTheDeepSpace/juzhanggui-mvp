@@ -36,6 +36,9 @@ export default function ScheduleCalendar() {
   const [endType, setEndType] = useState('normal');
   const [endNote, setEndNote] = useState('');
   const [endSubmitting, setEndSubmitting] = useState(false);
+  const [showConflict, setShowConflict] = useState(false);
+  const [conflictType, setConflictType] = useState('service_attitude');
+  const [conflictDesc, setConflictDesc] = useState('');
 
   // 表单状态
   const [formData, setFormData] = useState<ScheduleFormData>({
@@ -132,6 +135,9 @@ export default function ScheduleCalendar() {
       await put(`/schedules/${endingSchedule.id}/complete`, {});
     } else {
       await put(`/schedules/${endingSchedule.id}/cancel`, {});
+    }
+    if (showConflict && conflictDesc.trim()) {
+      await post('/conflicts', { scheduleId: endingSchedule.id, conflictType, conflictDescription: conflictDesc, conflictDate: new Date().toISOString() });
     }
     setShowEndModal(false); setEndSubmitting(false); loadData();
   };
@@ -463,7 +469,21 @@ export default function ScheduleCalendar() {
               </div>
               <button onClick={() => navigator.clipboard.writeText(window.location.origin + '/evaluate/' + endingSchedule.id)} className="mt-2 text-xs text-blue-600 hover:underline">复制评价链接</button>
             </div>
-            <textarea value={endNote} onChange={e => setEndNote(e.target.value)} placeholder="备注说明（可选）" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-5 h-16 resize-none focus:outline-none focus:border-indigo-400" />
+            <textarea value={endNote} onChange={e => setEndNote(e.target.value)} placeholder="备注说明（可选）" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-3 h-16 resize-none focus:outline-none focus:border-indigo-400" />
+            {!showConflict ? (
+              <button onClick={() => setShowConflict(true)} className="text-sm text-red-500 hover:text-red-700 mb-4 inline-flex items-center gap-1">⚡ 出现矛盾</button>
+            ) : (
+              <div className="bg-red-50 rounded-lg p-4 mb-4 space-y-3">
+                <div className="flex items-center justify-between"><span className="text-sm font-medium text-red-800">矛盾登记</span><button onClick={() => setShowConflict(false)} className="text-xs text-gray-400 hover:text-gray-600">收起</button></div>
+                <select value={conflictType} onChange={e => setConflictType(e.target.value)} className="w-full px-3 py-2 border border-red-200 rounded-lg text-sm">
+                  <option value="service_attitude">服务态度</option>
+                  <option value="performance">演绎效果</option>
+                  <option value="communication">沟通问题</option>
+                  <option value="other_conflict">其他</option>
+                </select>
+                <textarea value={conflictDesc} onChange={e => setConflictDesc(e.target.value)} placeholder="描述矛盾情况..." className="w-full px-3 py-2 border border-red-200 rounded-lg text-sm h-16 resize-none focus:outline-none" />
+              </div>
+            )}
             <div className="flex gap-2">
               <button onClick={() => setShowEndModal(false)} className="flex-1 py-2.5 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50">取消</button>
               <button onClick={handleEndSubmit} disabled={endSubmitting} className="flex-1 py-2.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50">{endSubmitting ? '处理中...' : '确认登记'}</button>
