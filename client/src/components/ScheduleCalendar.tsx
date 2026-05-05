@@ -177,7 +177,7 @@ export default function ScheduleCalendar() {
   // ===== 按日期分组 =====
   const todayStr = format(currentDate, 'yyyy-MM-dd');
   const todaySchedules = schedules.filter(s => s.start_time.startsWith(todayStr) && s.status !== 'cancelled');
-  const futureSchedules = schedules.filter(s => !s.start_time.startsWith(todayStr) && s.status !== 'cancelled' && s.start_time > todayStr)
+  const otherActiveSchedules = schedules.filter(s => !s.start_time.startsWith(todayStr) && s.status !== 'completed' && s.status !== 'cancelled')
     .sort((a, b) => a.start_time.localeCompare(b.start_time));
   const endedSchedules = schedules.filter(s => s.status === 'completed' || s.status === 'cancelled')
     .sort((a, b) => b.start_time.localeCompare(a.start_time));
@@ -337,7 +337,7 @@ export default function ScheduleCalendar() {
               </tr>
             </thead>
             <tbody>
-              {futureSchedules.length === 0 ? (
+              {otherActiveSchedules.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="text-center py-10 text-gray-400">
                     <button onClick={() => openCreateModal(format(addDays(currentDate, 1), 'yyyy-MM-dd'))} className="text-indigo-600 hover:underline text-sm">
@@ -345,7 +345,7 @@ export default function ScheduleCalendar() {
                     </button>
                   </td>
                 </tr>
-              ) : futureSchedules.map(s => scheduleRow(s, true))}
+              ) : otherActiveSchedules.map(s => scheduleRow(s, true))}
             </tbody>
           </table>
         </div>
