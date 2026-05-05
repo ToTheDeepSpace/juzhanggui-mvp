@@ -323,7 +323,7 @@ app.put('/api/schedules/:id/confirm', async (req: any, res: any) => {
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/schedules/:id/cancel', async (req: any, res: any) => {
-  try { await supabase.from('schedules').update({ status: 'cancelled' }).eq('id', req.params.id); res.json(ok()); }
+  try { await supabase.from('schedules').update({ status: req.body.status || 'cancelled' }).eq('id', req.params.id); res.json(ok()); }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/schedules/:id/complete', async (req: any, res: any) => {

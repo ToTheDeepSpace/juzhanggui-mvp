@@ -134,7 +134,8 @@ export default function ScheduleCalendar() {
     if (endType === 'normal') {
       await put(`/schedules/${endingSchedule.id}/complete`, {});
     } else {
-      await put(`/schedules/${endingSchedule.id}/cancel`, {});
+      const cancelStatus = endType === 'bomb' ? 'bombed' : endType === 'flow' ? 'cancelled' : 'issue';
+      await put(`/schedules/${endingSchedule.id}/cancel`, { status: cancelStatus, note: endNote });
     }
     if (showConflict && conflictDesc.trim()) {
       await post('/conflicts', { scheduleId: endingSchedule.id, conflictType, conflictDescription: conflictDesc, conflictDate: new Date().toISOString() });
@@ -187,16 +188,16 @@ export default function ScheduleCalendar() {
   const todaySchedules = schedules.filter(s => s.start_time.startsWith(todayStr) && s.status !== 'cancelled');
   const otherActiveSchedules = schedules.filter(s => !s.start_time.startsWith(todayStr) && s.status !== 'completed' && s.status !== 'cancelled')
     .sort((a, b) => a.start_time.localeCompare(b.start_time));
-  const endedSchedules = schedules.filter(s => s.status === 'completed' || s.status === 'cancelled')
+  const endedSchedules = schedules.filter(s => s.status === 'completed' || s.status === 'cancelled' || s.status === 'bombed' || s.status === 'issue')
     .sort((a, b) => b.start_time.localeCompare(a.start_time));
 
   const stText: Record<string, string> = {
-    scheduled: '已确认', pending: '待排期', ongoing: '进行中', completed: '已完成', cancelled: '已取消',
+    scheduled: '已确认', pending: '待排期', ongoing: '进行中', completed: '已完成', cancelled: '流车', bombed: '炸车', issue: '其他问题',
   };
   const stColor: Record<string, string> = {
     scheduled: 'text-blue-600 bg-blue-50', pending: 'text-yellow-600 bg-yellow-50',
     ongoing: 'text-green-600 bg-green-50', completed: 'text-gray-500 bg-gray-100',
-    cancelled: 'text-red-500 bg-red-50',
+    cancelled: 'text-red-500 bg-red-50', bombed: 'text-orange-600 bg-orange-50', issue: 'text-purple-600 bg-purple-50',
   };
 
   let carCounter = 0;
@@ -401,7 +402,7 @@ export default function ScheduleCalendar() {
                     <td className="px-4 py-3 font-medium text-gray-900">{sc?.name || '未知剧本'}</td>
                     <td className="px-4 py-3 text-gray-600">{s.room_name || '-'}</td>
                     <td className="px-4 py-3"><span className="text-sm">{s.player_count || '-'}人</span></td>
-                    <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded-full text-gray-500 bg-gray-100">{s.status === 'completed' ? '已完成' : '已取消'}</span></td>
+                    <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${stColor[s.status] || 'bg-gray-100 text-gray-500'}`}>{stText[s.status] || s.status}</span></td>
                   </tr>);
                 })}
               </tbody>
