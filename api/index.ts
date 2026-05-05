@@ -330,6 +330,16 @@ app.put('/api/schedules/:id/complete', async (req: any, res: any) => {
   try { await supabase.from('schedules').update({ status: 'completed' }).eq('id', req.params.id); res.json(ok()); }
   catch (e) { res.status(500).json(err(e)); }
 });
+app.post('/api/schedules/:id/dm-start', async (req: any, res: any) => {
+  try {
+    const { actorId } = req.body;
+    await supabase.from('schedules').update({ status: 'ongoing', scheduled_date: new Date().toISOString().split('T')[0], start_time: new Date().toISOString().split('T')[1]?.substring(0, 5) }).eq('id', req.params.id);
+    if (actorId) {
+      await supabase.from('schedule_actors').insert({ schedule_id: req.params.id, actor_id: actorId, role_name: 'DM', start_time: new Date().toISOString(), end_time: new Date(Date.now() + 240 * 60000).toISOString() });
+    }
+    res.json(ok());
+  } catch (e) { res.status(500).json(err(e)); }
+});
 
 // ===== 冲突检测 =====
 app.get('/api/schedules/conflicts/check', async (req: any, res: any) => {
