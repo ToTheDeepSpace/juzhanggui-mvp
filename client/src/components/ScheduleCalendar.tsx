@@ -211,13 +211,13 @@ export default function ScheduleCalendar() {
   // ===== 按日期分组 =====
   const todayStr = format(new Date(), 'yyyy-MM-dd');
   const todaySchedules = schedules.filter(s => s.start_time.startsWith(todayStr) && s.status !== 'cancelled');
-  const otherActiveSchedules = schedules.filter(s => !s.start_time.startsWith(todayStr) && s.status !== 'completed' && s.status !== 'cancelled' && s.status !== 'bombed' && s.status !== 'issue')
+  const otherActiveSchedules = schedules.filter(s => !s.start_time.startsWith(todayStr) && s.status !== 'completed' && s.status !== 'cancelled' && s.status !== 'bombed' && s.status !== 'issue' && s.status !== 'locked' && s.status !== 'confirmed')
     .sort((a, b) => a.start_time.localeCompare(b.start_time));
   const endedSchedules = schedules.filter(s => s.status === 'completed' || s.status === 'cancelled' || s.status === 'bombed' || s.status === 'issue')
     .sort((a, b) => b.start_time.localeCompare(a.start_time));
 
   const stText: Record<string, string> = {
-    scheduled: '已确认', pending: '待排期', confirmed: '已排班', ongoing: '进行中', completed: '已完成', cancelled: '流车', bombed: '炸车', issue: '其他问题',
+    scheduled: '待锁车', pending: '待排期', locked: '已锁车', confirmed: '已排班', ongoing: '进行中', completed: '已完成', cancelled: '流车', bombed: '炸车', issue: '其他问题',
   };
   const stColor: Record<string, string> = {
     scheduled: 'text-blue-600 bg-blue-50', pending: 'text-yellow-600 bg-yellow-50',
@@ -273,7 +273,10 @@ export default function ScheduleCalendar() {
             <div className="flex gap-2">
               <button onClick={(e) => { e.stopPropagation(); openEditModal(s); }} className="text-xs text-indigo-600 hover:underline">编辑</button>
               {s.status === 'scheduled' && (
-                <button onClick={(e) => { e.stopPropagation(); put(`/schedules/${s.id}`, { status: 'confirmed' }).then(() => loadData()); }} className="text-xs text-indigo-600 hover:underline font-medium">确认排班</button>
+                <button onClick={(e) => { e.stopPropagation(); put(`/schedules/${s.id}`, { status: 'locked' }).then(() => loadData()); }} className="text-xs text-orange-600 hover:underline font-medium">锁车</button>
+              )}
+              {s.status === 'locked' && (
+                <button onClick={(e) => openStartModal(s, e)} className="text-xs text-indigo-600 hover:underline font-medium">确认排班</button>
               )}
               {s.status === 'confirmed' && (
                 <button onClick={(e) => openStartModal(s, e)} className="text-xs text-blue-600 hover:underline font-medium">确认开始</button>
