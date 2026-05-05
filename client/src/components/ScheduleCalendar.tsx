@@ -184,10 +184,14 @@ export default function ScheduleCalendar() {
     <div className="space-y-6">
       {/* 5月5日（今天）大框 */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="bg-indigo-600 px-5 py-3">
+        <div className="bg-indigo-600 px-5 py-3 flex items-center justify-between">
           <h3 className="text-white font-bold">
             {format(currentDate, 'M月d日')} · 今天 · {format(currentDate, 'EEEE', { locale: zhCN })}
           </h3>
+          <button onClick={openCreatePendingModal}
+            className="px-3 py-1 bg-white text-indigo-700 text-sm rounded-lg hover:bg-gray-100 transition-colors font-medium">
+            + 添加排期
+          </button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -216,6 +220,10 @@ export default function ScheduleCalendar() {
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="bg-gray-800 px-5 py-3 flex items-center justify-between">
           <h3 className="text-white font-bold">近期排班</h3>
+          <button onClick={openCreatePendingModal}
+            className="px-3 py-1 bg-white text-gray-800 text-sm rounded-lg hover:bg-gray-100 transition-colors font-medium">
+            + 添加排期
+          </button>
           <div className="flex items-center gap-3">
             <button onClick={() => setCurrentDate(addDays(currentDate, -7))}
               className="text-xs text-gray-300 hover:text-white">← 上一周</button>
@@ -248,13 +256,7 @@ export default function ScheduleCalendar() {
         </div>
       </div>
 
-      {/* 待排期悬浮按钮 */}
-      <button onClick={openCreatePendingModal}
-        className="fixed bottom-6 right-6 w-14 h-14 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-500 transition-colors flex items-center justify-center text-2xl z-50">
-        +
-      </button>
-
-      {/* 弹窗保持不变 */}
+      {/* 弹窗 */}
       <ScheduleCalendarModal
         visible={showModal}
         editingSchedule={editingSchedule}
