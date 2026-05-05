@@ -30,8 +30,8 @@ export default function CheckInRoles({ checkins: injectedCheckins, scheduleId, p
     if (!scheduleId) return;
 
     const fetchCheckins = async () => {
-      const res = await get<{ checkins: CheckInRecord[] }>(`/schedules/${scheduleId}/checkins`);
-      if (res.success) setLocalCheckins(res.data?.checkins || []);
+      const res = await get<CheckInRecord[]>(`/schedules/${scheduleId}/checkins`);
+      if (res.success) setLocalCheckins(res.data || []);
     };
     fetchCheckins();
     const interval = setInterval(fetchCheckins, 3000);
