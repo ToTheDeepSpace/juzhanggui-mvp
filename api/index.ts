@@ -207,11 +207,15 @@ app.delete('/api/scripts/:id', async (req: any, res: any) => {
 // ===== Schedules =====
 app.get('/api/schedules', async (req: any, res: any) => {
   try {
-    let q = supabase.from('schedules').select('*, scripts(name), rooms(name)').order('start_time');
-    if (req.query.startDate) q = q.gte('start_time', req.query.startDate);
-    if (req.query.endDate) q = q.lte('start_time', req.query.endDate);
+    let q = supabase.from('schedules').select('*, scripts(name), rooms(name)').eq('tenant_id', TENANT_ID).order('scheduled_date');
+    if (req.query.startDate) q = q.gte('scheduled_date', req.query.startDate);
+    if (req.query.endDate) q = q.lte('scheduled_date', req.query.endDate);
     const { data } = await q;
-    res.json(ok((data || []).map((s: any) => ({ ...s, script_name: s.scripts?.name, room_name: s.rooms?.name }))));
+    res.json(ok((data || []).map((s: any) => ({
+      ...s, script_name: s.scripts?.name, room_name: s.rooms?.name,
+      start_time: `${s.scheduled_date}T${s.start_time}`,
+      end_time: `${s.scheduled_date}T${s.end_time}`,
+    }))));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.get('/api/schedules/:id', async (req: any, res: any) => {
@@ -219,7 +223,11 @@ app.get('/api/schedules/:id', async (req: any, res: any) => {
     const { data: s } = await supabase.from('schedules').select('*, scripts(name), rooms(name)').eq('id', req.params.id).single();
     if (!s) return res.status(404).json(err(new Error('不存在')));
     const { data: actors } = await supabase.from('schedule_actors').select('*, actors(name)').eq('schedule_id', req.params.id);
-    res.json(ok({ ...s, script_name: s.scripts?.name, room_name: s.rooms?.name, actors: actors || [] }));
+    res.json(ok({
+      ...s, script_name: s.scripts?.name, room_name: s.rooms?.name, actors: actors || [],
+      start_time: `${s.scheduled_date}T${s.start_time}`,
+      end_time: `${s.scheduled_date}T${s.end_time}`,
+    }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.get('/api/schedules/:id/public', async (req: any, res: any) => {
@@ -227,16 +235,26 @@ app.get('/api/schedules/:id/public', async (req: any, res: any) => {
     const { data: s } = await supabase.from('schedules').select('*, scripts(name)').eq('id', req.params.id).single();
     if (!s) return res.status(404).json(err(new Error('不存在')));
     const { data: roles } = await supabase.from('script_roles').select('*').eq('script_id', s.script_id).order('start_offset');
-    res.json(ok({ ...s, script_name: s.scripts?.name, roles: roles || [] }));
+    res.json(ok({
+      ...s, script_name: s.scripts?.name, roles: roles || [],
+      start_time: `${s.scheduled_date}T${s.start_time}`,
+      end_time: `${s.scheduled_date}T${s.end_time}`,
+    }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.post('/api/schedules', async (req: any, res: any) => {
   try {
     const d = req.body;
+    const s = new Date(d.startTime);
+    const e = new Date(d.endTime);
+    const dateStr = s.toISOString().split('T')[0];
+    const startTimeStr = `${String(s.getHours()).padStart(2,'0')}:${String(s.getMinutes()).padStart(2,'0')}`;
+    const endTimeStr = `${String(e.getHours()).padStart(2,'0')}:${String(e.getMinutes()).padStart(2,'0')}`;
     const { data } = await supabase.from('schedules').insert({
-      script_id: d.scriptId, room_id: d.roomId || null, start_time: d.startTime, end_time: d.endTime,
-      status: d.status || 'pending', customer_name: d.customerName, customer_phone: d.customerPhone,
-      player_count: d.playerCount, note: d.note
+      script_id: d.scriptId, room_id: d.roomId || null,
+      scheduled_date: dateStr, start_time: startTimeStr, end_time: endTimeStr,
+      status: d.status || 'pending', player_count: d.playerCount || 0,
+      tenant_id: TENANT_ID
     }).select().single();
     if (d.actors && d.actors.length) await supabase.from('schedule_actors').insert(d.actors.map((a: any) => ({ schedule_id: data!.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime })));
     res.json(ok(data));
@@ -248,8 +266,15 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
     const fields: any = {};
     if (d.scriptId !== undefined) fields.script_id = d.scriptId;
     if (d.roomId !== undefined) fields.room_id = d.roomId;
-    if (d.startTime) fields.start_time = d.startTime;
-    if (d.endTime) fields.end_time = d.endTime;
+    if (d.startTime) {
+      const s = new Date(d.startTime);
+      fields.scheduled_date = s.toISOString().split('T')[0];
+      fields.start_time = `${String(s.getHours()).padStart(2,'0')}:${String(s.getMinutes()).padStart(2,'0')}`;
+    }
+    if (d.endTime) {
+      const e = new Date(d.endTime);
+      fields.end_time = `${String(e.getHours()).padStart(2,'0')}:${String(e.getMinutes()).padStart(2,'0')}`;
+    }
     if (d.status) fields.status = d.status;
     if (d.customerName !== undefined) fields.customer_name = d.customerName;
     if (d.customerPhone !== undefined) fields.customer_phone = d.customerPhone;
