@@ -238,7 +238,7 @@ export default function ScheduleCalendar() {
           <td className="px-4 py-3">
             <div className="flex gap-2">
               <button onClick={(e) => { e.stopPropagation(); openEditModal(s); }} className="text-xs text-indigo-600 hover:underline">编辑</button>
-              {s.status === 'ongoing' && (
+              {(s.status === 'ongoing' || s.status === 'scheduled') && (
                 <button onClick={(e) => openCompleteModal(s, e)} className="text-xs text-green-600 hover:underline font-medium">确认结束</button>
               )}
             </div>
