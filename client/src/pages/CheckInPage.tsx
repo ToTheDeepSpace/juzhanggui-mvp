@@ -22,6 +22,7 @@ export default function CheckInPage() {
   const [schedule, setSchedule] = useState<ScheduleInfo | null>(null);
   const [guestName, setGuestName] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
+  const [guestGender, setGuestGender] = useState('');
   const [selectedRole, setSelectedRole] = useState('');
   const [checkedIn, setCheckedIn] = useState(false);
   const [error, setError] = useState('');
@@ -60,6 +61,10 @@ export default function CheckInPage() {
       return;
     }
 
+    if (!guestGender) {
+      setError('请选择您的性别');
+      return;
+    }
     if (!selectedRole) {
       setError('请选择您想扮演的角色');
       return;
@@ -78,6 +83,7 @@ export default function CheckInPage() {
     const res = await post(`/schedules/${scheduleId}/checkin`, {
       name: guestName,
       phone: guestPhone || null,
+      gender: guestGender,
       role: selectedRole,
       avatar: null
     });
@@ -156,6 +162,25 @@ export default function CheckInPage() {
               placeholder="怎么称呼您"
               required
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              您的性别 <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={guestGender}
+              onChange={(e) => setGuestGender(e.target.value)}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            >
+              <option value="">请选择性别</option>
+              <option value="男">男</option>
+              <option value="女">女</option>
+            </select>
+            <p className="text-xs text-gray-400 mt-2">
+              🛈 默认上车配对为异性恋，如有其他性取向需求请跟客服私聊
+            </p>
           </div>
 
           <div>
@@ -265,6 +290,10 @@ export default function CheckInPage() {
               <div className="flex justify-between">
                 <span className="text-gray-500">称呼</span>
                 <span className="font-medium">{guestName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">性别</span>
+                <span className="font-medium">{guestGender}</span>
               </div>
               {selectedRole && (
                 <div className="flex justify-between">

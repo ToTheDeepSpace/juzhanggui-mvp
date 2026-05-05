@@ -234,6 +234,22 @@ export default function ScheduleCalendarModal({
             })}
           </div>
 
+          {/* 玩家角色展示 */}
+          {selectedScript && playerRoles.length > 0 && (
+            <div className="mt-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                玩家扮演角色 ({playerRoles.length}人)
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {playerRoles.map((role, i) => (
+                  <span key={i} className="px-3 py-1 bg-blue-50 text-blue-700 rounded-lg text-sm border border-blue-100">
+                    {role}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* 底部按钮 */}
           <div className="flex justify-between pt-4">
             {editingSchedule ? (

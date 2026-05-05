@@ -235,8 +235,14 @@ app.get('/api/schedules/:id/public', async (req: any, res: any) => {
     const { data: s } = await supabase.from('schedules').select('*, scripts(name)').eq('id', req.params.id).single();
     if (!s) return res.status(404).json(err(new Error('不存在')));
     const { data: roles } = await supabase.from('script_roles').select('*').eq('script_id', s.script_id).order('start_offset');
+    // 获取玩家可选角色
+    const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name').eq('script_id', s.script_id);
+    // 获取已选角色
+    const { data: checkins } = await supabase.from('checkins').select('role').eq('schedule_id', req.params.id).not('role', 'is', null);
     res.json(ok({
       ...s, script_name: s.scripts?.name, roles: roles || [],
+      player_roles: (playerRoles || []).map((r: any) => r.role_name),
+      taken_roles: (checkins || []).map((c: any) => c.role),
       start_time: `${s.scheduled_date}T${s.start_time}`,
       end_time: `${s.scheduled_date}T${s.end_time}`,
     }));
