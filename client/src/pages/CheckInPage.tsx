@@ -220,15 +220,19 @@ export default function CheckInPage() {
         ) : (
         /* 已验证，显示签到表单 */
         <div className="space-y-4">
-        {schedule && (
           <div className="bg-blue-50 rounded-lg p-4 mb-6">
-            <h2 className="font-medium text-blue-900 mb-1">{schedule.script_name}</h2>
-            <p className="text-sm text-blue-700">
-              {format(parseISO(schedule.start_time), 'MM月dd日 HH:mm', { locale: zhCN })}
-            </p>
-            <p className="text-sm text-blue-700">{schedule.room_name}</p>
+            {schedule ? (
+              <>
+                <h2 className="font-medium text-blue-900 mb-1">{schedule.script_name}</h2>
+                <p className="text-sm text-blue-700">
+                  {format(parseISO(schedule.start_time), 'MM月dd日 HH:mm', { locale: zhCN })}
+                </p>
+                <p className="text-sm text-blue-700">{schedule.room_name}</p>
+              </>
+            ) : (
+              <p className="text-sm text-blue-500">加载排期信息...</p>
+            )}
           </div>
-        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
