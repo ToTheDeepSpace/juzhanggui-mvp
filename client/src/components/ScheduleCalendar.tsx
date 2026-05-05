@@ -119,6 +119,8 @@ export default function ScheduleCalendar() {
     const data = {
       roomId: formData.roomId || undefined, scriptId: formData.scriptId,
       startTime: startDateTime.toISOString(), endTime: endDateTime.toISOString(),
+      timeStart: formData.startTime, timeEnd: format(endDateTime, 'HH:mm'),
+      date: formData.date,
       status: formData.roomId ? 'scheduled' : 'pending',
       customerName: formData.customerName || undefined,
       customerPhone: formData.customerPhone || undefined,

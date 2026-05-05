@@ -251,11 +251,10 @@ app.get('/api/schedules/:id/public', async (req: any, res: any) => {
 app.post('/api/schedules', async (req: any, res: any) => {
   try {
     const d = req.body;
-    const s = new Date(d.startTime);
-    const e = new Date(d.endTime);
-    const dateStr = s.toISOString().split('T')[0];
-    const startTimeStr = `${String(s.getHours()).padStart(2,'0')}:${String(s.getMinutes()).padStart(2,'0')}`;
-    const endTimeStr = `${String(e.getHours()).padStart(2,'0')}:${String(e.getMinutes()).padStart(2,'0')}`;
+    // 优先使用前端直接传的时间字符串（避免时区转换问题）
+    const dateStr = d.date || (d.startTime ? d.startTime.split('T')[0] : new Date().toISOString().split('T')[0]);
+    const startTimeStr = d.timeStart || (d.startTime ? d.startTime.split('T')[1]?.substring(0, 5) : '14:00');
+    const endTimeStr = d.timeEnd || (d.endTime ? d.endTime.split('T')[1]?.substring(0, 5) : '17:00');
     const { data } = await supabase.from('schedules').insert({
       script_id: d.scriptId, room_id: d.roomId || null,
       scheduled_date: dateStr, start_time: startTimeStr, end_time: endTimeStr,
