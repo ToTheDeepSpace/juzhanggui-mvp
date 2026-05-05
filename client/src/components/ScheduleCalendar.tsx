@@ -69,7 +69,16 @@ export default function ScheduleCalendar() {
     } else alert('确认失败：' + (res.error || '未知错误'));
   };
 
-  // 打开弹窗
+  // 打开创建排期弹窗（可指定日期）
+  const openCreateModal = (dateStr?: string) => {
+    setEditingSchedule(null); setIsPendingMode(false);
+    setFormData({
+      roomId: '', scriptId: '', date: dateStr || format(new Date(), 'yyyy-MM-dd'),
+      startTime: '14:00', customerName: '', customerPhone: '', playerCount: '', note: '',
+    });
+    setSelectedActors([]); setShowModal(true);
+  };
+
   const openCreatePendingModal = () => {
     setEditingSchedule(null); setIsPendingMode(true);
     setFormData({ roomId: '', scriptId: '', date: format(new Date(), 'yyyy-MM-dd'),
@@ -155,9 +164,12 @@ export default function ScheduleCalendar() {
     const script = scripts.find(sc => sc.id === s.script_id);
     const sD = parseISO(s.start_time);
     const eD = parseISO(s.end_time);
+    const dateStr = format(sD, 'yyyy-MM-dd');
     return (
       <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openEditModal(s)}>
-        <td className="px-4 py-3 text-gray-800">{format(sD, 'M/d')}</td>
+        <td className="px-4 py-3 text-gray-800 hover:text-indigo-600" onClick={(e) => { e.stopPropagation(); openCreateModal(dateStr); }}>
+          <span className="cursor-pointer" title="点击为此日期添加排班">{format(sD, 'M/d')}</span>
+        </td>
         <td className="px-4 py-3 text-gray-500">{format(sD, 'EEEE', { locale: zhCN })}</td>
         <td className="px-4 py-3">
           <span className="text-xs px-2 py-0.5 rounded bg-purple-50 text-purple-600">{script?.dm_gender || '未分类'}</span>
@@ -209,7 +221,13 @@ export default function ScheduleCalendar() {
             </thead>
             <tbody>
               {todaySchedules.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-10 text-gray-400">今天暂无排班</td></tr>
+                <tr>
+                  <td colSpan={8} className="text-center py-10 text-gray-400">
+                    <button onClick={() => openCreateModal(format(currentDate, 'yyyy-MM-dd'))} className="text-indigo-600 hover:underline text-sm">
+                      今天暂无排班，点击添加 →
+                    </button>
+                  </td>
+                </tr>
               ) : todaySchedules.map(s => scheduleRow(s, false))}
             </tbody>
           </table>
@@ -249,7 +267,13 @@ export default function ScheduleCalendar() {
             </thead>
             <tbody>
               {futureSchedules.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-10 text-gray-400">暂无排班</td></tr>
+                <tr>
+                  <td colSpan={9} className="text-center py-10 text-gray-400">
+                    <button onClick={() => openCreateModal(format(addDays(currentDate, 1), 'yyyy-MM-dd'))} className="text-indigo-600 hover:underline text-sm">
+                      暂无排班，点击添加 →
+                    </button>
+                  </td>
+                </tr>
               ) : futureSchedules.map(s => scheduleRow(s, true))}
             </tbody>
           </table>
