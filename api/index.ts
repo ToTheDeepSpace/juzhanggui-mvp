@@ -30,7 +30,7 @@ app.use(cors());
 app.use(express.json());
 
 // Auth middleware
-const PUBLIC_PATHS = ['/api/health', '/api/auth/login', '/api/auth/verify', '/api/player/login'];
+const PUBLIC_PATHS = ['/api/health', '/api/auth/login', '/api/auth/verify', '/api/player/login', '/api/player/send-code', '/api/player/verify-code'];
 const PUBLIC_SUFFIXES = ['/public', '/checkin', '/evaluate', '/evaluation', '/evaluations', '/evaluation-stats'];
 
 function isPublicPath(path: string): boolean {
@@ -399,6 +399,34 @@ app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
       }
     }
     res.json(ok({ ...data, full }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+// ===== 玩家验证码登录 =====
+const MOCK_CODE = '8888';
+
+app.post('/api/player/send-code', async (req: any, res: any) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json(err(new Error('请填写手机号')));
+    console.log(`[验证码] 发送到 ${phone}: ${MOCK_CODE}`);
+    res.json(ok({ sent: true }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/player/verify-code', async (req: any, res: any) => {
+  try {
+    const { phone, code } = req.body;
+    if (!phone || !code) return res.status(400).json(err(new Error('手机号和验证码不能为空')));
+    if (code !== MOCK_CODE) return res.status(401).json(err(new Error('验证码错误')));
+    const { data: existing } = await supabase.from('lc_profiles').select('*').eq('phone', phone).maybeSingle();
+    if (existing) {
+      return res.json(ok({ id: existing.id, display_name: existing.display_name, phone: existing.phone, newUser: false }));
+    }
+    const { data: newPlayer } = await supabase.from('lc_profiles').insert({
+      phone, display_name: `玩家${phone.slice(-4)}`, role_type: 'player'
+    }).select().single();
+    res.json(ok({ id: newPlayer!.id, display_name: newPlayer!.display_name, phone, newUser: true }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 

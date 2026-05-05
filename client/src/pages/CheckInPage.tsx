@@ -27,8 +27,16 @@ interface ScheduleInfo {
 export default function CheckInPage() {
   const { scheduleId } = useParams<{ scheduleId: string }>();
   const { get, post, loading } = useApi();
-  
+
   const [schedule, setSchedule] = useState<ScheduleInfo | null>(null);
+  // 验证码登录
+  const [authPhone, setAuthPhone] = useState('');
+  const [authCode, setAuthCode] = useState('');
+  const [codeSent, setCodeSent] = useState(false);
+  const [codeSending, setCodeSending] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [playerId, setPlayerId] = useState<string | null>(null);
+  // 签到表单
   const [guestName, setGuestName] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
   const [guestGender, setGuestGender] = useState('');
@@ -47,10 +55,30 @@ export default function CheckInPage() {
 
   // 加载排期信息
   useEffect(() => {
-    if (scheduleId) {
-      loadSchedule();
-    }
+    if (scheduleId) { loadSchedule(); }
   }, [scheduleId]);
+
+  const sendCode = async () => {
+    if (!authPhone.trim()) { setError('请输入手机号'); return; }
+    setCodeSending(true); setError('');
+    const r = await post('/player/send-code', { phone: authPhone.trim() });
+    setCodeSending(false);
+    if (r.success) { setCodeSent(true); setError('验证码已发送（测试码：8888）'); }
+    else setError(r.error || '发送失败');
+  };
+
+  const verifyCode = async () => {
+    if (!authCode.trim()) { setError('请输入验证码'); return; }
+    const r = await post('/player/verify-code', { phone: authPhone.trim(), code: authCode.trim() });
+    if (r.success) {
+      setAuthenticated(true); setPlayerId(r.data?.id || null);
+      setGuestName(r.data?.display_name || '');
+      setGuestPhone(authPhone.trim());
+      localStorage.setItem('guest_name', r.data?.display_name || '');
+      localStorage.setItem('guest_phone', authPhone.trim());
+      setError('');
+    } else { setError(r.error || '验证失败'); }
+  };
 
   const loadSchedule = async () => {
     const res = await get<ScheduleInfo>(`/schedules/${scheduleId}/public`);
@@ -106,7 +134,7 @@ export default function CheckInPage() {
     }
   };
 
-  if (error && !schedule) {
+  if (error && !schedule && !authenticated) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
         <div className="bg-white rounded-xl shadow-lg p-8 text-center max-w-sm w-full">
@@ -161,6 +189,37 @@ export default function CheckInPage() {
           <h1 className="text-xl font-bold text-gray-800">剧本杀上车</h1>
         </div>
 
+        {!authenticated ? (
+          /* 验证码登录步骤 */
+          <div className="space-y-4">
+            <div className="text-center mb-2">
+              <p className="text-sm text-gray-500">请先验证手机号</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">手机号</label>
+              <div className="flex gap-2">
+                <input type="tel" value={authPhone} onChange={e => setAuthPhone(e.target.value)}
+                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm" placeholder="请输入手机号" disabled={codeSent} />
+                <button onClick={sendCode} disabled={codeSending || codeSent}
+                  className="px-4 py-3 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200 disabled:opacity-50 whitespace-nowrap">
+                  {codeSending ? '发送中...' : codeSent ? '已发送' : '获取验证码'}
+                </button>
+              </div>
+            </div>
+            {codeSent && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">验证码</label>
+                <input type="text" value={authCode} onChange={e => setAuthCode(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm" placeholder="输入验证码" maxLength={6} />
+                <button onClick={verifyCode} className="w-full mt-3 py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 text-sm">
+                  验证并上车
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+        /* 已验证，显示签到表单 */
+        <div className="space-y-4">
         {schedule && (
           <div className="bg-blue-50 rounded-lg p-4 mb-6">
             <h2 className="font-medium text-blue-900 mb-1">{schedule.script_name}</h2>
@@ -284,6 +343,8 @@ export default function CheckInPage() {
           <p className="text-xs text-gray-400 mt-4">
           填写信息后确认即可上车
         </p>
+        </div>
+        )}
       </div>
 
       {/* 确认弹窗 */}
