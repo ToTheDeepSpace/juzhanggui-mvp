@@ -213,7 +213,7 @@ app.get('/api/schedules', async (req: any, res: any) => {
     const { data } = await q;
     // 获取每个排期的签到人数
     const schedulesWithCheckins = await Promise.all((data || []).map(async (s: any) => {
-      const { data: checkins } = await supabase.from('checkins').select('role, gender').eq('schedule_id', s.id);
+      const { data: checkins } = await supabase.from('checkins').select('role').eq('schedule_id', s.id);
       const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
       return {
         ...s, script_name: s.scripts?.name, room_name: s.rooms?.name,
@@ -246,12 +246,12 @@ app.get('/api/schedules/:id/public', async (req: any, res: any) => {
     // 获取玩家可选角色（含性别）
     const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
     // 获取已选角色（含性别）
-    const { data: checkins } = await supabase.from('checkins').select('role, gender').eq('schedule_id', req.params.id).not('role', 'is', null);
+    const { data: checkins } = await supabase.from('checkins').select('role').eq('schedule_id', req.params.id).not('role', 'is', null);
     res.json(ok({
       ...s, script_name: s.scripts?.name, roles: roles || [],
       player_roles: (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' })),
       taken_roles: (checkins || []).map((c: any) => c.role),
-      checkins: (checkins || []).map((c: any) => ({ role: c.role, gender: c.gender })),
+      checkins: (checkins || []).map((c: any) => ({ role: c.role, gender: '' })),
       start_time: `${s.scheduled_date}T${s.start_time}`,
       end_time: `${s.scheduled_date}T${s.end_time}`,
     }));
@@ -374,7 +374,7 @@ app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
     if (!name) return res.status(400).json(err(new Error('请填写姓名')));
     const { data } = await supabase.from('checkins').insert({
       schedule_id: req.params.id, guest_name: name, guest_phone: phone || null,
-      role, gender: gender || null, guest_avatar: avatar || null
+      role, guest_avatar: avatar || null
     }).select().single();
     // 满员自动确认
     const { data: sched } = await supabase.from('schedules').select('script_id').eq('id', req.params.id).single();
