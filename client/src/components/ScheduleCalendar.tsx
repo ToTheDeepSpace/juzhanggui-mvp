@@ -162,13 +162,19 @@ export default function ScheduleCalendar() {
     cancelled: 'text-red-500 bg-red-50',
   };
 
+  let carCounter = 0;
   function scheduleRow(s: ScheduleWithDetails, showActions: boolean) {
     const script = scripts.find(sc => sc.id === s.script_id);
     const sD = parseISO(s.start_time);
     const eD = parseISO(s.end_time);
     const dateStr = format(sD, 'yyyy-MM-dd');
+    carCounter++;
+    const carNum = `#${String(carCounter).padStart(3, '0')}`;
     return (
       <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openEditModal(s)}>
+        <td className="px-4 py-3">
+          <span className="text-xs font-mono font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">{carNum}</span>
+        </td>
         <td className="px-4 py-3 text-gray-800 hover:text-indigo-600" onClick={(e) => { e.stopPropagation(); openCreateModal(dateStr); }}>
           <span className="cursor-pointer" title="点击为此日期添加排班">{format(sD, 'M/d')}</span>
         </td>
@@ -225,6 +231,7 @@ export default function ScheduleCalendar() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">车次</th>
                 <th className="text-left px-4 py-3 text-gray-500 font-medium">日期</th>
                 <th className="text-left px-4 py-3 text-gray-500 font-medium">星期</th>
                 <th className="text-left px-4 py-3 text-gray-500 font-medium">类型</th>
@@ -238,7 +245,7 @@ export default function ScheduleCalendar() {
             <tbody>
               {todaySchedules.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center py-10 text-gray-400">
+                  <td colSpan={9} className="text-center py-10 text-gray-400">
                     <button onClick={() => openCreateModal(format(currentDate, 'yyyy-MM-dd'))} className="text-indigo-600 hover:underline text-sm">
                       今天暂无排班，点击添加 →
                     </button>
