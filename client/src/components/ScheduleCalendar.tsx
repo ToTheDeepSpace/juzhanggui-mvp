@@ -41,6 +41,19 @@ export default function ScheduleCalendar() {
   // 加载数据
   useEffect(() => { loadData(); }, []);
 
+  // 自动轮询刷新（每15秒刷新一次，确保客上车后实时更新）
+  useEffect(() => {
+    const timer = setInterval(loadData, 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // 页面回到焦点时刷新（客服从签到页切回来后自动更新）
+  useEffect(() => {
+    const onFocus = () => loadData();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, []);
+
   const loadData = async () => {
     const [roomsRes, actorsRes, scriptsRes, schedulesRes] = await Promise.all([
       get<Room[]>('/rooms'), get<Actor[]>('/actors'),
