@@ -71,11 +71,17 @@ export default function CheckInPage() {
     if (!authCode.trim()) { setError('请输入验证码'); return; }
     const r = await post('/player/verify-code', { phone: authPhone.trim(), code: authCode.trim() });
     if (r.success) {
-      setAuthenticated(true); setPlayerId(r.data?.id || null);
+      setPlayerId(r.data?.id || null);
       setGuestName(r.data?.display_name || '');
       setGuestPhone(authPhone.trim());
       localStorage.setItem('guest_name', r.data?.display_name || '');
       localStorage.setItem('guest_phone', authPhone.trim());
+      // 先等 schedule 加载完再切到表单
+      if (scheduleId && !schedule) {
+        const res = await get<ScheduleInfo>(`/schedules/${scheduleId}/public`);
+        if (res.success && res.data) setSchedule(res.data);
+      }
+      setAuthenticated(true);
       setError('');
     } else { setError(r.error || '验证失败'); }
   };
@@ -220,19 +226,15 @@ export default function CheckInPage() {
         ) : (
         /* 已验证，显示签到表单 */
         <div className="space-y-4">
+          {schedule && (
           <div className="bg-blue-50 rounded-lg p-4 mb-6">
-            {schedule ? (
-              <>
-                <h2 className="font-medium text-blue-900 mb-1">{schedule.script_name}</h2>
-                <p className="text-sm text-blue-700">
-                  {format(parseISO(schedule.start_time), 'MM月dd日 HH:mm', { locale: zhCN })}
-                </p>
-                <p className="text-sm text-blue-700">{schedule.room_name}</p>
-              </>
-            ) : (
-              <p className="text-sm text-blue-500">加载排期信息...</p>
-            )}
+              <h2 className="font-medium text-blue-900 mb-1">{schedule.script_name}</h2>
+              <p className="text-sm text-blue-700">
+                {format(parseISO(schedule.start_time), 'MM月dd日 HH:mm', { locale: zhCN })}
+              </p>
+              <p className="text-sm text-blue-700">{schedule.room_name}</p>
           </div>
+          )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
