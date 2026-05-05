@@ -241,6 +241,9 @@ export default function ScheduleCalendar() {
               {(s.status === 'ongoing' || s.status === 'scheduled') && (
                 <button onClick={(e) => openCompleteModal(s, e)} className="text-xs text-green-600 hover:underline font-medium">确认结束</button>
               )}
+              {s.status === 'scheduled' && (
+                <button onClick={async (e) => { e.stopPropagation(); if (confirm('确定流车吗？该车排班将标记为已取消。')) { await put(`/schedules/${s.id}/cancel`, {}); loadData(); } }} className="text-xs text-red-400 hover:text-red-600 hover:underline font-medium">流车</button>
+              )}
             </div>
           </td>
         )}
