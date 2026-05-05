@@ -372,12 +372,16 @@ app.get('/api/schedules/:id/checkins', async (req: any, res: any) => {
 });
 app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
   try {
-    const { name, phone, role, avatar } = req.body;
+    const { name, phone, gender, role, avatar } = req.body;
     if (!name) return res.status(400).json(err(new Error('请填写姓名')));
-// 满员自动确认
+    const { data } = await supabase.from('checkins').insert({
+      schedule_id: req.params.id, guest_name: name, guest_phone: phone || null,
+      role, gender: gender || null, guest_avatar: avatar || null
+    }).select().single();
+    // 满员自动确认
     const { data: sched } = await supabase.from('schedules').select('script_id').eq('id', req.params.id).single();
     let full = false;
-    if (sched) {
+    if (sched && data) {
       const { data: allRoles } = await supabase.from('script_player_roles').select('id').eq('script_id', sched.script_id);
       const { count } = await supabase.from('checkins').select('*', { count: 'exact', head: true }).eq('schedule_id', req.params.id);
       if (allRoles && count !== null && count >= allRoles.length) {
