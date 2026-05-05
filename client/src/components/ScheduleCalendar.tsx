@@ -447,7 +447,7 @@ export default function ScheduleCalendar() {
       {/* 结束登记弹窗 */}
       {showEndModal && endingSchedule && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-lg w-full mx-4">
+          <div className="bg-white rounded-xl p-6 max-w-lg w-full mx-4 max-h-[85vh] overflow-y-auto">
             <h3 className="text-lg font-bold text-gray-900 mb-4">结束登记</h3>
             <div className="space-y-3 mb-5">
               {[
