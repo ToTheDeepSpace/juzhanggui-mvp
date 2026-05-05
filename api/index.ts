@@ -318,6 +318,53 @@ app.put('/api/schedules/:id/cancel', async (req: any, res: any) => {
   catch (e) { res.status(500).json(err(e)); }
 });
 
+// ===== 冲突检测 =====
+app.get('/api/schedules/conflicts/check', async (req: any, res: any) => {
+  try {
+    const { actorId, roomId, date, startTime, endTime, excludeId } = req.query as any;
+    const conflicts: any[] = [];
+
+    // 卡司冲突
+    if (actorId) {
+      const { data: actorSchedules } = await supabase
+        .from('schedule_actors')
+        .select('*, schedules!inner(id, scheduled_date, start_time, end_time, status, script_id, scripts!inner(name))')
+        .eq('actor_id', actorId)
+        .eq('schedules.scheduled_date', date)
+        .not('schedules.status', 'eq', 'cancelled')
+        .gte('schedules.end_time', startTime)
+        .lte('schedules.start_time', endTime);
+      if (excludeId && actorSchedules) {
+        (actorSchedules as any[]).filter(s => s.schedules?.id !== excludeId);
+      }
+      if (actorSchedules && (actorSchedules as any[]).length > 0) {
+        for (const as of actorSchedules as any[]) {
+          conflicts.push({ type: 'actor', id: actorId, scheduleId: as.schedules?.id, scriptName: as.schedules?.scripts?.name });
+        }
+      }
+    }
+
+    // 房间冲突
+    if (roomId) {
+      const { data: roomSchedules } = await supabase
+        .from('schedules')
+        .select('id, script_id, start_time, end_time, scripts!inner(name)')
+        .eq('room_id', roomId)
+        .eq('scheduled_date', date)
+        .not('status', 'eq', 'cancelled')
+        .gte('end_time', startTime)
+        .lte('start_time', endTime);
+      if (roomSchedules && (roomSchedules as any[]).length > 0) {
+        for (const rs of roomSchedules as any[]) {
+          conflicts.push({ type: 'room', id: roomId, scheduleId: rs.id, scriptName: rs.scripts?.name });
+        }
+      }
+    }
+
+    res.json(ok(conflicts));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
 // ===== Checkins =====
 app.get('/api/schedules/:id/checkins', async (req: any, res: any) => {
   try { const { data } = await supabase.from('checkins').select('*').eq('schedule_id', req.params.id).order('checked_at', { ascending: false }); res.json(ok(data)); }
@@ -327,8 +374,18 @@ app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
   try {
     const { name, phone, role, avatar } = req.body;
     if (!name) return res.status(400).json(err(new Error('请填写姓名')));
-    const { data } = await supabase.from('checkins').insert({ schedule_id: req.params.id, guest_name: name, guest_phone: phone ? hashPhone(phone) : null, role, guest_avatar: avatar || null }).select().single();
-    res.json(ok(data));
+// 满员自动确认
+    const { data: sched } = await supabase.from('schedules').select('script_id').eq('id', req.params.id).single();
+    let full = false;
+    if (sched) {
+      const { data: allRoles } = await supabase.from('script_player_roles').select('id').eq('script_id', sched.script_id);
+      const { count } = await supabase.from('checkins').select('*', { count: 'exact', head: true }).eq('schedule_id', req.params.id);
+      if (allRoles && count !== null && count >= allRoles.length) {
+        await supabase.from('schedules').update({ status: 'scheduled' }).eq('id', req.params.id);
+        full = true;
+      }
+    }
+    res.json(ok({ ...data, full }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 

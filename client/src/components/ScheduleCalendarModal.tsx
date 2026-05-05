@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import type { ScheduleWithDetails, ScheduleFormData, SelectedActor } from '../types/schedule';
 import type { Script, Actor, Room } from '../types';
 import CheckInRoles from './CheckInRoles';
@@ -40,6 +41,37 @@ export default function ScheduleCalendarModal({
   onOpenQRModal,
 }: ScheduleCalendarModalProps) {
   const selectedScript = scripts.find(s => s.id === formData.scriptId);
+  const [conflicts, setConflicts] = useState<any[]>([]);
+  const [checkingConflict, setCheckingConflict] = useState(false);
+
+  // 冲突检测
+  useEffect(() => {
+    if (!formData.roomId && !selectedActors.some(a => a.actorId)) {
+      setConflicts([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setCheckingConflict(true);
+      const params = new URLSearchParams();
+      if (formData.roomId) params.set('roomId', formData.roomId);
+      if (formData.date) params.set('date', formData.date);
+      params.set('startTime', formData.startTime);
+      const dur = selectedScript?.duration || 240;
+      const endH = parseInt(formData.startTime.split(':')[0]) + Math.floor(dur / 60);
+      const endM = parseInt(formData.startTime.split(':')[1]) + (dur % 60);
+      params.set('endTime', `${endH}:${endM < 10 ? '0' : ''}${endM}`);
+      try {
+        const r = await fetch(`/api/schedules/conflicts/check?${params}`);
+        const d = await r.json();
+        setConflicts(d.success ? (d.data || []) : []);
+      } catch { setConflicts([]); }
+      setCheckingConflict(false);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [formData.roomId, formData.date, formData.startTime, JSON.stringify(selectedActors.map(a => a.actorId))]);
+
+  // 检查指定演员是否有冲突
+  const hasConflict = (actorId: string) => conflicts.some((c: any) => c.type === 'actor' && c.id === actorId);
 
   const addActor = () => {
     onSelectedActorsChange([...selectedActors, { actorId: '', roleName: '', startOffset: 0, duration: 240 }]);
@@ -107,6 +139,11 @@ export default function ScheduleCalendarModal({
                   <option key={room.id} value={room.id}>{room.name}</option>
                 ))}
               </select>
+              {formData.roomId && conflicts.filter((c: any) => c.type === 'room').length > 0 && (
+                <p className="text-xs text-red-500 mt-1">
+                  🔴 该房间此时段已有排期
+                </p>
+              )}
             </div>
           </div>
 
@@ -197,16 +234,21 @@ export default function ScheduleCalendarModal({
 
               return (
                 <div key={index} className="flex items-center gap-3 mb-2 p-3 bg-gray-50 rounded-lg">
-                  <select
-                    value={sa.actorId}
-                    onChange={(e) => updateActor(index, 'actorId', e.target.value)}
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg"
-                  >
-                    <option value="">选择卡司</option>
-                    {actors.map((actor) => (
-                      <option key={actor.id} value={actor.id}>{actor.name}</option>
-                    ))}
-                  </select>
+                  <div className="flex-1">
+                    <select
+                      value={sa.actorId}
+                      onChange={(e) => updateActor(index, 'actorId', e.target.value)}
+                      className={`w-full px-3 py-2 border rounded-lg ${sa.actorId && hasConflict(sa.actorId) ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}
+                    >
+                      <option value="">选择卡司</option>
+                      {actors.map((actor) => (
+                        <option key={actor.id} value={actor.id}>{actor.name}</option>
+                      ))}
+                    </select>
+                    {sa.actorId && hasConflict(sa.actorId) && (
+                      <p className="text-xs text-red-500 mt-1">🔴 该卡司此时段有冲突</p>
+                    )}
+                  </div>
                   <select
                     value={sa.roleName}
                     onChange={(e) => updateActor(index, 'roleName', e.target.value)}
