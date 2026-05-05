@@ -6,8 +6,12 @@ import { CHECKIN_BASE_URL } from '../config';
 import { useScheduleCheckins } from '../hooks/useScheduleCheckins';
 import CheckInRoles from './CheckInRoles';
 
+interface RoleItem {
+  name: string;
+  gender?: string;
+}
 interface QRCodeModalProps {
-  schedule: { id: string; script_name: string; start_time: string; room_name?: string; player_roles?: string; status?: string } | null;
+  schedule: { id: string; script_name: string; start_time: string; room_name?: string; player_roles?: RoleItem[] | string; status?: string } | null;
   visible: boolean;
   onClose: () => void;
   onKickGuest?: (guestName: string, role: string) => void;
@@ -86,10 +90,10 @@ export default function QRCodeModal({ schedule, visible, onClose, onKickGuest }:
                 </p>
               </div>
             </div>
-            {schedule.player_roles && schedule.player_roles.length > 0 && (
+            {schedule.player_roles && (
               <CheckInRoles
                 checkins={checkins}
-                playerRoles={schedule.player_roles.split(',').map(r => r.trim()).filter(Boolean)}
+                playerRoles={Array.isArray(schedule.player_roles) ? schedule.player_roles.map((r: any) => r.name || r) : []}
                 onKickGuest={onKickGuest}
               />
             )}
