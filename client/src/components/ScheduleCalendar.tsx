@@ -31,12 +31,11 @@ export default function ScheduleCalendar() {
   const [confirmRoomId, setConfirmRoomId] = useState('');
 
   // 结束确认状态
-  const [showCompleteModal, setShowCompleteModal] = useState(false);
-  const [completingSchedule, setCompletingSchedule] = useState<ScheduleWithDetails | null>(null);
-  const [cleanDone, setCleanDone] = useState(false);
-  const [propDone, setPropDone] = useState(false);
-  const [clothDone, setClothDone] = useState(false);
-  const [completing, setCompleting] = useState(false);
+  const [showEndModal, setShowEndModal] = useState(false);
+  const [endingSchedule, setEndingSchedule] = useState<ScheduleWithDetails | null>(null);
+  const [endType, setEndType] = useState('normal');
+  const [endNote, setEndNote] = useState('');
+  const [endSubmitting, setEndSubmitting] = useState(false);
 
   // 表单状态
   const [formData, setFormData] = useState<ScheduleFormData>({
@@ -122,16 +121,19 @@ export default function ScheduleCalendar() {
     e.stopPropagation(); setQrSchedule(schedule); setShowQRModal(true);
   };
 
-  const openCompleteModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
-    e.stopPropagation(); setCompletingSchedule(schedule);
-    setCleanDone(false); setPropDone(false); setClothDone(false); setShowCompleteModal(true);
+  const openEndModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
+    e.stopPropagation(); setEndingSchedule(schedule); setEndType('normal'); setEndNote(''); setShowEndModal(true);
   };
 
-  const handleComplete = async () => {
-    if (!completingSchedule || !cleanDone || !propDone || !clothDone) return;
-    setCompleting(true);
-    await put(`/schedules/${completingSchedule.id}/complete`, {});
-    setShowCompleteModal(false); setCompleting(false); loadData();
+  const handleEndSubmit = async () => {
+    if (!endingSchedule) return;
+    setEndSubmitting(true);
+    if (endType === 'normal') {
+      await put(`/schedules/${endingSchedule.id}/complete`, {});
+    } else {
+      await put(`/schedules/${endingSchedule.id}/cancel`, {});
+    }
+    setShowEndModal(false); setEndSubmitting(false); loadData();
   };
 
   // 提交表单
@@ -239,7 +241,7 @@ export default function ScheduleCalendar() {
             <div className="flex gap-2">
               <button onClick={(e) => { e.stopPropagation(); openEditModal(s); }} className="text-xs text-indigo-600 hover:underline">编辑</button>
               {s.status !== 'completed' && s.status !== 'cancelled' && (
-                <button onClick={(e) => openCompleteModal(s, e)} className="text-xs text-green-600 hover:underline font-medium">确认结束</button>
+                <button onClick={(e) => openEndModal(s, e)} className="text-xs text-green-600 hover:underline font-medium">结束登记</button>
               )}
               {(s.status === 'scheduled' || s.status === 'pending') && (
                 <button onClick={async (e) => { e.stopPropagation(); if (confirm('确定流车吗？')) { await put(`/schedules/${s.id}/cancel`, {}); loadData(); } }} className="text-xs text-red-400 hover:text-red-600 hover:underline font-medium">流车</button>
@@ -435,30 +437,36 @@ export default function ScheduleCalendar() {
         onRoomChange={setConfirmRoomId}
       />
 
-      {/* 结束确认弹窗 */}
-      {showCompleteModal && (
+      {/* 结束登记弹窗 */}
+      {showEndModal && endingSchedule && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-6 max-w-sm w-full mx-4">
-            <h3 className="text-lg font-bold text-gray-900 mb-2">确认开本结束</h3>
-            <p className="text-sm text-gray-500 mb-5">请确认以下事项已完成：</p>
-            <div className="space-y-3 mb-6">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">结束登记</h3>
+            <div className="space-y-3 mb-5">
               {[
-                { key: 'cleanDone', label: '🧹 房间打扫完毕', val: cleanDone, set: setCleanDone },
-                { key: 'propDone', label: '🎭 道具归集完毕', val: propDone, set: setPropDone },
-                { key: 'clothDone', label: '👗 衣物整理完毕', val: clothDone, set: setClothDone },
-              ].map(item => (
-                <label key={item.key} className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
-                  <input type="checkbox" checked={item.val} onChange={e => item.set(e.target.checked)} className="w-4 h-4" />
-                  <span className="text-sm text-gray-700">{item.label}</span>
+                { value: 'normal', label: '✅ 正常结束', desc: '剧本顺利开完' },
+                { value: 'bomb', label: '💥 炸车', desc: '开了一半因故取消' },
+                { value: 'flow', label: '🚫 流车', desc: '未开成就取消' },
+                { value: 'other', label: '❓ 其他问题', desc: '设备、客诉、意外等' },
+              ].map(opt => (
+                <label key={opt.value} className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 ${endType === opt.value ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200'}`}>
+                  <input type="radio" name="endType" value={opt.value} checked={endType === opt.value} onChange={e => setEndType(e.target.value)} className="mt-0.5" />
+                  <div><span className="text-sm font-medium text-gray-900">{opt.label}</span><p className="text-xs text-gray-400">{opt.desc}</p></div>
                 </label>
               ))}
             </div>
+            <div className="bg-blue-50 rounded-lg p-4 mb-5 text-center">
+              <p className="text-sm font-medium text-blue-900 mb-2">📋 评价二维码</p>
+              <p className="text-xs text-blue-600 mb-3">玩家扫码后可对本次剧本进行评价</p>
+              <div className="bg-white inline-block p-3 rounded-lg">
+                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(window.location.origin + '/evaluate/' + endingSchedule.id)}`} alt="评价二维码" className="w-36 h-36" />
+              </div>
+              <button onClick={() => navigator.clipboard.writeText(window.location.origin + '/evaluate/' + endingSchedule.id)} className="mt-2 text-xs text-blue-600 hover:underline">复制评价链接</button>
+            </div>
+            <textarea value={endNote} onChange={e => setEndNote(e.target.value)} placeholder="备注说明（可选）" className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-5 h-16 resize-none focus:outline-none focus:border-indigo-400" />
             <div className="flex gap-2">
-              <button onClick={() => setShowCompleteModal(false)} className="flex-1 py-2.5 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50">取消</button>
-              <button onClick={handleComplete} disabled={!cleanDone || !propDone || !clothDone || completing}
-                className="flex-1 py-2.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50">
-                {completing ? '处理中...' : '确认结束'}
-              </button>
+              <button onClick={() => setShowEndModal(false)} className="flex-1 py-2.5 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50">取消</button>
+              <button onClick={handleEndSubmit} disabled={endSubmitting} className="flex-1 py-2.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50">{endSubmitting ? '处理中...' : '确认登记'}</button>
             </div>
           </div>
         </div>
