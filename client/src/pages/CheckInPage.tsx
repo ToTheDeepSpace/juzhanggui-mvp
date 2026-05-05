@@ -136,7 +136,7 @@ export default function CheckInPage() {
           {isStaff ? (
             <div className="space-y-2">
               <button
-                onClick={() => { setCheckedIn(false); setGuestName(''); setGuestPhone(''); setGuestGender(''); setSelectedRole(''); setError(''); }}
+                onClick={() => { setCheckedIn(false); setGuestName(''); setGuestPhone(''); setGuestGender(''); setSelectedRole(''); setError(''); loadSchedule(); }}
                 className="w-full py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 transition-colors"
               >
                 + 继续添加下一位玩家
