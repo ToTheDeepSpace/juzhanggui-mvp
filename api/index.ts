@@ -101,7 +101,18 @@ app.delete('/api/rooms/:id', async (req: any, res: any) => {
 
 // ===== Actors (卡司/DM) =====
 app.get('/api/actors', async (_: any, res: any) => {
-  try { const { data } = await supabase.from('actors').select('*').order('name'); res.json(ok(data)); }
+  try {
+    const { data } = await supabase.from('actors').select('*').order('name');
+    // 为每个卡司查找对应的灵契主页
+    const enriched = await Promise.all((data || []).map(async (a: any) => {
+      if (a.phone) {
+        const { data: lc } = await supabase.from('lc_profiles').select('id, display_name').eq('phone', a.phone).maybeSingle();
+        return { ...a, lc_profile: lc || null };
+      }
+      return { ...a, lc_profile: null };
+    }));
+    res.json(ok(enriched));
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.post('/api/actors', async (req: any, res: any) => {

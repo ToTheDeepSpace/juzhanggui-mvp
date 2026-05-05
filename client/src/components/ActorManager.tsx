@@ -191,6 +191,17 @@ export default function ActorManager() {
                 {actor.phone && (
                   <p className="text-sm text-gray-500 mt-1">📞 {actor.phone}</p>
                 )}
+                {(actor as any).lc_profile ? (
+                  <a href={`https://lingqi.vercel.app/explore/${(actor as any).lc_profile.id}`} target="_blank"
+                    className="inline-flex items-center gap-1 mt-1 text-xs text-indigo-600 hover:text-indigo-800 transition-colors">
+                    ✨ 灵契主页 →
+                  </a>
+                ) : actor.phone && (
+                  <a href={`https://lingqi.vercel.app/login`} target="_blank"
+                    className="inline-flex items-center gap-1 mt-1 text-xs text-gray-400 hover:text-indigo-600 transition-colors">
+                    📄 邀请入驻灵契
+                  </a>
+                )}
               </div>
               <div className="flex gap-2">
                 <button

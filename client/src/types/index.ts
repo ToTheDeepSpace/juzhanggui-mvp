@@ -13,6 +13,7 @@ export interface Actor {
   id: string;
   name: string;
   phone?: string;
+  lc_profile?: { id: string; display_name: string } | null;
 }
 
 export interface Script {
