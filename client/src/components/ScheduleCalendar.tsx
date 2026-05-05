@@ -273,7 +273,7 @@ export default function ScheduleCalendar() {
             <div className="flex gap-2">
               <button onClick={(e) => { e.stopPropagation(); openEditModal(s); }} className="text-xs text-indigo-600 hover:underline">编辑</button>
               {s.status === 'scheduled' && (
-                <button onClick={(e) => { e.stopPropagation(); put(`/schedules/${s.id}`, { status: 'locked' }).then(() => loadData()); }} className="text-xs text-orange-600 hover:underline font-medium">锁车</button>
+                <button onClick={(e) => { e.stopPropagation(); if (confirm('确认已收到定金？点击确定后该车将锁定。')) { put(`/schedules/${s.id}`, { status: 'locked' }).then(() => loadData()); } }} className="text-xs text-orange-600 hover:underline font-medium">锁车</button>
               )}
               {s.status === 'locked' && (
                 <button onClick={(e) => openStartModal(s, e)} className="text-xs text-indigo-600 hover:underline font-medium">确认排班</button>
