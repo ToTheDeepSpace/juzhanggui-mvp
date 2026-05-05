@@ -171,12 +171,16 @@ export default function ScheduleCalendar() {
     else alert('删除失败: ' + (result.error || '未知错误'));
   };
 
+  const [showEnded, setShowEnded] = useState(false);
+
   // ===== 布局 =====
   // ===== 按日期分组 =====
   const todayStr = format(currentDate, 'yyyy-MM-dd');
   const todaySchedules = schedules.filter(s => s.start_time.startsWith(todayStr) && s.status !== 'cancelled');
   const futureSchedules = schedules.filter(s => !s.start_time.startsWith(todayStr) && s.status !== 'cancelled' && s.start_time > todayStr)
     .sort((a, b) => a.start_time.localeCompare(b.start_time));
+  const endedSchedules = schedules.filter(s => s.status === 'completed' || s.status === 'cancelled')
+    .sort((a, b) => b.start_time.localeCompare(a.start_time));
 
   const stText: Record<string, string> = {
     scheduled: '已确认', pending: '待排期', ongoing: '进行中', completed: '已完成', cancelled: '已取消',
@@ -246,7 +250,21 @@ export default function ScheduleCalendar() {
 
   return (
     <div className="space-y-6">
-      {/* 5月5日（今天）大框 */}
+      {/* 进行中 / 已结束 切换 */}
+      <div className="flex gap-1 bg-white rounded-xl p-1 border border-gray-100">
+        <button onClick={() => setShowEnded(false)}
+          className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${!showEnded ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:text-gray-700'}`}>
+          🚗 进行中
+        </button>
+        <button onClick={() => setShowEnded(true)}
+          className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${showEnded ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:text-gray-700'}`}>
+          ✅ 已结束 ({endedSchedules.length})
+        </button>
+      </div>
+
+      {!showEnded ? (
+        <>
+        {/* 5月5日（今天）大框 */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="bg-indigo-600 px-5 py-3 flex items-center justify-between">
           <h3 className="text-white font-bold">
@@ -334,6 +352,50 @@ export default function ScheduleCalendar() {
       </div>
 
       {/* 弹窗 */}
+        </>
+      ) : (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="bg-gray-700 px-5 py-3"><h3 className="text-white font-bold">已结束的排班</h3></div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b border-gray-100 bg-gray-50">
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">车次</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">日期</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">星期</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">类型</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">时间</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">剧本</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">房间</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">人数</th>
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">状态</th>
+              </tr></thead>
+              <tbody>
+                {endedSchedules.length === 0 ? (
+                  <tr><td colSpan={9} className="text-center py-10 text-gray-400">暂无已结束的排班</td></tr>
+                ) : endedSchedules.map(s => {
+                  const sc = scripts.find(x => x.id === s.script_id);
+                  const sd = parseISO(s.start_time);
+                  const ed = parseISO(s.end_time);
+                  carCounter++;
+                  const cn = `#${String(carCounter).padStart(3, '0')}`;
+                  return (<tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer" onClick={() => openEditModal(s)}>
+                    <td className="px-4 py-3"><span className="text-xs font-mono font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">{cn}</span></td>
+                    <td className="px-4 py-3 text-gray-800">{format(sd, 'M/d')}</td>
+                    <td className="px-4 py-3 text-gray-500">{format(sd, 'EEEE', { locale: zhCN })}</td>
+                    <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded bg-purple-50 text-purple-600">{sc?.dm_gender || '未分类'}</span></td>
+                    <td className="px-4 py-3 text-gray-800">{format(sd, 'HH:mm')}-{format(ed, 'HH:mm')}</td>
+                    <td className="px-4 py-3 font-medium text-gray-900">{sc?.name || '未知剧本'}</td>
+                    <td className="px-4 py-3 text-gray-600">{s.room_name || '-'}</td>
+                    <td className="px-4 py-3"><span className="text-sm">{s.player_count || '-'}人</span></td>
+                    <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded-full text-gray-500 bg-gray-100">{s.status === 'completed' ? '已完成' : '已取消'}</span></td>
+                  </tr>);
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <ScheduleCalendarModal
         visible={showModal}
         editingSchedule={editingSchedule}
