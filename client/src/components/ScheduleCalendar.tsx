@@ -30,6 +30,14 @@ export default function ScheduleCalendar() {
   const [confirmingSchedule, setConfirmingSchedule] = useState<ScheduleWithDetails | null>(null);
   const [confirmRoomId, setConfirmRoomId] = useState('');
 
+  // 结束确认状态
+  const [showCompleteModal, setShowCompleteModal] = useState(false);
+  const [completingSchedule, setCompletingSchedule] = useState<ScheduleWithDetails | null>(null);
+  const [cleanDone, setCleanDone] = useState(false);
+  const [propDone, setPropDone] = useState(false);
+  const [clothDone, setClothDone] = useState(false);
+  const [completing, setCompleting] = useState(false);
+
   // 表单状态
   const [formData, setFormData] = useState<ScheduleFormData>({
     roomId: '', scriptId: '', date: format(new Date(), 'yyyy-MM-dd'),
@@ -112,6 +120,18 @@ export default function ScheduleCalendar() {
 
   const openQRModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
     e.stopPropagation(); setQrSchedule(schedule); setShowQRModal(true);
+  };
+
+  const openCompleteModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
+    e.stopPropagation(); setCompletingSchedule(schedule);
+    setCleanDone(false); setPropDone(false); setClothDone(false); setShowCompleteModal(true);
+  };
+
+  const handleComplete = async () => {
+    if (!completingSchedule || !cleanDone || !propDone || !clothDone) return;
+    setCompleting(true);
+    await put(`/schedules/${completingSchedule.id}/complete`, {});
+    setShowCompleteModal(false); setCompleting(false); loadData();
   };
 
   // 提交表单
@@ -212,7 +232,12 @@ export default function ScheduleCalendar() {
         </td>
         {showActions && (
           <td className="px-4 py-3">
-            <button onClick={(e) => { e.stopPropagation(); openEditModal(s); }} className="text-xs text-indigo-600 hover:underline">编辑</button>
+            <div className="flex gap-2">
+              <button onClick={(e) => { e.stopPropagation(); openEditModal(s); }} className="text-xs text-indigo-600 hover:underline">编辑</button>
+              {s.status === 'ongoing' && (
+                <button onClick={(e) => openCompleteModal(s, e)} className="text-xs text-green-600 hover:underline font-medium">确认结束</button>
+              )}
+            </div>
           </td>
         )}
       </tr>
@@ -341,6 +366,35 @@ export default function ScheduleCalendar() {
         onConfirm={handleConfirmSchedule}
         onRoomChange={setConfirmRoomId}
       />
+
+      {/* 结束确认弹窗 */}
+      {showCompleteModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-sm w-full mx-4">
+            <h3 className="text-lg font-bold text-gray-900 mb-2">确认开本结束</h3>
+            <p className="text-sm text-gray-500 mb-5">请确认以下事项已完成：</p>
+            <div className="space-y-3 mb-6">
+              {[
+                { key: 'cleanDone', label: '🧹 房间打扫完毕', val: cleanDone, set: setCleanDone },
+                { key: 'propDone', label: '🎭 道具归集完毕', val: propDone, set: setPropDone },
+                { key: 'clothDone', label: '👗 衣物整理完毕', val: clothDone, set: setClothDone },
+              ].map(item => (
+                <label key={item.key} className="flex items-center gap-3 p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
+                  <input type="checkbox" checked={item.val} onChange={e => item.set(e.target.checked)} className="w-4 h-4" />
+                  <span className="text-sm text-gray-700">{item.label}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setShowCompleteModal(false)} className="flex-1 py-2.5 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50">取消</button>
+              <button onClick={handleComplete} disabled={!cleanDone || !propDone || !clothDone || completing}
+                className="flex-1 py-2.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50">
+                {completing ? '处理中...' : '确认结束'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -326,6 +326,10 @@ app.put('/api/schedules/:id/cancel', async (req: any, res: any) => {
   try { await supabase.from('schedules').update({ status: 'cancelled' }).eq('id', req.params.id); res.json(ok()); }
   catch (e) { res.status(500).json(err(e)); }
 });
+app.put('/api/schedules/:id/complete', async (req: any, res: any) => {
+  try { await supabase.from('schedules').update({ status: 'completed' }).eq('id', req.params.id); res.json(ok()); }
+  catch (e) { res.status(500).json(err(e)); }
+});
 
 // ===== 冲突检测 =====
 app.get('/api/schedules/conflicts/check', async (req: any, res: any) => {
