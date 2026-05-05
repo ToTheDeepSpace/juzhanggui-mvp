@@ -175,7 +175,7 @@ export default function ScheduleCalendar() {
 
   // ===== 布局 =====
   // ===== 按日期分组 =====
-  const todayStr = format(currentDate, 'yyyy-MM-dd');
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
   const todaySchedules = schedules.filter(s => s.start_time.startsWith(todayStr) && s.status !== 'cancelled');
   const otherActiveSchedules = schedules.filter(s => !s.start_time.startsWith(todayStr) && s.status !== 'completed' && s.status !== 'cancelled')
     .sort((a, b) => a.start_time.localeCompare(b.start_time));
