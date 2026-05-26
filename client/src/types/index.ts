@@ -58,7 +58,7 @@ export interface Schedule {
   script_duration: number;
   start_time: string;
   end_time: string;
-  status: 'scheduled' | 'ongoing' | 'completed' | 'cancelled';
+  status: 'pending' | 'scheduled' | 'locked' | 'confirmed' | 'ongoing' | 'completed' | 'cancelled' | 'bombed' | 'issue';
   customer_name?: string;
   customer_phone?: string;
   player_count?: number;

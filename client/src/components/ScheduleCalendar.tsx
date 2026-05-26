@@ -122,10 +122,6 @@ export default function ScheduleCalendar() {
     setShowModal(true);
   };
 
-  const openConfirmModal = (schedule: ScheduleWithDetails) => {
-    setConfirmingSchedule(schedule); setConfirmRoomId(''); setShowConfirmModal(true);
-  };
-
   const openQRModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
     e.stopPropagation(); setQrSchedule(schedule); setShowQRModal(true);
   };

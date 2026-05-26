@@ -25,7 +25,6 @@ interface ScheduleCalendarModalProps {
 export default function ScheduleCalendarModal({
   visible,
   editingSchedule,
-  isPendingMode,
   scripts,
   rooms,
   actors,
@@ -42,33 +41,35 @@ export default function ScheduleCalendarModal({
 }: ScheduleCalendarModalProps) {
   const selectedScript = scripts.find(s => s.id === formData.scriptId);
   const [conflicts, setConflicts] = useState<any[]>([]);
-  const [checkingConflict, setCheckingConflict] = useState(false);
+  const selectedActorIds = selectedActors.map(a => a.actorId).filter(Boolean).join(',');
 
   // 冲突检测
   useEffect(() => {
-    if (!formData.roomId && !selectedActors.some(a => a.actorId)) {
+    if (!formData.roomId && !selectedActorIds) {
       setConflicts([]);
       return;
     }
     const timer = setTimeout(async () => {
-      setCheckingConflict(true);
       const params = new URLSearchParams();
       if (formData.roomId) params.set('roomId', formData.roomId);
+      if (selectedActorIds) params.set('actorIds', selectedActorIds);
+      if (editingSchedule?.id) params.set('excludeId', editingSchedule.id);
       if (formData.date) params.set('date', formData.date);
       params.set('startTime', formData.startTime);
       const dur = selectedScript?.duration || 240;
-      const endH = parseInt(formData.startTime.split(':')[0]) + Math.floor(dur / 60);
-      const endM = parseInt(formData.startTime.split(':')[1]) + (dur % 60);
-      params.set('endTime', `${endH}:${endM < 10 ? '0' : ''}${endM}`);
+      const [startHour, startMinute] = formData.startTime.split(':').map(Number);
+      const endTotal = startHour * 60 + startMinute + dur;
+      const endHour = Math.floor((endTotal % 1440) / 60);
+      const endMinute = endTotal % 60;
+      params.set('endTime', `${String(endHour).padStart(2, '0')}:${String(endMinute).padStart(2, '0')}`);
       try {
         const r = await fetch(`/api/schedules/conflicts/check?${params}`);
         const d = await r.json();
         setConflicts(d.success ? (d.data || []) : []);
       } catch { setConflicts([]); }
-      setCheckingConflict(false);
     }, 500);
     return () => clearTimeout(timer);
-  }, [formData.roomId, formData.date, formData.startTime, JSON.stringify(selectedActors.map(a => a.actorId))]);
+  }, [editingSchedule?.id, formData.roomId, formData.date, formData.startTime, selectedActorIds, selectedScript?.duration]);
 
   // 检查指定演员是否有冲突
   const hasConflict = (actorId: string) => conflicts.some((c: any) => c.type === 'actor' && c.id === actorId);

@@ -31,7 +31,6 @@ export default function DmDashboard() {
   const [loading, setLoading] = useState(true);
   const [loginPhone, setLoginPhone] = useState('');
   const [loginName, setLoginName] = useState('');
-  const [loginMode, setLoginMode] = useState(true);
 
   useEffect(() => {
     const stored = localStorage.getItem('player_info');

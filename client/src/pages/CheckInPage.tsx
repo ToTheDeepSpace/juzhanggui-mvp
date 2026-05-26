@@ -23,6 +23,12 @@ interface ScheduleInfo {
   taken_roles?: string[];
   checkins?: CheckinInfo[];
 }
+interface PlayerVerifyResponse {
+  id: string;
+  display_name: string;
+  phone: string;
+  newUser: boolean;
+}
 
 export default function CheckInPage() {
   const { scheduleId } = useParams<{ scheduleId: string }>();
@@ -35,7 +41,6 @@ export default function CheckInPage() {
   const [codeSent, setCodeSent] = useState(false);
   const [codeSending, setCodeSending] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
-  const [playerId, setPlayerId] = useState<string | null>(null);
   // 签到表单
   const [guestName, setGuestName] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
@@ -63,15 +68,14 @@ export default function CheckInPage() {
     setCodeSending(true); setError('');
     const r = await post('/player/send-code', { phone: authPhone.trim() });
     setCodeSending(false);
-    if (r.success) { setCodeSent(true); setError('验证码已发送（测试码：8888）'); }
+    if (r.success) { setCodeSent(true); setError('验证码已发送，请查看短信或联系门店获取测试码'); }
     else setError(r.error || '发送失败');
   };
 
   const verifyCode = async () => {
     if (!authCode.trim()) { setError('请输入验证码'); return; }
-    const r = await post('/player/verify-code', { phone: authPhone.trim(), code: authCode.trim() });
+    const r = await post<PlayerVerifyResponse>('/player/verify-code', { phone: authPhone.trim(), code: authCode.trim() });
     if (r.success) {
-      setPlayerId(r.data?.id || null);
       setGuestName(r.data?.display_name || '');
       setGuestPhone(authPhone.trim());
       localStorage.setItem('guest_name', r.data?.display_name || '');
@@ -286,7 +290,6 @@ export default function CheckInPage() {
           {(() => {
             const roles = (schedule?.player_roles || []) as RoleInfo[];
             const takenNames = schedule?.taken_roles || [];
-            const checkinList = (schedule?.checkins || []) as CheckinInfo[];
             const availableRoles = roles.filter(r => !takenNames.includes(r.name));
             const isFull = availableRoles.length === 0 && roles.length > 0;
             
