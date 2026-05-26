@@ -207,13 +207,53 @@ export default function ScheduleCalendar() {
 
   const [showEnded, setShowEnded] = useState(false);
 
+  const [histStartDate, setHistStartDate] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30); return format(d, 'yyyy-MM-dd');
+  });
+  const [histEndDate, setHistEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+
+  const exportCSV = () => {
+    const toExport = [...schedules]
+      .filter(s => { const d = s.start_time.split('T')[0]; return d >= histStartDate && d <= histEndDate; })
+      .sort((a, b) => b.start_time.localeCompare(a.start_time));
+    const headers = ['日期', '星期', '时间段', '剧本', '房间', '人数', '状态', '客户姓名', '客户手机', '备注'];
+    const rows = toExport.map(s => {
+      const sc = scripts.find(x => x.id === s.script_id);
+      const sd = parseISO(s.start_time);
+      const ed = parseISO(s.end_time);
+      return [
+        format(sd, 'yyyy-MM-dd'),
+        format(sd, 'EEEE', { locale: zhCN }),
+        `${format(sd, 'HH:mm')}-${format(ed, 'HH:mm')}`,
+        sc?.name || '',
+        s.room_name || '',
+        String(s.player_count || ''),
+        stText[s.status] || s.status,
+        s.customer_name || '',
+        s.customer_phone || '',
+        s.note || '',
+      ].map(v => `"${v.replace(/"/g, '""')}"`).join(',');
+    });
+    const csv = '﻿' + headers.join(',') + '\n' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(blob),
+      download: `排期数据_${histStartDate}_${histEndDate}.csv`,
+    });
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
   // ===== 布局 =====
   // ===== 按日期分组 =====
   const todayStr = format(new Date(), 'yyyy-MM-dd');
   const todaySchedules = schedules.filter(s => s.start_time.startsWith(todayStr) && s.status !== 'cancelled');
-  const otherActiveSchedules = schedules.filter(s => !s.start_time.startsWith(todayStr) && s.status !== 'completed' && s.status !== 'cancelled' && s.status !== 'bombed' && s.status !== 'issue' && s.status !== 'locked' && s.status !== 'confirmed')
+  const otherActiveSchedules = schedules.filter(s => !s.start_time.startsWith(todayStr) && s.status !== 'completed' && s.status !== 'cancelled' && s.status !== 'bombed' && s.status !== 'issue')
     .sort((a, b) => a.start_time.localeCompare(b.start_time));
-  const endedSchedules = schedules.filter(s => s.status === 'completed' || s.status === 'cancelled' || s.status === 'bombed' || s.status === 'issue')
+  const endedSchedules = schedules
+    .filter(s => { const d = s.start_time.split('T')[0]; return d >= histStartDate && d <= histEndDate; })
     .sort((a, b) => b.start_time.localeCompare(a.start_time));
 
   const stText: Record<string, string> = {
@@ -221,6 +261,7 @@ export default function ScheduleCalendar() {
   };
   const stColor: Record<string, string> = {
     scheduled: 'text-blue-600 bg-blue-50', pending: 'text-yellow-600 bg-yellow-50',
+    locked: 'text-orange-700 bg-orange-50', confirmed: 'text-indigo-600 bg-indigo-50',
     ongoing: 'text-green-600 bg-green-50', completed: 'text-gray-500 bg-gray-100',
     cancelled: 'text-red-500 bg-red-50', bombed: 'text-orange-600 bg-orange-50', issue: 'text-purple-600 bg-purple-50',
   };
@@ -301,7 +342,7 @@ export default function ScheduleCalendar() {
         </button>
         <button onClick={() => setShowEnded(true)}
           className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${showEnded ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:text-gray-700'}`}>
-          ✅ 已结束 ({endedSchedules.length})
+          📋 历史记录 ({endedSchedules.length})
         </button>
       </div>
 
@@ -398,7 +439,37 @@ export default function ScheduleCalendar() {
         </>
       ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="bg-gray-700 px-5 py-3"><h3 className="text-white font-bold">已结束的排班</h3></div>
+          <div className="bg-gray-700 px-5 py-3 flex items-center justify-between">
+            <h3 className="text-white font-bold">历史记录</h3>
+            <button onClick={exportCSV} className="px-3 py-1 bg-green-500 text-white text-xs rounded-lg hover:bg-green-600 transition-colors font-medium">
+              ↓ 导出 CSV
+            </button>
+          </div>
+          <div className="px-5 py-3 border-b border-gray-100 flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <input type="date" value={histStartDate} onChange={e => setHistStartDate(e.target.value)}
+                className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700" />
+              <span className="text-gray-400 text-sm">至</span>
+              <input type="date" value={histEndDate} onChange={e => setHistEndDate(e.target.value)}
+                className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700" />
+            </div>
+            <div className="flex gap-1.5">
+              {[{ label: '近7天', days: 7 }, { label: '近30天', days: 30 }, { label: '近90天', days: 90 }].map(q => (
+                <button key={q.label} onClick={() => {
+                  const d = new Date(); d.setDate(d.getDate() - q.days);
+                  setHistStartDate(format(d, 'yyyy-MM-dd'));
+                  setHistEndDate(format(new Date(), 'yyyy-MM-dd'));
+                }} className="text-xs px-2.5 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors">
+                  {q.label}
+                </button>
+              ))}
+              <button onClick={() => { setHistStartDate('2020-01-01'); setHistEndDate(format(new Date(), 'yyyy-MM-dd')); }}
+                className="text-xs px-2.5 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors">
+                全部
+              </button>
+            </div>
+            <span className="text-xs text-gray-400 ml-auto">共 {endedSchedules.length} 条</span>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="border-b border-gray-100 bg-gray-50">
@@ -414,7 +485,7 @@ export default function ScheduleCalendar() {
               </tr></thead>
               <tbody>
                 {endedSchedules.length === 0 ? (
-                  <tr><td colSpan={9} className="text-center py-10 text-gray-400">暂无已结束的排班</td></tr>
+                  <tr><td colSpan={9} className="text-center py-10 text-gray-400">该时间段暂无记录</td></tr>
                 ) : endedSchedules.map(s => {
                   const sc = scripts.find(x => x.id === s.script_id);
                   const sd = parseISO(s.start_time);

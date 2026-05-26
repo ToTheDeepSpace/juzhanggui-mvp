@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import Logo from './Logo';
 import NotificationBell from './NotificationBell';
 import RoomManager from './RoomManager';
 import ActorManager from './ActorManager';
@@ -41,7 +42,13 @@ export default function MainLayout() {
       <header className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between mb-4">
-            <h1 className="text-2xl font-bold text-gray-800">剧本杀排期系统</h1>
+            <div className="flex items-center gap-2.5">
+              <Logo size={32} />
+              <h1 className="text-2xl font-bold text-gray-800">
+                <span className="text-indigo-500">剧</span>司辰
+                <span className="text-sm font-normal text-gray-400 ml-2 tracking-wider">剧本杀排期系统</span>
+              </h1>
+            </div>
             <div className="flex items-center gap-2">
               <NotificationBell />
               <button

@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import Logo from '../components/Logo';
 
 export default function LandingPage() {
   const navigate = useNavigate();
@@ -7,8 +8,14 @@ export default function LandingPage() {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-purple-950 text-white">
       {/* Hero */}
       <header className="max-w-6xl mx-auto px-6 py-6 flex items-center justify-between">
-        <div className="text-2xl font-bold tracking-wide">
-          <span className="text-indigo-400">剧</span>掌柜
+        <div className="flex items-center gap-3">
+          <Logo size={40} />
+          <div className="flex items-baseline gap-2">
+            <span className="text-2xl font-bold tracking-wide">
+              <span className="text-indigo-400">剧</span>司辰
+            </span>
+            <span className="text-sm text-gray-400 tracking-wider hidden sm:inline">剧本杀排期系统</span>
+          </div>
         </div>
         <nav className="flex gap-6 text-sm text-gray-300">
           <button onClick={() => navigate('/demo')} className="hover:text-white transition-colors">功能介绍</button>
@@ -91,9 +98,77 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* 为 AI 时代而生 · 数据地基 */}
+      <section className="max-w-6xl mx-auto px-6 py-20">
+        <div className="text-center mb-14">
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-indigo-500/10 border border-indigo-400/30 text-indigo-300 text-xs tracking-wider mb-5">
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+            AI × 剧本杀 · 数据地基
+          </div>
+          <h2 className="text-3xl md:text-4xl font-bold mb-4">
+            数据沉淀，
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">为 AI 时代而生</span>
+          </h2>
+          <p className="text-gray-400 max-w-2xl mx-auto">
+            司辰，古之钦天监掌时辰星象者。今之剧司辰，记每一幕戏的呼吸，识每一个灵魂的轨迹。
+          </p>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-6">
+          {/* 场次级数据 */}
+          <div className="relative bg-gradient-to-br from-indigo-500/10 to-transparent rounded-2xl p-6 border border-indigo-400/20 hover:border-indigo-400/40 transition-colors">
+            <div className="text-3xl mb-4">🎬</div>
+            <h3 className="text-lg font-bold mb-3">场次级数据沉淀</h3>
+            <p className="text-sm text-gray-400 leading-relaxed mb-4">
+              不只是开了多少场。我们记录：第几幕放了什么 BGM、谁先哭出来、谁最先猜中凶手、笑场和冷场的时间戳。
+            </p>
+            <div className="flex flex-wrap gap-1.5 text-[11px]">
+              <span className="px-2 py-0.5 rounded bg-white/5 text-gray-300">幕次音乐</span>
+              <span className="px-2 py-0.5 rounded bg-white/5 text-gray-300">情绪打点</span>
+              <span className="px-2 py-0.5 rounded bg-white/5 text-gray-300">玩家行为</span>
+            </div>
+          </div>
+
+          {/* 玩家立体画像 */}
+          <div className="relative bg-gradient-to-br from-purple-500/10 to-transparent rounded-2xl p-6 border border-purple-400/20 hover:border-purple-400/40 transition-colors">
+            <div className="text-3xl mb-4">🔮</div>
+            <h3 className="text-lg font-bold mb-3">玩家立体画像</h3>
+            <p className="text-sm text-gray-400 leading-relaxed mb-4">
+              MBTI、星座、八字、星盘——把每一个玩家变成可被理解的"角色档案"，而不只是一个手机号。
+            </p>
+            <div className="flex flex-wrap gap-1.5 text-[11px]">
+              <span className="px-2 py-0.5 rounded bg-white/5 text-gray-300">MBTI</span>
+              <span className="px-2 py-0.5 rounded bg-white/5 text-gray-300">星座星盘</span>
+              <span className="px-2 py-0.5 rounded bg-white/5 text-gray-300">八字命盘</span>
+            </div>
+          </div>
+
+          {/* AI 角色推荐 */}
+          <div className="relative bg-gradient-to-br from-fuchsia-500/10 to-transparent rounded-2xl p-6 border border-fuchsia-400/20 hover:border-fuchsia-400/40 transition-colors overflow-hidden">
+            <div className="absolute top-3 right-3 text-[10px] px-2 py-0.5 rounded-full bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-400/30">
+              Coming Soon
+            </div>
+            <div className="text-3xl mb-4">🧬</div>
+            <h3 className="text-lg font-bold mb-3">AI 角色推荐</h3>
+            <p className="text-sm text-gray-400 leading-relaxed mb-4">
+              你的星盘，遇见你的本命角色。基于沉淀的画像与剧本数据，让 AI 为每一个玩家匹配命中注定的那个 TA。
+            </p>
+            <div className="flex flex-wrap gap-1.5 text-[11px]">
+              <span className="px-2 py-0.5 rounded bg-white/5 text-gray-300">角色匹配</span>
+              <span className="px-2 py-0.5 rounded bg-white/5 text-gray-300">剧本推荐</span>
+              <span className="px-2 py-0.5 rounded bg-white/5 text-gray-300">组局优化</span>
+            </div>
+          </div>
+        </div>
+
+        <p className="text-center text-xs text-gray-500 mt-10 italic">
+          先有数据沉淀，再有 AI 涌现。我们现在做的每一份记录，都是未来 AI 的训练集。
+        </p>
+      </section>
+
       {/* 底部 */}
       <footer className="max-w-6xl mx-auto px-6 py-12 border-t border-white/10 text-center text-sm text-gray-500">
-        <p className="mb-2">剧掌柜 · 剧本杀行业数字化运营平台</p>
+        <p className="mb-2">剧司辰 · 剧本杀行业数字化运营平台</p>
         <p>让发行商看到数据，让店家管得轻松，让卡司有尊严，让玩家玩得更爽</p>
       </footer>
     </div>

@@ -35,7 +35,23 @@ export default function DmDashboard() {
 
   useEffect(() => {
     const stored = localStorage.getItem('player_info');
-    if (stored) {
+    const token = localStorage.getItem('auth_token');
+    if (stored && token) {
+      // 检查 token 是否过期
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        if (payload.exp * 1000 < Date.now()) {
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('player_info');
+          setLoading(false);
+          return;
+        }
+      } catch {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('player_info');
+        setLoading(false);
+        return;
+      }
       setPlayerInfo(JSON.parse(stored));
       loadSchedules();
     } else {
@@ -50,6 +66,13 @@ export default function DmDashboard() {
       const res = await fetch(`${API_BASE}/player/schedules`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
+      if (res.status === 401) {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('player_info');
+        setPlayerInfo(null);
+        setSchedules([]);
+        return;
+      }
       const data = await res.json();
       if (data.success) setSchedules(data.data || []);
     } catch {} finally {

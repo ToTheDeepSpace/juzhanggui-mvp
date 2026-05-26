@@ -357,11 +357,11 @@ app.get('/api/schedules/conflicts/check', async (req: any, res: any) => {
         .not('schedules.status', 'eq', 'cancelled')
         .gte('schedules.end_time', startTime)
         .lte('schedules.start_time', endTime);
-      if (excludeId && actorSchedules) {
-        (actorSchedules as any[]).filter(s => s.schedules?.id !== excludeId);
-      }
-      if (actorSchedules && (actorSchedules as any[]).length > 0) {
-        for (const as of actorSchedules as any[]) {
+      const filteredActorSchedules = excludeId
+        ? (actorSchedules || []).filter((s: any) => s.schedules?.id !== excludeId)
+        : (actorSchedules || []);
+      if (filteredActorSchedules.length > 0) {
+        for (const as of filteredActorSchedules) {
           conflicts.push({ type: 'actor', id: actorId, scheduleId: as.schedules?.id, scriptName: as.schedules?.scripts?.name });
         }
       }
