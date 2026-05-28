@@ -64,6 +64,13 @@ function parseRole(role: string): { role_name: string; gender: string } {
   return { role_name: m ? m[1].trim() : role, gender: m?.[2]?.trim() || '' };
 }
 
+function serializeRoles(rows: any[] | null | undefined) {
+  return (rows || []).map((r: any) => ({
+    role_name: r.role_name,
+    gender: r.gender || '',
+  }));
+}
+
 // ===== Health =====
 app.get('/api/health', (_: any, res: any) => res.json(ok({ message: 'OK' })));
 
@@ -80,6 +87,127 @@ app.get('/api/auth/verify', (req: any, res: any) => {
   if (!auth || !auth.startsWith('Bearer ')) return res.json(ok({ valid: false }));
   try { jwt.verify(auth.substring(7), JWT_SECRET); res.json(ok({ valid: true })); }
   catch { res.json(ok({ valid: false })); }
+});
+
+// ===== Stores / 多店家后台 =====
+app.get('/api/stores', async (_req: any, res: any) => {
+  try {
+    const { data, error } = await supabase.from('jzg_stores').select('*').order('created_at', { ascending: false });
+    if (error && String(error.message || '').includes('jzg_stores')) {
+      return res.json(ok([{ id: TENANT_ID, name: '默认店家', city: '未设置', status: 'active' }]));
+    }
+    if (error) throw error;
+    res.json(ok(data || []));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/stores', async (req: any, res: any) => {
+  try {
+    const { name, city, address, contact } = req.body;
+    if (!name) return res.status(400).json(err(new Error('请填写店家名称')));
+    const { data, error } = await supabase.from('jzg_stores').insert({
+      name: String(name).trim(),
+      city: city ? String(city).trim() : null,
+      address: address ? String(address).trim() : null,
+      contact: contact ? String(contact).trim() : null,
+      status: 'active',
+    }).select().single();
+    if (error) throw error;
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+// ===== Script Templates / 公共剧本模版 =====
+app.get('/api/script-templates', async (_req: any, res: any) => {
+  try {
+    const { data, error } = await supabase.from('jzg_script_templates')
+      .select('*')
+      .order('usage_count', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error && String(error.message || '').includes('jzg_script_templates')) return res.json(ok([]));
+    if (error) throw error;
+    res.json(ok(data || []));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/scripts/:id/publish-template', async (req: any, res: any) => {
+  try {
+    const { data: s, error: scriptErr } = await supabase.from('scripts')
+      .select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender)')
+      .eq('id', req.params.id)
+      .eq('tenant_id', TENANT_ID)
+      .single();
+    if (scriptErr) throw scriptErr;
+    if (!s) return res.status(404).json(err(new Error('剧本不存在')));
+
+    const payload = {
+      source_script_id: s.id,
+      source_tenant_id: TENANT_ID,
+      name: s.name,
+      duration_minutes: s.duration_minutes || s.duration || 240,
+      min_duration_hours: s.min_duration_hours || ((s.min_duration || s.duration_minutes || 240) / 60),
+      max_duration_hours: s.max_duration_hours || ((s.max_duration || s.duration_minutes || 240) / 60),
+      dm_gender: s.dm_gender || '未指定',
+      player_roles: serializeRoles(s.script_player_roles),
+      actor_roles: serializeRoles(s.script_actor_roles),
+      created_by: '剧司辰后台',
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase.from('jzg_script_templates')
+      .upsert(payload, { onConflict: 'source_script_id,source_tenant_id' })
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/script-templates/:id/import', async (req: any, res: any) => {
+  try {
+    const { data: t, error: templateErr } = await supabase.from('jzg_script_templates').select('*').eq('id', req.params.id).single();
+    if (templateErr) throw templateErr;
+    if (!t) return res.status(404).json(err(new Error('模版不存在')));
+
+    const { data: existing } = await supabase.from('scripts')
+      .select('id')
+      .eq('tenant_id', TENANT_ID)
+      .eq('name', t.name)
+      .maybeSingle();
+    if (existing) return res.json(ok({ id: existing.id, existing: true }));
+
+    const { data: script, error: scriptErr } = await supabase.from('scripts').insert({
+      name: t.name,
+      duration_minutes: t.duration_minutes || 240,
+      min_duration_hours: t.min_duration_hours || 4,
+      max_duration_hours: t.max_duration_hours || 4,
+      tenant_id: TENANT_ID,
+    }).select().single();
+    if (scriptErr) throw scriptErr;
+
+    const playerRoles = Array.isArray(t.player_roles) ? t.player_roles : [];
+    const actorRoles = Array.isArray(t.actor_roles) ? t.actor_roles : [];
+    if (playerRoles.length) {
+      await supabase.from('script_player_roles').insert(playerRoles.map((r: any) => ({
+        script_id: script!.id,
+        role_name: r.role_name,
+        gender: r.gender || '',
+      })));
+    }
+    if (actorRoles.length) {
+      await supabase.from('script_actor_roles').insert(actorRoles.map((r: any) => ({
+        script_id: script!.id,
+        role_name: r.role_name,
+        gender: r.gender || '',
+      })));
+    }
+    await supabase.from('jzg_script_templates').update({
+      usage_count: (t.usage_count || 0) + 1,
+      updated_at: new Date().toISOString(),
+    }).eq('id', t.id);
+    res.json(ok({ id: script?.id, existing: false }));
+  } catch (e) { res.status(500).json(err(e)); }
 });
 
 // ===== Rooms =====

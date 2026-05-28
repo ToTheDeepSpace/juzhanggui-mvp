@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
-import type { Script, ScriptRole, ActorSkill, Role } from '../types';
+import type { Script, ScriptRole, ActorSkill, Role, ScriptTemplate } from '../types';
 
 export default function ScriptManager() {
   const { get, post, put, del, loading } = useApi();
   const [scripts, setScripts] = useState<Script[]>([]);
+  const [templates, setTemplates] = useState<ScriptTemplate[]>([]);
   const [selectedScript, setSelectedScript] = useState<Script | null>(null);
   const [scriptRoles, setScriptRoles] = useState<ScriptRole[]>([]);
   const [skilledActors, setSkilledActors] = useState<ActorSkill[]>([]);
@@ -23,9 +24,11 @@ export default function ScriptManager() {
 
   const [batchPlayerRoles, setBatchPlayerRoles] = useState('');
   const [batchActorRoles, setBatchActorRoles] = useState('');
+  const [templateMsg, setTemplateMsg] = useState('');
 
   useEffect(() => {
-    loadScripts();
+    void loadScripts();
+    void loadTemplates();
   }, []);
 
   const loadScripts = async () => {
@@ -33,6 +36,11 @@ export default function ScriptManager() {
     if (result.success && result.data) {
       setScripts(result.data);
     }
+  };
+
+  const loadTemplates = async () => {
+    const result = await get<ScriptTemplate[]>('/script-templates');
+    if (result.success && result.data) setTemplates(result.data);
   };
 
   const loadScriptDetail = async (script: Script) => {
@@ -150,6 +158,27 @@ const handleSubmit = async (e: React.FormEvent) => {
     }
   };
 
+  const publishTemplate = async (script: Script) => {
+    const result = await post(`/scripts/${script.id}/publish-template`, {});
+    if (result.success) {
+      setTemplateMsg(`${script.name} 已发布为公共模版`);
+      void loadTemplates();
+    } else {
+      setTemplateMsg(`发布失败：${result.error || '未知错误'}`);
+    }
+  };
+
+  const importTemplate = async (template: ScriptTemplate) => {
+    const result = await post<{ id: string; existing: boolean }>(`/script-templates/${template.id}/import`, {});
+    if (result.success) {
+      setTemplateMsg(result.data?.existing ? `${template.name} 已存在，无需重复导入` : `${template.name} 已导入到当前后台`);
+      void loadScripts();
+      void loadTemplates();
+    } else {
+      setTemplateMsg(`导入失败：${result.error || '未知错误'}`);
+    }
+  };
+
   const handleDeleteRole = async (roleId: string) => {
     if (!selectedScript) return;
     if (confirm('确定要删除这个角色配置吗？')) {
@@ -217,6 +246,40 @@ const handleSubmit = async (e: React.FormEvent) => {
           + 添加剧本
         </button>
       </div>
+
+      <section className="mb-6 rounded-lg border border-indigo-100 bg-indigo-50/60 p-4">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div>
+            <h3 className="font-bold text-gray-800">公共剧本模版库</h3>
+            <p className="text-sm text-gray-500 mt-1">任一店家沉淀的剧本，都可以一键导入当前后台。</p>
+          </div>
+          {templateMsg && <span className="text-sm text-indigo-600 font-medium">{templateMsg}</span>}
+        </div>
+        {templates.length === 0 ? (
+          <p className="text-sm text-gray-500">暂无公共模版</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {templates.map(template => (
+              <article key={template.id} className="rounded-lg border border-indigo-100 bg-white p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 className="font-semibold text-gray-800">{template.name}</h4>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {template.min_duration_hours}~{template.max_duration_hours}小时 · 玩家{template.player_roles?.length || 0} · 卡司{template.actor_roles?.length || 0} · 已导入{template.usage_count || 0}次
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => importTemplate(template)}
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-indigo-500 text-white text-sm hover:bg-indigo-600"
+                  >
+                    一键导入
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
       {showForm && (
         <div className="mb-6 p-4 bg-gray-50 rounded-lg">
@@ -445,6 +508,12 @@ const handleSubmit = async (e: React.FormEvent) => {
                   className="text-blue-500 hover:text-blue-700 text-sm"
                 >
                   编辑
+                </button>
+                <button
+                  onClick={() => publishTemplate(script)}
+                  className="text-indigo-500 hover:text-indigo-700 text-sm"
+                >
+                  发布模版
                 </button>
                 <button
                   onClick={() => handleDelete(script.id)}

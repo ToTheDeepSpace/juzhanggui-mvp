@@ -169,7 +169,15 @@ export default function LandingPage() {
       {/* 底部 */}
       <footer className="max-w-6xl mx-auto px-6 py-12 border-t border-white/10 text-center text-sm text-gray-500">
         <p className="mb-2">剧司辰 · 剧本杀行业数字化运营平台</p>
-        <p>让发行商看到数据，让店家管得轻松，让卡司有尊严，让玩家玩得更爽</p>
+        <p className="mb-4">让发行商看到数据，让店家管得轻松，让卡司有尊严，让玩家玩得更爽</p>
+        <a
+          href="https://lingqi.jusichen.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-indigo-400 hover:text-indigo-300 transition-colors font-medium"
+        >
+          灵契 · 创作者数字名片 →
+        </a>
       </footer>
     </div>
   );

@@ -29,6 +29,29 @@ export interface Script {
   actor_count?: number;
 }
 
+export interface StoreRecord {
+  id: string;
+  name: string;
+  city?: string | null;
+  address?: string | null;
+  contact?: string | null;
+  status: 'active' | 'paused' | 'archived';
+  created_at?: string;
+}
+
+export interface ScriptTemplate {
+  id: string;
+  name: string;
+  duration_minutes: number;
+  min_duration_hours: number;
+  max_duration_hours: number;
+  player_roles: { role_name: string; gender?: string }[];
+  actor_roles: { role_name: string; gender?: string }[];
+  usage_count: number;
+  created_by?: string | null;
+  created_at: string;
+}
+
 export interface ScriptRole {
   id: string;
   script_id: string;
