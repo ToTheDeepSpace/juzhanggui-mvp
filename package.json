@@ -40,6 +40,7 @@
     "react-router-dom": "^7.14.1",
     "sqlite": "^5.1.1",
     "sqlite3": "^6.0.1",
+    "tencentcloud-sdk-nodejs": "^4.1.242",
     "uuid": "^9.0.1"
   },
   "optionalDependencies": {

@@ -16,6 +16,7 @@ node_modules/
 # 构建产物
 dist/
 .vite/
+*.tsbuildinfo
 
 # 日志
 *.log

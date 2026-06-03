@@ -24,6 +24,20 @@ interface PlayerInfo {
 
 const API_BASE = '/api';
 
+interface AuthConfig {
+  smsEnabled: boolean;
+  smsRequired: boolean;
+  wechatEnabled: boolean;
+  legacyPhoneLoginEnabled: boolean;
+}
+
+const DEFAULT_AUTH_CONFIG: AuthConfig = {
+  smsEnabled: false,
+  smsRequired: false,
+  wechatEnabled: false,
+  legacyPhoneLoginEnabled: true,
+};
+
 export default function DmDashboard() {
   const navigate = useNavigate();
   const [playerInfo, setPlayerInfo] = useState<PlayerInfo | null>(null);
@@ -31,8 +45,19 @@ export default function DmDashboard() {
   const [loading, setLoading] = useState(true);
   const [loginPhone, setLoginPhone] = useState('');
   const [loginName, setLoginName] = useState('');
+  const [loginCode, setLoginCode] = useState('');
+  const [codeSending, setCodeSending] = useState(false);
+  const [loginError, setLoginError] = useState('');
+  const [authConfig, setAuthConfig] = useState<AuthConfig>(DEFAULT_AUTH_CONFIG);
 
   useEffect(() => {
+    fetch(`${API_BASE}/player/auth/config`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && data.data) setAuthConfig({ ...DEFAULT_AUTH_CONFIG, ...data.data });
+      })
+      .catch(() => setAuthConfig(DEFAULT_AUTH_CONFIG));
+
     const stored = localStorage.getItem('player_info');
     const token = localStorage.getItem('auth_token');
     if (stored && token) {
@@ -81,12 +106,22 @@ export default function DmDashboard() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoginError('');
+    if (authConfig.smsRequired && !loginCode.trim()) {
+      setLoginError('请填写短信验证码');
+      return;
+    }
     setLoading(true);
     try {
+      const payload: Record<string, string> = {
+        phone: loginPhone.trim(),
+        displayName: loginName.trim(),
+      };
+      if (loginCode.trim()) payload.code = loginCode.trim();
       const res = await fetch(`${API_BASE}/player/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: loginPhone.trim(), displayName: loginName.trim() }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (data.success) {
@@ -94,9 +129,39 @@ export default function DmDashboard() {
         localStorage.setItem('player_info', JSON.stringify(data.data.player));
         setPlayerInfo(data.data.player);
         loadSchedules();
+      } else {
+        setLoginError(data.error || '登录失败');
       }
+    } catch {
+      setLoginError('网络错误，请重试');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const sendLoginCode = async () => {
+    setLoginError('');
+    if (!authConfig.smsEnabled) {
+      setLoginError('短信验证暂未启用，当前可使用手机号和昵称登录');
+      return;
+    }
+    if (!loginPhone.trim() || loginPhone.trim().replace(/\D/g, '').length !== 11) {
+      setLoginError('请填写正确的手机号');
+      return;
+    }
+    setCodeSending(true);
+    try {
+      const res = await fetch(`${API_BASE}/player/send-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: loginPhone.trim() }),
+      });
+      const data = await res.json();
+      setLoginError(data.success ? '验证码已发送，请查看短信' : data.error || '验证码发送失败');
+    } catch {
+      setLoginError('网络错误，请重试');
+    } finally {
+      setCodeSending(false);
     }
   };
 
@@ -131,6 +196,11 @@ export default function DmDashboard() {
             <p className="text-gray-400 text-sm mt-1">输入手机号登录查看排班</p>
           </div>
           <form onSubmit={handleLogin} className="bg-white/5 backdrop-blur rounded-2xl p-6 border border-white/10 space-y-4">
+            {loginError && (
+              <div className={`text-sm rounded-xl px-4 py-3 border ${loginError.includes('已发送') ? 'bg-emerald-500/10 border-emerald-400/30 text-emerald-200' : 'bg-red-500/10 border-red-400/30 text-red-200'}`}>
+                {loginError}
+              </div>
+            )}
             <div>
               <label className="text-sm text-gray-400 mb-1 block">手机号</label>
               <input
@@ -140,6 +210,25 @@ export default function DmDashboard() {
                 placeholder="请输入手机号" required
               />
             </div>
+            {authConfig.smsEnabled && (
+              <div>
+                <label className="text-sm text-gray-400 mb-1 block">
+                  短信验证码{authConfig.smsRequired ? '' : '（可选）'}
+                </label>
+                <div className="grid grid-cols-[1fr_112px] gap-2">
+                  <input
+                    type="text" value={loginCode}
+                    onChange={(e) => setLoginCode(e.target.value)}
+                    className="w-full px-4 py-3 bg-white/10 rounded-xl border border-white/20 text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500"
+                    placeholder="6位验证码" required={authConfig.smsRequired}
+                  />
+                  <button type="button" onClick={sendLoginCode} disabled={codeSending}
+                    className="px-3 py-3 bg-white/10 border border-white/20 rounded-xl text-sm text-indigo-100 hover:bg-white/15 disabled:opacity-50">
+                    {codeSending ? '发送中' : '获取'}
+                  </button>
+                </div>
+              </div>
+            )}
             <div>
               <label className="text-sm text-gray-400 mb-1 block">昵称</label>
               <input

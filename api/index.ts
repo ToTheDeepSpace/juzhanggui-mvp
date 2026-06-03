@@ -25,13 +25,26 @@ const JWT_SECRET = process.env.JWT_SECRET || 'script-scheduler-secret-change-me'
 if (!process.env.JWT_SECRET) console.warn('⚠ JWT_SECRET env is not set — using fallback. Set it in Vercel dev dashboard!');
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === 'production' ? '' : 'admin123');
 const PLAYER_LOGIN_CODE = process.env.PLAYER_LOGIN_CODE || (process.env.NODE_ENV === 'production' ? '' : '8888');
+const AUTH_CODE_PEPPER = process.env.AUTH_CODE_PEPPER || JWT_SECRET;
+const SMS_CODE_TTL_MINUTES = Number(process.env.SMS_CODE_TTL_MINUTES || 5);
+const SMS_CODE_COOLDOWN_SECONDS = Number(process.env.SMS_CODE_COOLDOWN_SECONDS || 60);
+const TENCENT_SMS_REGION = process.env.TENCENT_SMS_REGION || 'ap-guangzhou';
+const TENCENT_SMS_SDK_APP_ID = process.env.TENCENT_SMS_SDK_APP_ID || '';
+const TENCENT_SMS_SIGN_NAME = process.env.TENCENT_SMS_SIGN_NAME || '';
+const TENCENT_SMS_TEMPLATE_ID = process.env.TENCENT_SMS_TEMPLATE_ID || '';
+const TENCENTCLOUD_SECRET_ID = process.env.TENCENTCLOUD_SECRET_ID || '';
+const TENCENTCLOUD_SECRET_KEY = process.env.TENCENTCLOUD_SECRET_KEY || '';
+const JUZHANGGUI_SITE_URL = (process.env.JUZHANGGUI_SITE_URL || process.env.PUBLIC_SITE_URL || 'https://jusichen.com').replace(/\/$/, '');
+const JZG_WECHAT_OPEN_APP_ID = process.env.JZG_WECHAT_OPEN_APP_ID || process.env.WECHAT_OPEN_APP_ID || '';
+const JZG_WECHAT_OPEN_APP_SECRET = process.env.JZG_WECHAT_OPEN_APP_SECRET || process.env.WECHAT_OPEN_APP_SECRET || '';
+const JZG_WECHAT_REDIRECT_URI = process.env.JZG_WECHAT_REDIRECT_URI || `${JUZHANGGUI_SITE_URL}/api/player/wechat/callback`;
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 // Auth middleware
-const PUBLIC_PATHS = ['/api/health', '/api/auth/login', '/api/auth/verify', '/api/player/login', '/api/player/send-code', '/api/player/verify-code'];
+const PUBLIC_PATHS = ['/api/health', '/api/auth/login', '/api/auth/verify', '/api/player/auth/config', '/api/player/login', '/api/player/send-code', '/api/player/verify-code', '/api/player/wechat/url', '/api/player/wechat/start', '/api/player/wechat/callback'];
 const PUBLIC_SUFFIXES = ['/public', '/checkin', '/evaluate', '/evaluation', '/evaluations', '/evaluation-stats'];
 
 function isPublicPath(path: string): boolean {
@@ -59,6 +72,136 @@ app.use((req: any, res: any, next: any) => {
 
 function ok(d?: any) { return { success: true, data: d }; }
 function err(e: any) { return { success: false, error: e?.message || String(e) }; }
+function sha256(input: string): string { return crypto.createHash('sha256').update(input).digest('hex'); }
+function normalizeChinaPhone(input: unknown): string {
+  const phone = typeof input === 'string' ? input.replace(/\D/g, '') : '';
+  if (!/^1[3-9]\d{9}$/.test(phone)) throw new Error('请填写正确的中国大陆手机号');
+  return phone;
+}
+function makeAuthPhoneHash(phone: string) { return sha256(`auth-phone:${phone}`); }
+function makeAuthCodeHash(phone: string, code: string) { return sha256(`auth-code:${AUTH_CODE_PEPPER}:${phone}:${code}`); }
+function makeSmsCode() {
+  if (process.env.NODE_ENV !== 'production' && PLAYER_LOGIN_CODE) return PLAYER_LOGIN_CODE;
+  return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+}
+function getClientIp(req: any) {
+  const forwarded = req.headers['x-forwarded-for'];
+  const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  return raw?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
+}
+function getUserAgent(req: any) {
+  const ua = req.headers['user-agent'];
+  return Array.isArray(ua) ? ua.join(' ') : ua || null;
+}
+function isTencentSmsConfigured() {
+  return Boolean(TENCENTCLOUD_SECRET_ID && TENCENTCLOUD_SECRET_KEY && TENCENT_SMS_SDK_APP_ID && TENCENT_SMS_SIGN_NAME && TENCENT_SMS_TEMPLATE_ID);
+}
+function isPhoneCodeLoginAvailable() {
+  return isTencentSmsConfigured() || process.env.NODE_ENV !== 'production';
+}
+function isWechatLoginConfigured() { return Boolean(JZG_WECHAT_OPEN_APP_ID && JZG_WECHAT_OPEN_APP_SECRET); }
+function safeFrontendRedirect(input: unknown) {
+  const raw = typeof input === 'string' ? input.trim() : '';
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '/player/dashboard';
+  return raw.slice(0, 120);
+}
+function makeWechatAuthorizeUrl(redirectPath: string) {
+  const state = jwt.sign({ kind: 'jzg_wechat_login', redirectPath }, JWT_SECRET, { expiresIn: '10m' });
+  const params = new URLSearchParams({
+    appid: JZG_WECHAT_OPEN_APP_ID,
+    redirect_uri: JZG_WECHAT_REDIRECT_URI,
+    response_type: 'code',
+    scope: 'snsapi_login',
+    state,
+  });
+  return `https://open.weixin.qq.com/connect/qrconnect?${params.toString()}#wechat_redirect`;
+}
+async function sendTencentSmsCode(phone: string, code: string) {
+  if (!isTencentSmsConfigured()) {
+    if (process.env.NODE_ENV === 'production') throw new Error('短信服务未配置');
+    console.log(`[验证码][dev] 发送到 ${phone}: ${code}`);
+    return { provider: 'dev-log' };
+  }
+  const imported = await import('tencentcloud-sdk-nodejs');
+  const tencentcloud = (imported as unknown as { default?: any }).default || imported as any;
+  const SmsClient = tencentcloud.sms.v20210111.Client;
+  const client = new SmsClient({
+    credential: { secretId: TENCENTCLOUD_SECRET_ID, secretKey: TENCENTCLOUD_SECRET_KEY },
+    region: TENCENT_SMS_REGION,
+    profile: { httpProfile: { endpoint: 'sms.tencentcloudapi.com', reqMethod: 'POST', reqTimeout: 10 } },
+  });
+  const response = await client.SendSms({
+    SmsSdkAppId: TENCENT_SMS_SDK_APP_ID,
+    SignName: TENCENT_SMS_SIGN_NAME,
+    TemplateId: TENCENT_SMS_TEMPLATE_ID,
+    TemplateParamSet: [code, String(SMS_CODE_TTL_MINUTES)],
+    PhoneNumberSet: [`+86${phone}`],
+  });
+  const status = response?.SendStatusSet?.[0];
+  if (status && status.Code && status.Code !== 'Ok') throw new Error(status.Message || `短信发送失败：${status.Code}`);
+  return { provider: 'tencentcloud' };
+}
+async function createAndSendPhoneCode(req: any, purpose: string, rawPhone: unknown) {
+  const phone = normalizeChinaPhone(rawPhone);
+  const phoneHash = makeAuthPhoneHash(phone);
+  const { data: latest, error: latestErr } = await supabase.from('lc_auth_verification_codes')
+    .select('id, created_at')
+    .eq('project', 'juzhanggui')
+    .eq('purpose', purpose)
+    .eq('phone_hash', phoneHash)
+    .is('consumed_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (latestErr) throw latestErr;
+  if (latest?.created_at && Date.now() - new Date(latest.created_at).getTime() < SMS_CODE_COOLDOWN_SECONDS * 1000) {
+    throw new Error(`验证码已发送，请 ${SMS_CODE_COOLDOWN_SECONDS} 秒后再试`);
+  }
+  const code = makeSmsCode();
+  const expiresAt = new Date(Date.now() + SMS_CODE_TTL_MINUTES * 60 * 1000).toISOString();
+  const { data: row, error: insertErr } = await supabase.from('lc_auth_verification_codes').insert({
+    project: 'juzhanggui',
+    purpose,
+    phone_hash: phoneHash,
+    phone_last4: phone.slice(-4),
+    code_hash: makeAuthCodeHash(phone, code),
+    ip_address: getClientIp(req),
+    user_agent: getUserAgent(req),
+    expires_at: expiresAt,
+  }).select('id').single();
+  if (insertErr) throw insertErr;
+  try {
+    const sent = await sendTencentSmsCode(phone, code);
+    return { phone, expiresAt, provider: sent.provider };
+  } catch (sendErr) {
+    if (row?.id) await supabase.from('lc_auth_verification_codes').update({ consumed_at: new Date().toISOString() }).eq('id', row.id);
+    throw sendErr;
+  }
+}
+async function verifyPhoneCode(purpose: string, rawPhone: unknown, rawCode: unknown) {
+  const phone = normalizeChinaPhone(rawPhone);
+  const code = typeof rawCode === 'string' ? rawCode.replace(/\D/g, '') : '';
+  if (!/^\d{4,8}$/.test(code)) throw new Error('请填写正确的验证码');
+  const { data: row, error: qErr } = await supabase.from('lc_auth_verification_codes')
+    .select('id, code_hash, expires_at, attempts')
+    .eq('project', 'juzhanggui')
+    .eq('purpose', purpose)
+    .eq('phone_hash', makeAuthPhoneHash(phone))
+    .is('consumed_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (qErr) throw qErr;
+  if (!row) throw new Error('请先获取验证码');
+  if (new Date(row.expires_at).getTime() < Date.now()) throw new Error('验证码已过期，请重新获取');
+  if ((row.attempts || 0) >= 5) throw new Error('验证码错误次数过多，请重新获取');
+  if (row.code_hash !== makeAuthCodeHash(phone, code)) {
+    await supabase.from('lc_auth_verification_codes').update({ attempts: (row.attempts || 0) + 1 }).eq('id', row.id);
+    throw new Error('验证码错误');
+  }
+  await supabase.from('lc_auth_verification_codes').update({ attempts: (row.attempts || 0) + 1, consumed_at: new Date().toISOString() }).eq('id', row.id);
+  return phone;
+}
 function parseRole(role: string): { role_name: string; gender: string } {
   const m = role.match(/^(.+?)\s*\((.*?)\)$/);
   return { role_name: m ? m[1].trim() : role, gender: m?.[2]?.trim() || '' };
@@ -569,29 +712,141 @@ app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
 
 app.post('/api/player/send-code', async (req: any, res: any) => {
   try {
-    const { phone } = req.body;
-    if (!phone) return res.status(400).json(err(new Error('请填写手机号')));
-    if (!PLAYER_LOGIN_CODE) return res.status(500).json(err(new Error('验证码服务未配置')));
-    console.log(`[验证码] 发送到 ${phone}: ${PLAYER_LOGIN_CODE}`);
-    res.json(ok({ sent: true }));
+    if (!isPhoneCodeLoginAvailable()) {
+      return res.status(503).json(err(new Error('短信验证暂未启用，当前可使用手机号和昵称登录')));
+    }
+    const result = await createAndSendPhoneCode(req, 'player_login', req.body?.phone);
+    res.json(ok({ sent: true, expires_at: result.expiresAt }));
   } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.get('/api/player/auth/config', async (_req: any, res: any) => {
+  res.json(ok({
+    smsEnabled: isPhoneCodeLoginAvailable(),
+    smsRequired: isTencentSmsConfigured(),
+    wechatEnabled: isWechatLoginConfigured(),
+    legacyPhoneLoginEnabled: !isTencentSmsConfigured(),
+  }));
 });
 
 app.post('/api/player/verify-code', async (req: any, res: any) => {
   try {
     const { phone, code } = req.body;
-    if (!phone || !code) return res.status(400).json(err(new Error('手机号和验证码不能为空')));
-    if (!PLAYER_LOGIN_CODE) return res.status(500).json(err(new Error('验证码服务未配置')));
-    if (code !== PLAYER_LOGIN_CODE) return res.status(401).json(err(new Error('验证码错误')));
-    const { data: existing } = await supabase.from('lc_profiles').select('*').eq('phone', phone).maybeSingle();
+    const verifiedPhone = await verifyPhoneCode('player_login', phone, code);
+    const { data: existing } = await supabase.from('lc_profiles').select('*').eq('phone', verifiedPhone).maybeSingle();
     if (existing) {
+      await supabase.from('lc_profiles').update({ phone_verified_at: new Date().toISOString(), auth_provider: existing.auth_provider || 'phone' }).eq('id', existing.id);
       return res.json(ok({ id: existing.id, display_name: existing.display_name, phone: existing.phone, newUser: false }));
     }
     const { data: newPlayer } = await supabase.from('lc_profiles').insert({
-      phone, display_name: `玩家${phone.slice(-4)}`, role_type: 'player'
+      phone: verifiedPhone,
+      display_name: `玩家${verifiedPhone.slice(-4)}`,
+      role_type: 'player',
+      phone_verified_at: new Date().toISOString(),
+      auth_provider: 'phone',
     }).select().single();
-    res.json(ok({ id: newPlayer!.id, display_name: newPlayer!.display_name, phone, newUser: true }));
+    res.json(ok({ id: newPlayer!.id, display_name: newPlayer!.display_name, phone: verifiedPhone, newUser: true }));
   } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.get('/api/player/wechat/url', async (req: any, res: any) => {
+  try {
+    if (!isWechatLoginConfigured()) return res.status(503).json(err(new Error('微信扫码登录尚未配置')));
+    res.json(ok({ enabled: true, url: makeWechatAuthorizeUrl(safeFrontendRedirect(req.query.redirect)) }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.get('/api/player/wechat/start', async (req: any, res: any) => {
+  try {
+    if (!isWechatLoginConfigured()) return res.status(503).json(err(new Error('微信扫码登录尚未配置')));
+    res.redirect(makeWechatAuthorizeUrl(safeFrontendRedirect(req.query.redirect)));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.get('/api/player/wechat/callback', async (req: any, res: any) => {
+  try {
+    if (!isWechatLoginConfigured()) throw new Error('微信扫码登录尚未配置');
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    const state = typeof req.query.state === 'string' ? req.query.state : '';
+    if (!code || !state) throw new Error('微信登录参数缺失');
+    const statePayload = jwt.verify(state, JWT_SECRET) as { kind?: string; redirectPath?: string };
+    if (statePayload.kind !== 'jzg_wechat_login') throw new Error('微信登录状态无效');
+
+    const tokenUrl = new URL('https://api.weixin.qq.com/sns/oauth2/access_token');
+    tokenUrl.search = new URLSearchParams({
+      appid: JZG_WECHAT_OPEN_APP_ID,
+      secret: JZG_WECHAT_OPEN_APP_SECRET,
+      code,
+      grant_type: 'authorization_code',
+    }).toString();
+    const tokenResp = await fetch(tokenUrl);
+    const tokenData = await tokenResp.json() as Record<string, any>;
+    if (!tokenResp.ok || tokenData.errcode) throw new Error(String(tokenData.errmsg || '微信登录授权失败'));
+
+    const userUrl = new URL('https://api.weixin.qq.com/sns/userinfo');
+    userUrl.search = new URLSearchParams({
+      access_token: String(tokenData.access_token),
+      openid: String(tokenData.openid),
+      lang: 'zh_CN',
+    }).toString();
+    const userResp = await fetch(userUrl);
+    const wxUser = await userResp.json() as Record<string, any>;
+    if (!userResp.ok || wxUser.errcode) throw new Error(String(wxUser.errmsg || '微信用户信息获取失败'));
+
+    const openid = String(tokenData.openid || wxUser.openid || '');
+    const unionid = tokenData.unionid || wxUser.unionid || null;
+    if (!openid) throw new Error('微信登录缺少 openid');
+    const nickname = typeof wxUser.nickname === 'string' && wxUser.nickname.trim() ? wxUser.nickname.trim().slice(0, 80) : `微信玩家${openid.slice(-4)}`;
+    const avatar = typeof wxUser.headimgurl === 'string' ? wxUser.headimgurl : null;
+    const nowIso = new Date().toISOString();
+
+    let query = supabase.from('players').select('*').eq('tenant_id', TENANT_ID);
+    if (unionid) query = query.eq('wechat_unionid', unionid);
+    else query = query.eq('wechat_openid', openid);
+    let { data: player } = await query.maybeSingle();
+
+    if (player) {
+      await supabase.from('players').update({
+        display_name: player.display_name || nickname,
+        auth_provider: player.auth_provider || 'wechat',
+        wechat_openid: openid,
+        wechat_unionid: unionid,
+        wechat_nickname: nickname,
+        wechat_avatar: avatar,
+        wechat_bound_at: nowIso,
+      }).eq('id', player.id);
+    } else {
+      const inserted = await supabase.from('players').insert({
+        tenant_id: TENANT_ID,
+        display_name: nickname,
+        name_encrypted: nickname,
+        auth_provider: 'wechat',
+        wechat_openid: openid,
+        wechat_unionid: unionid,
+        wechat_nickname: nickname,
+        wechat_avatar: avatar,
+        wechat_bound_at: nowIso,
+      }).select().single();
+      if (!inserted.data) throw inserted.error || new Error('微信登录创建玩家失败');
+      player = inserted.data;
+    }
+
+    const loginToken = jwt.sign({ role: 'player', playerId: player.id, tenantId: TENANT_ID }, JWT_SECRET, { expiresIn: '24h' });
+    const payload = Buffer.from(JSON.stringify({
+      token: loginToken,
+      player: {
+        id: player.id,
+        displayName: player.display_name || nickname,
+        phone: '',
+        totalGames: player.total_games || 0,
+        authProvider: 'wechat',
+      },
+    })).toString('base64url');
+    const redirectPath = safeFrontendRedirect(statePayload.redirectPath);
+    res.redirect(`${JUZHANGGUI_SITE_URL}/player/login?wechat_login=${encodeURIComponent(payload)}&redirect=${encodeURIComponent(redirectPath)}`);
+  } catch (e) {
+    res.redirect(`${JUZHANGGUI_SITE_URL}/player/login?auth_error=${encodeURIComponent(err(e).error || '微信登录失败')}`);
+  }
 });
 
 // ===== Evaluation =====
@@ -689,15 +944,39 @@ app.delete('/api/conflicts/:id', async (req: any, res: any) => {
 // ===== Player =====
 app.post('/api/player/login', async (req: any, res: any) => {
   try {
-    const { phone, displayName } = req.body;
-    if (!phone) return res.status(400).json(err(new Error('请填写手机号')));
+    const { phone, displayName, code } = req.body;
     if (!displayName) return res.status(400).json(err(new Error('请填写昵称')));
-    const phoneHash = hashPhone(phone);
+    const hasCode = typeof code === 'string' && code.trim().length > 0;
+    if (isTencentSmsConfigured() && !hasCode) return res.status(400).json(err(new Error('请先获取并填写短信验证码')));
+    const verifiedPhone = hasCode ? await verifyPhoneCode('player_login', phone, code) : normalizeChinaPhone(phone);
+    const phoneHash = hashPhone(verifiedPhone);
     let { data: p } = await supabase.from('players').select('*').eq('phone_hash', phoneHash).eq('tenant_id', TENANT_ID).maybeSingle();
-    if (p) { await supabase.from('players').update({ display_name: displayName.trim() }).eq('id', p.id); }
-    else { const r = await supabase.from('players').insert({ phone_hash: phoneHash, display_name: displayName.trim(), name_encrypted: displayName.trim(), tenant_id: TENANT_ID }).select().single(); p = r.data; }
+    const nowIso = new Date().toISOString();
+    if (p) {
+      const updatePayload: Record<string, any> = { display_name: displayName.trim() };
+      if (hasCode) {
+        updatePayload.auth_provider = p.auth_provider || 'phone';
+        updatePayload.phone_verified_at = p.phone_verified_at || nowIso;
+      }
+      await supabase.from('players').update(updatePayload).eq('id', p.id);
+      p = { ...p, ...updatePayload };
+    }
+    else {
+      const insertPayload: Record<string, any> = {
+        phone_hash: phoneHash,
+        display_name: displayName.trim(),
+        name_encrypted: displayName.trim(),
+        tenant_id: TENANT_ID,
+      };
+      if (hasCode) {
+        insertPayload.auth_provider = 'phone';
+        insertPayload.phone_verified_at = nowIso;
+      }
+      const r = await supabase.from('players').insert(insertPayload).select().single();
+      p = r.data;
+    }
     const token = jwt.sign({ role: 'player', playerId: p!.id, tenantId: TENANT_ID }, JWT_SECRET, { expiresIn: '24h' });
-    res.json(ok({ token, player: { id: p!.id, displayName: p!.display_name, phone: phone.trim(), totalGames: p!.total_games || 0 } }));
+    res.json(ok({ token, player: { id: p!.id, displayName: p!.display_name, phone: verifiedPhone, totalGames: p!.total_games || 0 } }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.get('/api/player/schedules', async (req: any, res: any) => {
