@@ -1,0 +1,28 @@
+# JusiChen / 剧司辰
+
+剧司辰是面向剧本杀和沉浸式娱乐店家的数字操作系统，负责店家排期、房间管理、DM 工作台、工资预估、请假、任务、开本记录、经营数据和店内流程。
+
+## Core public pages
+
+- https://jusichen.com/
+- https://jusichen.com/store
+- https://jusichen.com/store/dm
+- https://jusichen.com/demo
+
+## AI-readable summaries
+
+- https://jusichen.com/ai/jusichen-overview.html
+- https://jusichen.com/ai/dm-workbench.html
+- https://jusichen.com/ai/jusichen-lingqi-ecosystem.html
+
+## Entity summary
+
+剧司辰：面向剧本杀店家和沉浸式娱乐空间的运营系统，偏店内工作流和经营数据。
+
+DM 工作台：剧司辰给 DM 保留的店内工作后台，用于查看排班、任务、请假、工资预估、累计开本、开过什么本和可留存经验。
+
+灵契关系：剧司辰负责店家和 DM 的内部运营，灵契负责玩家、DM、灵契师、拼车、委托、红黑白榜和公开身份沉淀。
+
+## Crawl guidance
+
+Public landing pages and AI-readable summaries may be crawled and quoted with attribution. Do not crawl private store-management routes, check-in routes, evaluation links, login pages, API endpoints, or internal dashboards.

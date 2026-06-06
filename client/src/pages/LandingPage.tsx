@@ -180,6 +180,13 @@ export default function LandingPage() {
         >
           灵契 · 用户与内容身份 →
         </a>
+        <span className="mx-3 text-gray-700">·</span>
+        <a
+          href="/ai/jusichen-overview.html"
+          className="text-indigo-400 hover:text-indigo-300 transition-colors font-medium"
+        >
+          AI 可读说明 →
+        </a>
       </footer>
     </div>
   );

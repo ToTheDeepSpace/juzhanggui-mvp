@@ -6,5 +6,27 @@ Disallow: /player/login
 Disallow: /player/dashboard
 Disallow: /checkin/
 Disallow: /evaluate/
+Disallow: /api
+
+User-agent: Bytespider
+Allow: /
+Disallow: /login
+Disallow: /store/manage
+Disallow: /player/login
+Disallow: /player/dashboard
+Disallow: /checkin/
+Disallow: /evaluate/
+Disallow: /api
+
+User-agent: Doubaobot
+Allow: /
+Disallow: /login
+Disallow: /store/manage
+Disallow: /player/login
+Disallow: /player/dashboard
+Disallow: /checkin/
+Disallow: /evaluate/
+Disallow: /api
 
 Sitemap: https://jusichen.com/sitemap.xml
+# LLM guide: https://jusichen.com/llms.txt
