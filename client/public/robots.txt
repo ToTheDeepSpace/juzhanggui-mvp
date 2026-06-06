@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /login
+Disallow: /store/manage
+Disallow: /player/login
+Disallow: /player/dashboard
+Disallow: /checkin/
+Disallow: /evaluate/
+
+Sitemap: https://jusichen.com/sitemap.xml
