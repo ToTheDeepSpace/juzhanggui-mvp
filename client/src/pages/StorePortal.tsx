@@ -3,27 +3,6 @@ import { useNavigate } from 'react-router-dom';
 export default function StorePortal() {
   const navigate = useNavigate();
 
-  const roles = [
-    {
-      id: 'manager', icon: '🏪', title: '店长', color: 'from-indigo-500 to-blue-500',
-      desc: '全功能管理后台',
-      features: ['房间/卡司/剧本管理', '排期总览与创建', '会员与数据报表', '系统配置'],
-      path: '/store/manage',
-    },
-    {
-      id: 'cs', icon: '📞', title: '客服', color: 'from-green-500 to-emerald-500',
-      desc: '排期操作',
-      features: ['创建与编辑排班', '客户预约管理', '签到处理', '日常运营'],
-      path: '/store/manage/schedule',
-    },
-    {
-      id: 'dm', icon: '🎭', title: '卡司/DM', color: 'from-purple-500 to-pink-500',
-      desc: '我的工作台',
-      features: ['查看个人排班', '开本数据统计', '等级与成长体系', '申请假期'],
-      path: '/store/dm',
-    },
-  ];
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-950 to-purple-950 text-white">
       <header className="max-w-4xl mx-auto px-6 py-6 flex items-center justify-between">
@@ -36,41 +15,50 @@ export default function StorePortal() {
       </header>
 
       <section className="max-w-4xl mx-auto px-6 pt-16 pb-20">
-        <h1 className="text-3xl font-bold text-center mb-2">店家端</h1>
-        <p className="text-gray-400 text-center mb-12">请选择您的角色</p>
+        <h1 className="text-3xl font-bold text-center mb-2">店家管理</h1>
+        <p className="text-gray-400 text-center mb-12">剧司辰处理店内经营和 DM 工作流；玩家公开身份、DM 公开资料与社区内容统一放在灵契。</p>
 
-        <div className="grid md:grid-cols-3 gap-6">
-          {roles.map((role) => (
-            <button
-              key={role.id}
-              onClick={() => navigate(role.path)}
-              className="bg-white/5 backdrop-blur rounded-2xl p-6 border border-white/10 hover:bg-white/10 transition-all text-left group"
-            >
-              <div className={`inline-block px-3 py-1 rounded-lg bg-gradient-to-r ${role.color} text-sm font-medium mb-4`}>
-                {role.icon} {role.title}
-              </div>
-              <p className="text-sm text-gray-400 mb-4">{role.desc}</p>
-              <ul className="space-y-1.5">
-                {role.features.map((f, i) => (
-                  <li key={i} className="text-xs text-gray-500 flex items-center gap-2">
-                    <span className="w-1 h-1 rounded-full bg-gray-500 shrink-0" />
-                    {f}
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-4 text-indigo-400 text-sm group-hover:translate-x-1 transition-transform">
-                进入 {role.title} 端 →
-              </div>
-            </button>
-          ))}
-        </div>
-
-        <div className="text-center mt-12">
+        <div className="grid gap-5 md:grid-cols-2">
           <button
-            onClick={() => navigate('/player/login')}
-            className="text-sm text-gray-400 hover:text-white transition-colors"
+            onClick={() => navigate('/store/manage')}
+            className="bg-white/5 backdrop-blur rounded-2xl p-7 border border-white/10 hover:bg-white/10 transition-all text-left group"
           >
-            我是玩家，点击进入玩家端 →
+            <div className="inline-block px-3 py-1 rounded-lg bg-gradient-to-r from-indigo-500 to-blue-500 text-sm font-medium mb-4">
+              店家后台
+            </div>
+            <p className="text-sm text-gray-400 mb-4">排期、房间、剧本、卡司、会员与经营数据统一在这里管理。</p>
+            <ul className="space-y-1.5">
+              {['创建与编辑排班', '剧本库与角色配置', '卡司 / DM 登记', '签到与经营数据'].map((f) => (
+                <li key={f} className="text-xs text-gray-500 flex items-center gap-2">
+                  <span className="w-1 h-1 rounded-full bg-gray-500 shrink-0" />
+                  {f}
+                </li>
+              ))}
+            </ul>
+            <div className="mt-5 text-indigo-400 text-sm group-hover:translate-x-1 transition-transform">
+              进入店家管理 →
+            </div>
+          </button>
+
+          <button
+            onClick={() => navigate('/store/dm')}
+            className="bg-white/5 backdrop-blur rounded-2xl p-7 border border-white/10 hover:bg-white/10 transition-all text-left group"
+          >
+            <div className="inline-block px-3 py-1 rounded-lg bg-gradient-to-r from-purple-500 to-fuchsia-500 text-sm font-medium mb-4">
+              DM 工作台
+            </div>
+            <p className="text-sm text-gray-400 mb-4">店内 DM 查看排班、提交请假、预估工资、沉淀开本履历和经验。</p>
+            <ul className="space-y-1.5">
+              {['今日任务与未来排班', '工资预估与内部评级', '累计开本与剧本履历', '经验记录与请假申请'].map((f) => (
+                <li key={f} className="text-xs text-gray-500 flex items-center gap-2">
+                  <span className="w-1 h-1 rounded-full bg-gray-500 shrink-0" />
+                  {f}
+                </li>
+              ))}
+            </ul>
+            <div className="mt-5 text-purple-300 text-sm group-hover:translate-x-1 transition-transform">
+              进入 DM 工作台 →
+            </div>
           </button>
         </div>
       </section>

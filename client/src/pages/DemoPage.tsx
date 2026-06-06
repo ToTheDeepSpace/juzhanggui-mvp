@@ -10,15 +10,15 @@ export default function DemoPage() {
     },
     {
       icon: '🎭', title: '卡司/DM 管理', color: 'from-purple-500 to-pink-500',
-      items: ['卡司信息管理', '技能与剧本关联', '空闲时段查询', '等级成长体系'],
+      items: ['卡司信息管理', '技能与剧本关联', 'DM 工作台', '累计开本与经验留存'],
     },
     {
       icon: '📖', title: '剧本管理', color: 'from-orange-500 to-red-500',
       items: ['剧本与角色管理', '玩家/卡司角色分离', '角色性别标注', '剧本热度统计'],
     },
     {
-      icon: '🎮', title: '玩家端', color: 'from-green-500 to-emerald-500',
-      items: ['手机号一键登录', '查看个人所有排班', '即将开始/历史记录', '签到与评价'],
+      icon: '🎮', title: '灵契用户端联动', color: 'from-green-500 to-emerald-500',
+      items: ['玩家主页在灵契', 'DM 公开身份在灵契', '拼车同步到灵契', '店内工作流保留'],
     },
     {
       icon: '⭐', title: '会员管理', color: 'from-yellow-500 to-amber-500',
@@ -44,7 +44,7 @@ export default function DemoPage() {
       <section className="max-w-6xl mx-auto px-6 pt-10 pb-20">
         <h1 className="text-4xl font-bold text-center mb-4">功能介绍</h1>
         <p className="text-gray-400 text-center mb-16 max-w-xl mx-auto">
-          从排期到数据，从管理到玩家端，一站式解决演绎剧场的运营难题
+          剧司辰负责店家排期、经营数据和 DM 内部工作流，用户身份与内容资产沉淀到灵契
         </p>
 
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">

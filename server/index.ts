@@ -1,5 +1,5 @@
-// 本地开发入口 — 加载 dotenv + 启动端口监听 + 后台任务
-import 'dotenv/config';
+// 本地开发入口 — 加载 .env/.env.local + 启动端口监听 + 后台任务
+import './loadEnv';
 import app from '../api/index';
 import { ScheduleDB, NotificationDB } from './db';
 

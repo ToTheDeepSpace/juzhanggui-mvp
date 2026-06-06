@@ -1,6 +1,8 @@
 import { useNavigate } from 'react-router-dom';
 import Logo from '../components/Logo';
 
+const LINGQI_SITE_URL = (import.meta.env.VITE_LINGQI_SITE_URL || 'https://lingqi.jusichen.com').replace(/\/$/, '');
+
 export default function LandingPage() {
   const navigate = useNavigate();
 
@@ -19,7 +21,7 @@ export default function LandingPage() {
         </div>
         <nav className="flex gap-6 text-sm text-gray-300">
           <button onClick={() => navigate('/demo')} className="hover:text-white transition-colors">功能介绍</button>
-          <button onClick={() => navigate('/player/login')} className="hover:text-white transition-colors">玩家入口</button>
+          <a href={`${LINGQI_SITE_URL}/login?from=jusichen`} className="hover:text-white transition-colors">灵契用户端</a>
           <button onClick={() => navigate('/store')} className="hover:text-white transition-colors">店家入口</button>
         </nav>
       </header>
@@ -31,7 +33,7 @@ export default function LandingPage() {
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400"> 数字操作系统</span>
         </h1>
         <p className="text-xl text-gray-300 max-w-2xl mx-auto mb-10">
-          让店家管得轻松，让卡司有尊严有成长，让玩家玩得更爽
+          剧司辰专注店家运营与 DM 内部工作台，玩家和社区身份沉淀在灵契
         </p>
         <div className="flex flex-wrap justify-center gap-4">
           <button
@@ -40,12 +42,12 @@ export default function LandingPage() {
           >
             系统演示 →
           </button>
-          <button
-            onClick={() => navigate('/player/login')}
+          <a
+            href={`${LINGQI_SITE_URL}/login?from=jusichen`}
             className="px-8 py-3 bg-white/10 backdrop-blur rounded-xl font-medium hover:bg-white/20 transition-colors border border-white/20"
           >
-            玩家入口
-          </button>
+            灵契用户端
+          </a>
           <button
             onClick={() => navigate('/store')}
             className="px-8 py-3 bg-white/10 backdrop-blur rounded-xl font-medium hover:bg-white/20 transition-colors border border-white/20"
@@ -61,9 +63,9 @@ export default function LandingPage() {
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
           {[
             { icon: '📅', title: '智能排班', desc: '日历拖拽排期，冲突自动检测，多房间并行管理，告别 Excel 时代' },
-            { icon: '🎭', title: '卡司管理', desc: 'DM 成长体系（学徒→金牌），自动统计开本数，等级对应收入' },
+            { icon: '🎭', title: 'DM 工作台', desc: '排班、请假、工资预估、累计开本、开本履历和经验沉淀统一留在店内' },
             { icon: '📊', title: '经营数据', desc: '实时的收入报表、卡司成本分析、剧本热度排行，数据驱动决策' },
-            { icon: '🎮', title: '玩家端', desc: '玩家在线查看场次、预约报名、签到评价，完全的消费闭环' },
+            { icon: '🎮', title: '灵契用户端', desc: '玩家主页、DM 公开身份、店家认领与内容资产统一沉淀到灵契' },
           ].map((card, i) => (
             <div key={i} className="bg-white/5 backdrop-blur rounded-2xl p-6 border border-white/10 hover:bg-white/10 transition-colors">
               <div className="text-4xl mb-4">{card.icon}</div>
@@ -169,14 +171,14 @@ export default function LandingPage() {
       {/* 底部 */}
       <footer className="max-w-6xl mx-auto px-6 py-12 border-t border-white/10 text-center text-sm text-gray-500">
         <p className="mb-2">剧司辰 · 剧本杀行业数字化运营平台</p>
-        <p className="mb-4">让发行商看到数据，让店家管得轻松，让卡司有尊严，让玩家玩得更爽</p>
+        <p className="mb-4">剧司辰负责店家排期、经营数据与 DM 内部工作台，灵契负责玩家、DM 与社区身份沉淀</p>
         <a
           href="https://lingqi.jusichen.com"
           target="_blank"
           rel="noopener noreferrer"
           className="text-indigo-400 hover:text-indigo-300 transition-colors font-medium"
         >
-          灵契 · 创作者数字名片 →
+          灵契 · 用户与内容身份 →
         </a>
       </footer>
     </div>

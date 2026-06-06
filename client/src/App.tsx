@@ -1,15 +1,34 @@
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import MainLayout from './components/MainLayout';
 import LoginPage from './pages/LoginPage';
 import CheckInPage from './pages/CheckInPage';
 import EvaluationPage from './pages/EvaluationPage';
-import PlayerLogin from './pages/PlayerLogin';
-import PlayerDashboard from './pages/PlayerDashboard';
 import LandingPage from './pages/LandingPage';
 import DemoPage from './pages/DemoPage';
 import StorePortal from './pages/StorePortal';
 import DmDashboard from './pages/DmDashboard';
+
+const LINGQI_SITE_URL = (import.meta.env.VITE_LINGQI_SITE_URL || 'https://lingqi.jusichen.com').replace(/\/$/, '');
+
+function ExternalRedirect({ to, label }: { to: string; label: string }) {
+  useEffect(() => {
+    window.location.replace(to);
+  }, [to]);
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center px-6">
+      <div className="text-center">
+        <div className="w-8 h-8 mx-auto mb-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm text-slate-300">正在前往{label}</p>
+        <a href={to} className="inline-block mt-3 text-sm text-indigo-300 hover:text-indigo-200">
+          没有自动跳转就点这里
+        </a>
+      </div>
+    </div>
+  );
+}
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
@@ -62,14 +81,14 @@ function App() {
           {/* 系统演示 */}
           <Route path="/demo" element={<DemoPage />} />
 
-          {/* 玩家端 */}
-          <Route path="/player/login" element={<PlayerLogin />} />
-          <Route path="/player/dashboard" element={<PlayerDashboard />} />
+          {/* 用户身份统一放到灵契 */}
+          <Route path="/player/login" element={<ExternalRedirect to={`${LINGQI_SITE_URL}/login?from=jusichen&role=player`} label="灵契玩家页" />} />
+          <Route path="/player/dashboard" element={<ExternalRedirect to={`${LINGQI_SITE_URL}/dashboard?from=jusichen`} label="灵契玩家页" />} />
 
           {/* 店家端入口 */}
           <Route path="/store" element={<StorePortal />} />
 
-          {/* DM/卡司工作台 */}
+          {/* DM 公开身份在灵契，店内工作流保留在剧司辰 */}
           <Route path="/store/dm" element={<DmDashboard />} />
 
           {/* 店长登录 */}

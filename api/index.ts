@@ -35,6 +35,7 @@ const TENCENT_SMS_TEMPLATE_ID = process.env.TENCENT_SMS_TEMPLATE_ID || '';
 const TENCENTCLOUD_SECRET_ID = process.env.TENCENTCLOUD_SECRET_ID || '';
 const TENCENTCLOUD_SECRET_KEY = process.env.TENCENTCLOUD_SECRET_KEY || '';
 const JUZHANGGUI_SITE_URL = (process.env.JUZHANGGUI_SITE_URL || process.env.PUBLIC_SITE_URL || 'https://jusichen.com').replace(/\/$/, '');
+const LINGQI_SITE_URL = (process.env.LINGQI_SITE_URL || process.env.VITE_LINGQI_SITE_URL || 'https://lingqi.jusichen.com').replace(/\/$/, '');
 const JZG_WECHAT_OPEN_APP_ID = process.env.JZG_WECHAT_OPEN_APP_ID || process.env.WECHAT_OPEN_APP_ID || '';
 const JZG_WECHAT_OPEN_APP_SECRET = process.env.JZG_WECHAT_OPEN_APP_SECRET || process.env.WECHAT_OPEN_APP_SECRET || '';
 const JZG_WECHAT_REDIRECT_URI = process.env.JZG_WECHAT_REDIRECT_URI || `${JUZHANGGUI_SITE_URL}/api/player/wechat/callback`;
@@ -44,7 +45,21 @@ app.use(cors());
 app.use(express.json());
 
 // Auth middleware
-const PUBLIC_PATHS = ['/api/health', '/api/auth/login', '/api/auth/verify', '/api/player/auth/config', '/api/player/login', '/api/player/send-code', '/api/player/verify-code', '/api/player/wechat/url', '/api/player/wechat/start', '/api/player/wechat/callback'];
+const PUBLIC_PATHS = [
+  '/api/health',
+  '/api/auth/login',
+  '/api/auth/verify',
+  '/api/player/auth/config',
+  '/api/player/login',
+  '/api/player/send-code',
+  '/api/player/verify-code',
+  '/api/player/wechat/url',
+  '/api/player/wechat/start',
+  '/api/player/wechat/callback',
+  '/api/dm/auth/config',
+  '/api/dm/login',
+  '/api/dm/send-code',
+];
 const PUBLIC_SUFFIXES = ['/public', '/checkin', '/evaluate', '/evaluation', '/evaluations', '/evaluation-stats'];
 
 function isPublicPath(path: string): boolean {
@@ -62,7 +77,15 @@ app.use((req: any, res: any, next: any) => {
   try {
     const decoded = jwt.verify(auth.substring(7), JWT_SECRET) as any;
     req.user = decoded;
-    if (!req.path.startsWith('/api/player/') && decoded.role !== 'admin') {
+    const isPlayerApi = req.path.startsWith('/api/player/');
+    const isDmApi = req.path.startsWith('/api/dm/');
+    if (isPlayerApi && decoded.role !== 'player' && decoded.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '无玩家权限' });
+    }
+    if (isDmApi && decoded.role !== 'dm' && decoded.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '无 DM 权限' });
+    }
+    if (!isPlayerApi && !isDmApi && decoded.role !== 'admin') {
       return res.status(403).json({ success: false, error: '无管理员权限' });
     }
     next();
@@ -73,6 +96,40 @@ app.use((req: any, res: any, next: any) => {
 function ok(d?: any) { return { success: true, data: d }; }
 function err(e: any) { return { success: false, error: e?.message || String(e) }; }
 function sha256(input: string): string { return crypto.createHash('sha256').update(input).digest('hex'); }
+function cleanText(input: unknown, max = 120): string {
+  return typeof input === 'string' ? input.trim().slice(0, max) : '';
+}
+function normalizeProfilePhone(input: unknown): string {
+  const digits = typeof input === 'string' ? input.replace(/\D/g, '') : '';
+  return /^1[3-9]\d{9}$/.test(digits) ? digits : '';
+}
+function normalizeClockTime(input: unknown, fallback = '19:30') {
+  const raw = cleanText(input, 20);
+  const match = raw.match(/(\d{1,2}):(\d{2})/);
+  if (!match) return fallback;
+  const hour = Math.min(23, Math.max(0, Number(match[1])));
+  const minute = Math.min(59, Math.max(0, Number(match[2])));
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+function normalizeIdentityRoles(profile: any, additions: string[]) {
+  const roles: string[] = [];
+  const push = (value: unknown) => {
+    const role = cleanText(value, 40).toLowerCase();
+    if (role && !roles.includes(role)) roles.push(role);
+  };
+  if (Array.isArray(profile?.identity_roles)) profile.identity_roles.forEach(push);
+  push(profile?.role_type);
+  push(profile?.role);
+  if (profile?.verified_dm) push('dm');
+  if (profile?.verified_shop) push('shop');
+  additions.forEach(push);
+  return roles.length ? roles : ['player'];
+}
+function preferredRoleType(profile: any, additions: string[]) {
+  const existing = cleanText(profile?.role_type, 40).toLowerCase();
+  if (existing && existing !== 'player') return existing;
+  return additions[0] || existing || 'player';
+}
 function normalizeChinaPhone(input: unknown): string {
   const phone = typeof input === 'string' ? input.replace(/\D/g, '') : '';
   if (!/^1[3-9]\d{9}$/.test(phone)) throw new Error('请填写正确的中国大陆手机号');
@@ -116,6 +173,287 @@ function makeWechatAuthorizeUrl(redirectPath: string) {
   });
   return `https://open.weixin.qq.com/connect/qrconnect?${params.toString()}#wechat_redirect`;
 }
+
+function scheduleRelation(row: any) {
+  return Array.isArray(row?.schedules) ? row.schedules[0] : row?.schedules;
+}
+
+function relationName(row: any, key: string) {
+  const relation = row?.[key];
+  if (Array.isArray(relation)) return cleanText(relation[0]?.name, 100);
+  return cleanText(relation?.name, 100);
+}
+
+function combineScheduleDateTime(schedule: any, field: 'start_time' | 'end_time') {
+  const raw = cleanText(schedule?.[field], 40);
+  if (raw.includes('T')) return raw;
+  const date = cleanText(schedule?.scheduled_date, 20) || new Date().toISOString().slice(0, 10);
+  return `${date}T${normalizeClockTime(raw, field === 'start_time' ? '19:30' : '23:30')}`;
+}
+
+function statusText(status: unknown) {
+  const value = cleanText(status, 30);
+  const map: Record<string, string> = {
+    pending: '待确认',
+    scheduled: '已排班',
+    confirmed: '已确认',
+    locked: '已锁定',
+    ongoing: '进行中',
+    completed: '已完成',
+    cancelled: '已取消',
+    bombed: '已炸车',
+  };
+  return map[value] || value || '未设置';
+}
+
+function isClosedSchedule(status: unknown) {
+  return ['cancelled', 'bombed'].includes(cleanText(status, 30));
+}
+
+function monthKey(date = new Date()) {
+  return date.toISOString().slice(0, 7);
+}
+
+function uniqueTexts(values: unknown[], max = 20) {
+  const result: string[] = [];
+  for (const value of values) {
+    const text = cleanText(value, 80);
+    if (text && !result.includes(text)) result.push(text);
+    if (result.length >= max) break;
+  }
+  return result;
+}
+
+function isMissingRelationError(error: any, relation: string) {
+  const text = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''} ${error?.hint || ''}`;
+  return error?.code === '42P01' || text.includes(relation);
+}
+
+function dmRatingLevel(score: number) {
+  if (score >= 90) return '王牌 DM';
+  if (score >= 82) return '金牌 DM';
+  if (score >= 72) return '成熟 DM';
+  if (score >= 60) return '成长中';
+  return '待积累';
+}
+
+async function findActorByPhone(phone: string) {
+  const { data, error } = await supabase.from('actors')
+    .select('*')
+    .eq('tenant_id', TENANT_ID)
+    .order('name');
+  if (error) throw error;
+  return (data || []).find((actor: any) => normalizeProfilePhone(actor.phone) === phone) || null;
+}
+
+async function ensureLingqiDmProfileForActor(actor: { name?: unknown; phone?: unknown }) {
+  const phone = normalizeProfilePhone(actor.phone);
+  if (!phone) return null;
+
+  const displayName = cleanText(actor.name, 80) || `DM${phone.slice(-4)}`;
+  const { data: existing, error: queryErr } = await supabase.from('lc_profiles')
+    .select('id, display_name, role, role_type, identity_roles, verified_dm, verified_shop')
+    .eq('phone', phone)
+    .maybeSingle();
+  if (queryErr) throw queryErr;
+
+  if (existing) {
+    const patch: Record<string, unknown> = {
+      verified_dm: true,
+      identity_roles: normalizeIdentityRoles(existing, ['dm']),
+      role_type: preferredRoleType(existing, ['dm']),
+      updated_at: new Date().toISOString(),
+    };
+    if (!existing.display_name) patch.display_name = displayName;
+    const { data: updated, error: updErr } = await supabase.from('lc_profiles')
+      .update(patch)
+      .eq('id', existing.id)
+      .select('id, display_name, role_type, identity_roles, verified_dm')
+      .maybeSingle();
+    if (updErr) throw updErr;
+    return updated || { ...existing, ...patch };
+  }
+
+  const { data: created, error: insErr } = await supabase.from('lc_profiles').insert({
+    phone,
+    display_name: displayName,
+    role: 'player',
+    role_type: 'dm',
+    identity_roles: ['dm'],
+    verified_dm: true,
+    is_visible: true,
+    auth_provider: 'juzhanggui_actor',
+    balance: 0,
+  }).select('id, display_name, role_type, identity_roles, verified_dm').single();
+  if (insErr) throw insErr;
+  return created;
+}
+
+function extractLineValue(text: unknown, label: string) {
+  const raw = cleanText(text, 2000);
+  const match = raw.match(new RegExp(`${label}[：:]\\s*([^\\n]+)`));
+  return match ? cleanText(match[1], 120) : '';
+}
+
+function shouldSyncScheduleToLingqiCarpool(schedule: any) {
+  const text = `${schedule?.customer_name || ''}\n${schedule?.note || ''}`;
+  if (/来源[：:]\s*灵契拼车区|拼车ID[：:]/.test(text)) return false;
+  return /(拼车|车头|缺人|缺位|车位|组局|上车)/.test(text);
+}
+
+async function ensureJuzhangguiSyncProfile() {
+  const phone = '__juzhanggui_sync__';
+  const { data: existing, error: queryErr } = await supabase.from('lc_profiles')
+    .select('id')
+    .eq('phone', phone)
+    .maybeSingle();
+  if (queryErr) throw queryErr;
+  if (existing?.id) return existing.id;
+
+  const { data, error: insErr } = await supabase.from('lc_profiles').insert({
+    phone,
+    display_name: '剧司辰店家同步',
+    role: 'shop',
+    role_type: 'shop',
+    identity_roles: ['shop'],
+    verified_shop: true,
+    is_visible: false,
+    balance: 0,
+    auth_provider: 'juzhanggui_sync',
+  }).select('id').single();
+  if (insErr) throw insErr;
+  return data.id;
+}
+
+async function syncScheduleToLingqiCarpool(scheduleId: string) {
+  const { data: schedule, error: scheduleErr } = await supabase.from('schedules')
+    .select('*, scripts(id, name), rooms(id, name)')
+    .eq('id', scheduleId)
+    .eq('tenant_id', TENANT_ID)
+    .maybeSingle();
+  if (scheduleErr) throw scheduleErr;
+  if (!schedule) return { ok: false, skipped: true, reason: 'schedule_not_found' };
+
+  const { data: existingCarpool, error: carpoolQueryErr } = await supabase.from('lc_carpools')
+    .select('id, status')
+    .eq('juzhanggui_schedule_id', schedule.id)
+    .maybeSingle();
+  if (carpoolQueryErr) throw carpoolQueryErr;
+
+  if (!existingCarpool && !shouldSyncScheduleToLingqiCarpool(schedule)) {
+    return { ok: true, skipped: true, reason: 'not_carpool' };
+  }
+
+  const { data: roleRows, error: roleErr } = await supabase.from('script_player_roles')
+    .select('role_name, gender, tags')
+    .eq('script_id', schedule.script_id);
+  if (roleErr) throw roleErr;
+  const { data: checkins, error: checkinErr } = await supabase.from('checkins')
+    .select('role, guest_name')
+    .eq('schedule_id', schedule.id);
+  if (checkinErr) throw checkinErr;
+
+  const seatedByRole = new Map<string, any>();
+  for (const item of checkins || []) {
+    const role = cleanText(item.role, 80);
+    if (role) seatedByRole.set(role, item);
+  }
+  const scriptRoles = (roleRows || []).map((role: any) => {
+    const roleName = cleanText(role.role_name, 80);
+    const seated = seatedByRole.get(roleName);
+    return {
+      role_name: roleName,
+      gender: cleanText(role.gender, 20) || null,
+      tags: Array.isArray(role.tags) ? role.tags : [],
+      status: seated ? 'seated' : 'needed',
+      player_name: seated ? cleanText(seated.guest_name, 60) || null : null,
+      player_gender: null,
+    };
+  }).filter((role: any) => role.role_name);
+
+  const seatedRoles = scriptRoles.filter((role: any) => role.status === 'seated');
+  const neededRoles = scriptRoles.filter((role: any) => role.status !== 'seated');
+  const scriptName = cleanText(schedule.scripts?.name, 100) || '未命名剧本';
+  const city = extractLineValue(schedule.note, '城市') || '待定城市';
+  const roomName = cleanText(schedule.rooms?.name, 100);
+  const posterId = await ensureJuzhangguiSyncProfile();
+  const startTime = normalizeClockTime(schedule.start_time, '19:30');
+  const deadlineDate = schedule.scheduled_date || new Date().toISOString().slice(0, 10);
+  const status = schedule.status === 'cancelled' || schedule.status === 'bombed' ? 'closed' : 'approved';
+  const roleName = neededRoles.map((role: any) => role.role_name).join('、') || cleanText(schedule.note, 80) || '待定角色';
+  const contentLines = [
+    '来源：剧司辰店家排期',
+    `排期ID：${schedule.id}`,
+    schedule.customer_name ? `车头/客户：${schedule.customer_name}` : '',
+    schedule.customer_phone ? `联系方式：${schedule.customer_phone}` : '',
+    schedule.note ? `备注：${schedule.note}` : '',
+  ].filter(Boolean);
+
+  const payload = {
+    poster_id: posterId,
+    poster_name: '剧司辰店家同步',
+    poster_is_realname: true,
+    title: `${schedule.scheduled_date || ''} · ${city} · ${scriptName}`.replace(/^[ ·]+/, ''),
+    city,
+    event_date: schedule.scheduled_date,
+    start_time: startTime,
+    deadline_date: deadlineDate,
+    deadline_time: null,
+    script_id: schedule.script_id || null,
+    script_name: scriptName,
+    role_name: roleName,
+    role_note: [
+      seatedRoles.length ? `已上车：${seatedRoles.map((role: any) => role.role_name).join('、')}` : '',
+      neededRoles.length ? `缺人：${neededRoles.map((role: any) => role.role_name).join('、')}` : '',
+    ].filter(Boolean).join('；') || null,
+    script_roles: scriptRoles,
+    seated_roles: seatedRoles,
+    store_name: roomName || null,
+    store_city: city,
+    store_address: null,
+    store_source_url: null,
+    store_verify_note: '来自剧司辰店家后台排期',
+    store_suggestion_status: roomName ? 'pending' : 'none',
+    subsidy_mode: 'none',
+    subsidy_type: 'none',
+    subsidy_amount: 0,
+    subsidy_discount: null,
+    subsidy_note: null,
+    needed_count: Math.min(20, Math.max(1, neededRoles.length || Number(schedule.player_count || 0) || 1)),
+    joined_count: seatedRoles.length || (checkins || []).length,
+    leader_contact: cleanText(schedule.customer_phone, 120) || null,
+    contact_note: '联系方式来自剧司辰排期，实际公开范围以后台设置为准。',
+    content: contentLines.join('\n').slice(0, 1600),
+    boost_amount: 0,
+    status,
+    juzhanggui_sync_status: 'synced',
+    juzhanggui_schedule_id: schedule.id,
+    source_project: 'juzhanggui',
+    ai_assist_context: {
+      source: 'juzhanggui_schedule',
+      schedule_status: schedule.status,
+      tenant_id: TENANT_ID,
+      synced_at: new Date().toISOString(),
+    },
+    updated_at: new Date().toISOString(),
+  };
+
+  if (existingCarpool?.id) {
+    const { error: updErr } = await supabase.from('lc_carpools')
+      .update(payload)
+      .eq('id', existingCarpool.id);
+    if (updErr) throw updErr;
+    return { ok: true, carpoolId: existingCarpool.id, updated: true };
+  }
+
+  const { data: inserted, error: insErr } = await supabase.from('lc_carpools')
+    .insert(payload)
+    .select('id')
+    .single();
+  if (insErr) throw insErr;
+  return { ok: true, carpoolId: inserted?.id || null, updated: false };
+}
+
 async function sendTencentSmsCode(phone: string, code: string) {
   if (!isTencentSmsConfigured()) {
     if (process.env.NODE_ENV === 'production') throw new Error('短信服务未配置');
@@ -379,13 +717,9 @@ app.delete('/api/rooms/:id', async (req: any, res: any) => {
 app.get('/api/actors', async (_: any, res: any) => {
   try {
     const { data } = await supabase.from('actors').select('*').eq('tenant_id', TENANT_ID).order('name');
-    // 为每个卡司查找对应的灵契主页
     const enriched = await Promise.all((data || []).map(async (a: any) => {
-      if (a.phone) {
-        const { data: lc } = await supabase.from('lc_profiles').select('id, display_name').eq('phone', a.phone).maybeSingle();
-        return { ...a, lc_profile: lc || null };
-      }
-      return { ...a, lc_profile: null };
+      const lc = await ensureLingqiDmProfileForActor(a);
+      return { ...a, lc_profile: lc };
     }));
     res.json(ok(enriched));
   }
@@ -396,11 +730,16 @@ app.post('/api/actors', async (req: any, res: any) => {
     const { name, phone } = req.body;
     if (!name) return res.status(400).json(err(new Error('请填写卡司姓名')));
     const { data } = await supabase.from('actors').insert({ name, phone: phone || null, tenant_id: TENANT_ID }).select().single();
-    res.json(ok({ id: data?.id }));
+    const lcProfile = await ensureLingqiDmProfileForActor(data || { name, phone });
+    res.json(ok({ id: data?.id, lc_profile: lcProfile }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/actors/:id', async (req: any, res: any) => {
-  try { await supabase.from('actors').update({ name: req.body.name, phone: req.body.phone || null }).eq('id', req.params.id).eq('tenant_id', TENANT_ID); res.json(ok()); }
+  try {
+    await supabase.from('actors').update({ name: req.body.name, phone: req.body.phone || null }).eq('id', req.params.id).eq('tenant_id', TENANT_ID);
+    const lcProfile = await ensureLingqiDmProfileForActor({ name: req.body.name, phone: req.body.phone });
+    res.json(ok({ lc_profile: lcProfile }));
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.delete('/api/actors/:id', async (req: any, res: any) => {
@@ -566,10 +905,19 @@ app.post('/api/schedules', async (req: any, res: any) => {
       script_id: d.scriptId, room_id: d.roomId || null,
       scheduled_date: dateStr, start_time: startTimeStr, end_time: endTimeStr,
       status: d.status || 'pending', player_count: d.playerCount || 0,
+      customer_name: d.customerName || null,
+      customer_phone: d.customerPhone || null,
+      note: d.note || null,
       tenant_id: TENANT_ID
     }).select().single();
     if (d.actors && d.actors.length) await supabase.from('schedule_actors').insert(d.actors.map((a: any) => ({ schedule_id: data!.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime })));
-    res.json(ok(data));
+    let lingqiSync: any = { ok: true, skipped: true, reason: 'not_carpool' };
+    try {
+      lingqiSync = await syncScheduleToLingqiCarpool(data!.id);
+    } catch (syncErr) {
+      lingqiSync = { ok: false, skipped: false, reason: err(syncErr).error };
+    }
+    res.json(ok({ ...data, lingqi_sync: lingqiSync }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/schedules/:id', async (req: any, res: any) => {
@@ -595,7 +943,13 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
       await supabase.from('schedule_actors').delete().eq('schedule_id', req.params.id);
       if (d.actors.length) await supabase.from('schedule_actors').insert(d.actors.map((a: any) => ({ schedule_id: req.params.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime })));
     }
-    res.json(ok());
+    let lingqiSync: any = { ok: true, skipped: true, reason: 'not_carpool' };
+    try {
+      lingqiSync = await syncScheduleToLingqiCarpool(req.params.id);
+    } catch (syncErr) {
+      lingqiSync = { ok: false, skipped: false, reason: err(syncErr).error };
+    }
+    res.json(ok({ lingqi_sync: lingqiSync }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.delete('/api/schedules/:id', async (req: any, res: any) => {
@@ -606,11 +960,26 @@ app.put('/api/schedules/:id/confirm', async (req: any, res: any) => {
   try {
     if (!req.body.roomId) return res.status(400).json(err(new Error('请选择房间')));
     await supabase.from('schedules').update({ room_id: req.body.roomId, status: 'scheduled' }).eq('id', req.params.id).eq('tenant_id', TENANT_ID);
-    res.json(ok());
+    let lingqiSync: any = { ok: true, skipped: true, reason: 'not_carpool' };
+    try {
+      lingqiSync = await syncScheduleToLingqiCarpool(req.params.id);
+    } catch (syncErr) {
+      lingqiSync = { ok: false, skipped: false, reason: err(syncErr).error };
+    }
+    res.json(ok({ lingqi_sync: lingqiSync }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/schedules/:id/cancel', async (req: any, res: any) => {
-  try { await supabase.from('schedules').update({ status: req.body.status || 'cancelled' }).eq('id', req.params.id).eq('tenant_id', TENANT_ID); res.json(ok()); }
+  try {
+    await supabase.from('schedules').update({ status: req.body.status || 'cancelled' }).eq('id', req.params.id).eq('tenant_id', TENANT_ID);
+    let lingqiSync: any = { ok: true, skipped: true, reason: 'not_carpool' };
+    try {
+      lingqiSync = await syncScheduleToLingqiCarpool(req.params.id);
+    } catch (syncErr) {
+      lingqiSync = { ok: false, skipped: false, reason: err(syncErr).error };
+    }
+    res.json(ok({ lingqi_sync: lingqiSync }));
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/schedules/:id/complete', async (req: any, res: any) => {
@@ -735,13 +1104,22 @@ app.post('/api/player/verify-code', async (req: any, res: any) => {
     const verifiedPhone = await verifyPhoneCode('player_login', phone, code);
     const { data: existing } = await supabase.from('lc_profiles').select('*').eq('phone', verifiedPhone).maybeSingle();
     if (existing) {
-      await supabase.from('lc_profiles').update({ phone_verified_at: new Date().toISOString(), auth_provider: existing.auth_provider || 'phone' }).eq('id', existing.id);
+      await supabase.from('lc_profiles').update({
+        phone_verified_at: new Date().toISOString(),
+        auth_provider: existing.auth_provider || 'phone',
+        identity_roles: normalizeIdentityRoles(existing, ['player']),
+        role_type: preferredRoleType(existing, ['player']),
+      }).eq('id', existing.id);
       return res.json(ok({ id: existing.id, display_name: existing.display_name, phone: existing.phone, newUser: false }));
     }
     const { data: newPlayer } = await supabase.from('lc_profiles').insert({
       phone: verifiedPhone,
       display_name: `玩家${verifiedPhone.slice(-4)}`,
+      role: 'player',
       role_type: 'player',
+      identity_roles: ['player'],
+      is_visible: true,
+      balance: 0,
       phone_verified_at: new Date().toISOString(),
       auth_provider: 'phone',
     }).select().single();
@@ -939,6 +1317,314 @@ app.put('/api/conflicts/:id', async (req: any, res: any) => {
 app.delete('/api/conflicts/:id', async (req: any, res: any) => {
   try { await supabase.from('conflict_records').delete().eq('id', req.params.id); res.json(ok()); }
   catch (e) { res.status(500).json(err(e)); }
+});
+
+// ===== DM internal workbench =====
+app.post('/api/dm/send-code', async (req: any, res: any) => {
+  try {
+    if (!isPhoneCodeLoginAvailable()) {
+      return res.status(503).json(err(new Error('短信验证暂未启用，当前可使用已登记手机号登录')));
+    }
+    const result = await createAndSendPhoneCode(req, 'dm_login', req.body?.phone);
+    res.json(ok({ sent: true, expires_at: result.expiresAt }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.get('/api/dm/auth/config', async (_req: any, res: any) => {
+  res.json(ok({
+    smsEnabled: isPhoneCodeLoginAvailable(),
+    smsRequired: isTencentSmsConfigured(),
+    wechatEnabled: false,
+    legacyPhoneLoginEnabled: !isTencentSmsConfigured(),
+  }));
+});
+
+app.post('/api/dm/login', async (req: any, res: any) => {
+  try {
+    const { phone, code } = req.body;
+    const hasCode = typeof code === 'string' && code.trim().length > 0;
+    if (isTencentSmsConfigured() && !hasCode) return res.status(400).json(err(new Error('请先获取并填写短信验证码')));
+    const verifiedPhone = hasCode ? await verifyPhoneCode('dm_login', phone, code) : normalizeChinaPhone(phone);
+    const actor = await findActorByPhone(verifiedPhone);
+    if (!actor) {
+      return res.status(404).json(err(new Error('这个手机号还没有登记为店内 DM，请先让店家在卡司管理里登记手机号')));
+    }
+    await ensureLingqiDmProfileForActor(actor);
+    const token = jwt.sign({ role: 'dm', actorId: actor.id, tenantId: TENANT_ID }, JWT_SECRET, { expiresIn: '24h' });
+    res.json(ok({
+      token,
+      actor: {
+        id: actor.id,
+        name: actor.name,
+        phone: verifiedPhone,
+      },
+    }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.get('/api/dm/dashboard', async (req: any, res: any) => {
+  try {
+    const actorId = cleanText(req.user?.actorId || req.query.actorId, 80);
+    if (!actorId) return res.status(403).json(err(new Error('缺少 DM 身份')));
+
+    const { data: actor, error: actorErr } = await supabase.from('actors')
+      .select('*')
+      .eq('id', actorId)
+      .eq('tenant_id', TENANT_ID)
+      .maybeSingle();
+    if (actorErr) throw actorErr;
+    if (!actor) return res.status(404).json(err(new Error('DM 不存在')));
+
+    const { data: assignmentRows, error: assignmentErr } = await supabase.from('schedule_actors')
+      .select('id, role_name, start_time, end_time, schedules!inner(id, tenant_id, scheduled_date, start_time, end_time, status, player_count, customer_name, note, script_id, room_id, scripts(id, name), rooms(id, name))')
+      .eq('actor_id', actorId)
+      .eq('schedules.tenant_id', TENANT_ID);
+    if (assignmentErr) throw assignmentErr;
+
+    const schedules = (assignmentRows || []).map((row: any) => {
+      const schedule = scheduleRelation(row);
+      const startAt = combineScheduleDateTime(schedule, 'start_time');
+      const endAt = combineScheduleDateTime(schedule, 'end_time');
+      return {
+        assignmentId: row.id,
+        scheduleId: schedule?.id,
+        scriptId: schedule?.script_id || null,
+        scriptName: relationName(schedule, 'scripts') || '未命名剧本',
+        roomName: relationName(schedule, 'rooms') || null,
+        roleName: cleanText(row.role_name, 80) || 'DM',
+        startAt,
+        endAt,
+        status: cleanText(schedule?.status, 30) || 'pending',
+        statusText: statusText(schedule?.status),
+        customerName: cleanText(schedule?.customer_name, 80) || null,
+        playerCount: Number(schedule?.player_count || 0),
+        note: cleanText(schedule?.note, 500) || null,
+      };
+    }).filter((item: any) => item.scheduleId);
+
+    schedules.sort((a: any, b: any) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+
+    const now = Date.now();
+    const currentMonth = monthKey();
+    const activeSchedules = schedules.filter((item: any) => !isClosedSchedule(item.status));
+    const completedSchedules = activeSchedules.filter((item: any) => (
+      item.status === 'completed' || new Date(item.startAt).getTime() < now
+    ));
+    const currentMonthSchedules = activeSchedules.filter((item: any) => item.startAt.startsWith(currentMonth));
+    const currentMonthCompleted = currentMonthSchedules.filter((item: any) => (
+      item.status === 'completed' || new Date(item.startAt).getTime() < now
+    ));
+    const currentMonthUpcoming = currentMonthSchedules.filter((item: any) => new Date(item.startAt).getTime() >= now);
+
+    const scriptStatsMap = new Map<string, any>();
+    for (const item of completedSchedules) {
+      const key = item.scriptId || item.scriptName;
+      const stat = scriptStatsMap.get(key) || {
+        scriptId: item.scriptId,
+        scriptName: item.scriptName,
+        count: 0,
+        lastOpenedAt: item.startAt,
+        roles: [],
+      };
+      stat.count += 1;
+      stat.lastOpenedAt = new Date(item.startAt).getTime() > new Date(stat.lastOpenedAt).getTime() ? item.startAt : stat.lastOpenedAt;
+      stat.roles = uniqueTexts([...(stat.roles || []), item.roleName], 12);
+      scriptStatsMap.set(key, stat);
+    }
+    const scriptStats = Array.from(scriptStatsMap.values()).sort((a: any, b: any) => b.count - a.count);
+
+    const scheduleIds = schedules.map((item: any) => item.scheduleId).filter(Boolean);
+    let evaluations: any[] = [];
+    if (scheduleIds.length) {
+      const { data: evaluationRows, error: evaluationErr } = await supabase.from('evaluations')
+        .select('schedule_id, rating, comment, created_at')
+        .in('schedule_id', scheduleIds);
+      if (evaluationErr) throw evaluationErr;
+      evaluations = evaluationRows || [];
+    }
+
+    const { data: skillRows, error: skillErr } = await supabase.from('actor_skills')
+      .select('id, script_id, role_name, role_type, proficiency, scripts(name)')
+      .eq('actor_id', actorId);
+    if (skillErr) throw skillErr;
+    const skills = (skillRows || []).map((skill: any) => ({
+      id: skill.id,
+      scriptId: skill.script_id,
+      scriptName: relationName(skill, 'scripts') || '未命名剧本',
+      roleName: cleanText(skill.role_name, 80),
+      roleType: cleanText(skill.role_type, 30) || 'actor',
+      proficiency: Number(skill.proficiency || 1),
+    }));
+
+    let leaveRequests: any[] = [];
+    const leaveQuery = await supabase.from('jzg_dm_leave_requests')
+      .select('*')
+      .eq('actor_id', actorId)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (leaveQuery.error && !isMissingRelationError(leaveQuery.error, 'jzg_dm_leave_requests')) throw leaveQuery.error;
+    leaveRequests = leaveQuery.data || [];
+
+    let experienceNotes: any[] = [];
+    const noteQuery = await supabase.from('jzg_dm_experience_notes')
+      .select('*')
+      .eq('actor_id', actorId)
+      .order('created_at', { ascending: false })
+      .limit(30);
+    if (noteQuery.error && !isMissingRelationError(noteQuery.error, 'jzg_dm_experience_notes')) throw noteQuery.error;
+    experienceNotes = noteQuery.data || [];
+
+    const ratings = evaluations.map((item: any) => Number(item.rating || 0)).filter((rating: number) => rating > 0);
+    const avgRating = ratings.length ? Math.round((ratings.reduce((sum: number, rating: number) => sum + rating, 0) / ratings.length) * 10) / 10 : null;
+    const feedbackScore = avgRating ? Math.min(100, avgRating * 20) : 68;
+    const stabilityScore = Math.min(100, completedSchedules.length * 5 + currentMonthUpcoming.length * 2);
+    const experienceScore = Math.min(100, scriptStats.length * 12 + completedSchedules.length * 3 + skills.length * 4);
+    const ratingScore = Math.round(feedbackScore * 0.35 + stabilityScore * 0.3 + experienceScore * 0.35);
+
+    const upcomingTasks = activeSchedules
+      .filter((item: any) => new Date(item.startAt).getTime() >= now)
+      .slice(0, 5)
+      .map((item: any) => ({
+        id: `schedule-${item.scheduleId}`,
+        title: `${item.scriptName} · ${item.roleName}`,
+        dueAt: item.startAt,
+        dueLabel: new Date(item.startAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+        priority: item.status === 'ongoing' ? 'high' : 'normal',
+        status: item.statusText,
+        source: '排班',
+      }));
+    const skillTasks = skills
+      .filter((skill: any) => skill.proficiency < 3)
+      .slice(0, 3)
+      .map((skill: any) => ({
+        id: `skill-${skill.id}`,
+        title: `补齐 ${skill.scriptName} 的 ${skill.roleName || '角色'} 熟练度`,
+        dueAt: null,
+        dueLabel: '持续维护',
+        priority: 'low',
+        status: `熟练度 ${skill.proficiency}/5`,
+        source: '技能',
+      }));
+    const tasks = [...upcomingTasks, ...skillTasks].slice(0, 8);
+
+    res.json(ok({
+      actor: {
+        id: actor.id,
+        name: actor.name,
+        phone: normalizeProfilePhone(actor.phone),
+        totalSessions: completedSchedules.length,
+        totalScripts: scriptStats.length,
+        level: dmRatingLevel(ratingScore),
+      },
+      schedules,
+      tasks,
+      salaryEstimate: {
+        month: currentMonth,
+        completedSessions: currentMonthCompleted.length,
+        upcomingSessions: currentMonthUpcoming.length,
+        estimatedMin: currentMonthCompleted.length * 150 + currentMonthUpcoming.length * 120,
+        estimatedMax: currentMonthCompleted.length * 240 + currentMonthUpcoming.length * 220,
+        rules: [
+          '已完成场次按 150-240 元/场估算',
+          '未来已排场次按 120-220 元/场估算',
+          '最终工资以店家结算规则、临时补贴和扣款为准',
+        ],
+      },
+      rating: {
+        level: dmRatingLevel(ratingScore),
+        score: ratingScore,
+        stabilityScore,
+        feedbackScore: Math.round(feedbackScore),
+        experienceScore,
+        avgRating,
+        feedbackCount: ratings.length,
+      },
+      scriptStats,
+      skills,
+      leaveRequests,
+      experienceNotes,
+      meta: {
+        leaveTableReady: !leaveQuery.error,
+        experienceTableReady: !noteQuery.error,
+      },
+    }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/dm/leave-requests', async (req: any, res: any) => {
+  try {
+    const actorId = cleanText(req.user?.actorId, 80);
+    if (!actorId) return res.status(403).json(err(new Error('缺少 DM 身份')));
+    const startDate = cleanText(req.body?.startDate, 20);
+    const endDate = cleanText(req.body?.endDate, 20) || startDate;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+      return res.status(400).json(err(new Error('请填写正确的请假日期')));
+    }
+    if (new Date(endDate).getTime() < new Date(startDate).getTime()) {
+      return res.status(400).json(err(new Error('结束日期不能早于开始日期')));
+    }
+    const payload = {
+      tenant_id: TENANT_ID,
+      actor_id: actorId,
+      start_date: startDate,
+      end_date: endDate,
+      leave_type: cleanText(req.body?.leaveType, 30) || '事假',
+      reason: cleanText(req.body?.reason, 500) || null,
+      status: 'pending',
+    };
+    const { data, error } = await supabase.from('jzg_dm_leave_requests').insert(payload).select().single();
+    if (error) throw error;
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/dm/experience-notes', async (req: any, res: any) => {
+  try {
+    const actorId = cleanText(req.user?.actorId, 80);
+    if (!actorId) return res.status(403).json(err(new Error('缺少 DM 身份')));
+    const scheduleId = cleanText(req.body?.scheduleId, 80);
+    let scriptId = cleanText(req.body?.scriptId, 80) || null;
+    let scriptName = cleanText(req.body?.scriptName, 120);
+
+    if (scheduleId) {
+      const { data: assignment, error: assignmentErr } = await supabase.from('schedule_actors')
+        .select('schedules!inner(id, tenant_id, script_id, scripts(id, name))')
+        .eq('actor_id', actorId)
+        .eq('schedule_id', scheduleId)
+        .eq('schedules.tenant_id', TENANT_ID)
+        .maybeSingle();
+      if (assignmentErr) throw assignmentErr;
+      const schedule = scheduleRelation(assignment);
+      if (!schedule) return res.status(404).json(err(new Error('未找到可关联的开本记录')));
+      scriptId = schedule.script_id || scriptId;
+      scriptName = relationName(schedule, 'scripts') || scriptName;
+    }
+
+    const title = cleanText(req.body?.title, 120);
+    const content = cleanText(req.body?.content, 3000);
+    if (!scriptName) return res.status(400).json(err(new Error('请选择或填写剧本名称')));
+    if (!title) return res.status(400).json(err(new Error('请填写经验标题')));
+    if (!content) return res.status(400).json(err(new Error('请填写经验内容')));
+
+    const rawTags = Array.isArray(req.body?.tags)
+      ? req.body.tags
+      : cleanText(req.body?.tags, 200).split(/[，,\s]+/);
+    const tags = uniqueTexts(rawTags, 8);
+    const visibility = cleanText(req.body?.visibility, 20) === 'private' ? 'private' : 'internal';
+    const { data, error } = await supabase.from('jzg_dm_experience_notes').insert({
+      tenant_id: TENANT_ID,
+      actor_id: actorId,
+      schedule_id: scheduleId || null,
+      script_id: scriptId,
+      script_name: scriptName,
+      title,
+      content,
+      tags,
+      visibility,
+    }).select().single();
+    if (error) throw error;
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
 });
 
 // ===== Player =====
