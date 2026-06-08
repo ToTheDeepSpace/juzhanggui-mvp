@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -9,6 +9,12 @@ const modeTabs: Array<{ id: LoginMode; label: string }> = [
   { id: 'phone', label: '手机登录' },
   { id: 'register', label: '注册账号' },
 ];
+
+interface AuthConfig {
+  phoneEnabled: boolean;
+  smsEnabled: boolean;
+  legacyPasswordEnabled: boolean;
+}
 
 export default function LoginPage() {
   const [mode, setMode] = useState<LoginMode>('email');
@@ -21,12 +27,35 @@ export default function LoginPage() {
   const [info, setInfo] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
+  const [authConfig, setAuthConfig] = useState<AuthConfig>({ phoneEnabled: true, smsEnabled: false, legacyPasswordEnabled: false });
   const { loginWithEmail, loginWithPhone, registerWithEmail, sendAdminCode } = useAuth();
   const navigate = useNavigate();
 
   const goDashboard = () => navigate('/store/manage', { replace: true });
 
+  useEffect(() => {
+    let mounted = true;
+    fetch('/api/auth/config')
+      .then(res => res.json())
+      .then(data => {
+        if (mounted && data.success && data.data) setAuthConfig(data.data);
+      })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, []);
+
+  useEffect(() => {
+    if (mode === 'phone' && !authConfig.smsEnabled) {
+      setMode('email');
+      setInfo('短信验证码暂未启用，请先使用邮箱登录或注册。');
+    }
+  }, [authConfig.smsEnabled, mode]);
+
   const sendCode = async () => {
+    if (!authConfig.smsEnabled) {
+      setError('短信验证码暂未启用，请先使用邮箱登录');
+      return;
+    }
     if (!/^1[3-9]\d{9}$/.test(phone.replace(/\D/g, ''))) {
       setError('请填写正确的手机号');
       return;
@@ -55,6 +84,11 @@ export default function LoginPage() {
       }
       result = await loginWithEmail(email.trim(), password);
     } else if (mode === 'phone') {
+      if (!authConfig.smsEnabled) {
+        setSubmitting(false);
+        setError('短信验证码暂未启用，请先使用邮箱登录');
+        return;
+      }
       if (!phone.trim() || !code.trim()) {
         setSubmitting(false);
         setError('请填写手机号和验证码');
@@ -81,7 +115,7 @@ export default function LoginPage() {
     else setError(result.error || '登录失败');
   };
 
-  const showPhoneCode = mode === 'phone' || mode === 'register';
+  const showPhoneCode = authConfig.smsEnabled && (mode === 'phone' || mode === 'register');
   const showEmail = mode === 'email' || mode === 'register';
 
   return (
@@ -104,6 +138,7 @@ export default function LoginPage() {
               <button
                 key={tab.id}
                 type="button"
+                disabled={tab.id === 'phone' && !authConfig.smsEnabled}
                 onClick={() => {
                   setMode(tab.id);
                   setError('');
@@ -111,7 +146,7 @@ export default function LoginPage() {
                 }}
                 className={`rounded-lg px-2 py-2 text-xs font-semibold transition-colors ${
                   mode === tab.id ? 'bg-sky-600 text-white shadow-sm' : 'text-slate-600 hover:bg-white'
-                }`}
+                } disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed`}
               >
                 {tab.label}
               </button>
@@ -171,7 +206,7 @@ export default function LoginPage() {
           </button>
 
           <p className="text-xs text-slate-500 leading-6">
-            邮箱账号可以先注册使用，进入后台后再绑定手机号。绑定后可直接用手机验证码登录。
+            邮箱账号可以先注册使用，短信启用后可在后台绑定手机号并用验证码登录。
           </p>
         </form>
       </div>
