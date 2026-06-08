@@ -1092,6 +1092,30 @@ app.post('/api/auth/password/change', async (req: any, res: any) => {
     res.json(ok({ token: makeAdminToken(updated), user: publicAdminUser(updated) }));
   } catch (e) { res.status(500).json(err(e)); }
 });
+
+app.post('/api/auth/password/change-email', async (req: any, res: any) => {
+  try {
+    const newPassword = cleanText(req.body?.newPassword || req.body?.password, 120);
+    if (newPassword.length < 8) return res.status(400).json(err(new Error('新密码至少 8 位')));
+
+    const user = await getAdminUserById(req.user?.adminUserId);
+    if (!user || user.status !== 'active') return res.status(401).json(err(new Error('请先登录后台账号')));
+    const email = normalizeEmail(user.email);
+    await verifyEmailCode('admin_reset_password', email, req.body?.code);
+    if (user.password_hash && await bcrypt.compare(newPassword, user.password_hash)) {
+      return res.status(400).json(err(new Error('新密码不能和原密码相同')));
+    }
+
+    const { data: updated, error: updateErr } = await supabase.from('jzg_admin_users').update({
+      password_hash: await bcrypt.hash(newPassword, 10),
+      email_verified_at: user.email_verified_at || new Date().toISOString(),
+      auth_provider: 'email_verified_password_change',
+      updated_at: new Date().toISOString(),
+    }).eq('id', user.id).select('*').single();
+    if (updateErr) throw updateErr;
+    res.json(ok({ token: makeAdminToken(updated), user: publicAdminUser(updated) }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
 app.get('/api/auth/verify', (req: any, res: any) => {
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Bearer ')) return res.json(ok({ valid: false }));

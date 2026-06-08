@@ -62,7 +62,7 @@ export default function MainLayout() {
               </h1>
             </div>
             <div className="flex items-center gap-2">
-              <AccountPhoneBinder />
+              <AccountSecurityMenu />
               <NotificationBell />
               <button
                 onClick={logout}
@@ -208,13 +208,18 @@ function PlatformOverview() {
   );
 }
 
-function AccountPhoneBinder() {
-  const { user, sendBindPhoneCode, bindPhone } = useAuth();
+function AccountSecurityMenu() {
+  const { user, sendBindPhoneCode, bindPhone, sendAdminEmailCode, changePasswordWithEmail } = useAuth();
   const [open, setOpen] = useState(false);
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
+  const [emailCode, setEmailCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [sending, setSending] = useState(false);
+  const [sendingEmail, setSendingEmail] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
   const [message, setMessage] = useState('');
 
   const sendCode = async () => {
@@ -248,6 +253,41 @@ function AccountPhoneBinder() {
     }
   };
 
+  const sendEmailPasswordCode = async () => {
+    if (!user?.email) {
+      setMessage('当前账号没有邮箱');
+      return;
+    }
+    setSendingEmail(true);
+    setMessage('');
+    const result = await sendAdminEmailCode(user.email, 'admin_reset_password');
+    setSendingEmail(false);
+    setMessage(result.success ? '改密验证码已发送到当前邮箱' : result.error || '邮箱验证码发送失败');
+  };
+
+  const submitPasswordChange = async () => {
+    if (!emailCode.trim() || !newPassword.trim()) {
+      setMessage('请填写邮箱验证码和新密码');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setMessage('两次输入的新密码不一致');
+      return;
+    }
+    setChangingPassword(true);
+    setMessage('');
+    const result = await changePasswordWithEmail(emailCode, newPassword);
+    setChangingPassword(false);
+    if (result.success) {
+      setMessage('密码已修改');
+      setEmailCode('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } else {
+      setMessage(result.error || '修改密码失败');
+    }
+  };
+
   return (
     <div className="relative">
       <button
@@ -259,16 +299,44 @@ function AccountPhoneBinder() {
             : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
         }`}
       >
-        {user?.phone ? `${user.displayName || '管理员'} · ${user.phone}` : '绑定手机'}
+        {user?.phone ? `${user.displayName || '管理员'} · ${user.phone}` : '账号安全'}
       </button>
 
       {open && (
-        <div className="absolute right-0 top-10 z-20 w-80 rounded-xl border border-gray-200 bg-white shadow-xl p-4 text-left">
-          <div className="mb-3">
-            <p className="text-sm font-semibold text-gray-800">绑定后台手机号</p>
-            <p className="text-xs text-gray-500 mt-1">绑定后可用验证码直接进入店家后台。</p>
-          </div>
+        <div className="absolute right-0 top-10 z-20 w-96 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white shadow-xl p-4 text-left">
           <div className="space-y-2">
+            <div className="pb-3 border-b border-gray-100">
+              <p className="text-sm font-semibold text-gray-800">账号安全</p>
+              <p className="text-xs text-gray-500 mt-1">{user?.email || '未设置邮箱'}{user?.phone ? ` · ${user.phone}` : ''}</p>
+            </div>
+
+            <div className="pt-2">
+              <p className="text-sm font-semibold text-gray-800">验证邮箱修改密码</p>
+              <p className="text-xs text-gray-500 mt-1">验证码会发送到当前登录邮箱，验证后直接更新后台密码。</p>
+            </div>
+            <div className="flex gap-2">
+              <input value={emailCode} onChange={event => setEmailCode(event.target.value)} placeholder="邮箱验证码"
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+              <button type="button" onClick={sendEmailPasswordCode} disabled={sendingEmail || !user?.email}
+                className="px-3 py-2 rounded-lg bg-gray-900 text-white text-sm disabled:opacity-40">
+                {sendingEmail ? '发送中' : '发码'}
+              </button>
+            </div>
+            <input type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} placeholder="新密码，至少 8 位"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+            <input type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} placeholder="确认新密码"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+            <div className="flex justify-end">
+              <button type="button" onClick={submitPasswordChange} disabled={changingPassword}
+                className="px-3 py-1.5 text-sm text-white bg-indigo-500 hover:bg-indigo-600 disabled:opacity-40 rounded-lg">
+                {changingPassword ? '修改中' : '确认修改密码'}
+              </button>
+            </div>
+
+            <div className="pt-3 border-t border-gray-100">
+              <p className="text-sm font-semibold text-gray-800">绑定后台手机号</p>
+              <p className="text-xs text-gray-500 mt-1">绑定后可用验证码直接进入店家后台。</p>
+            </div>
             <input value={phone} onChange={event => setPhone(event.target.value)} placeholder="手机号"
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
             <div className="flex gap-2">
