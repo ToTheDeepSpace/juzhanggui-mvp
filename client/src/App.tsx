@@ -10,7 +10,7 @@ import DemoPage from './pages/DemoPage';
 import StorePortal from './pages/StorePortal';
 import DmDashboard from './pages/DmDashboard';
 import PlayerJoinSchedulePage from './pages/PlayerJoinSchedulePage';
-import { BusinessLicensePage, ContactPage, PrivacyPage, TermsPage } from './pages/LegalPages';
+import { AiReadablePage, BusinessLicensePage, ContactPage, PrivacyPage, TermsPage } from './pages/LegalPages';
 
 const LINGQI_SITE_URL = (import.meta.env.VITE_LINGQI_SITE_URL || 'https://lingqi.jusichen.com').replace(/\/$/, '');
 
@@ -87,6 +87,7 @@ function App() {
           <Route path="/privacy" element={<PrivacyPage />} />
           <Route path="/contact" element={<ContactPage />} />
           <Route path="/business-license" element={<BusinessLicensePage />} />
+          <Route path="/ai-readable" element={<AiReadablePage />} />
 
           {/* 用户身份统一放到灵契 */}
           <Route path="/player/login" element={<ExternalRedirect to={`${LINGQI_SITE_URL}/login?from=jusichen&role=player`} label="灵契玩家页" />} />

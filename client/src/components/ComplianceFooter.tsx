@@ -26,7 +26,7 @@ export default function ComplianceFooter({ variant = 'light' }: ComplianceFooter
           <Link to="/contact" className={`${link} transition-colors`}>联系我们</Link>
           <Link to="/business-license" className={`${link} transition-colors`}>经营主体信息</Link>
           <a href="https://lingqi.jusichen.com" target="_blank" rel="noopener noreferrer" className={`${link} transition-colors`}>灵契用户端</a>
-          <a href="/ai/jusichen-overview.html" className={`${link} transition-colors`}>AI 可读说明</a>
+          <Link to="/ai-readable" className={`${link} transition-colors`}>AI 可读说明</Link>
         </div>
 
         <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs">
