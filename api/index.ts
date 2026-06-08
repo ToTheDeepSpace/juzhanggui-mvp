@@ -79,7 +79,7 @@ const PUBLIC_PATHS = [
   '/api/dm/login',
   '/api/dm/send-code',
 ];
-const PUBLIC_SUFFIXES = ['/public', '/checkin', '/evaluate', '/evaluation', '/evaluations', '/evaluation-stats'];
+const PUBLIC_SUFFIXES = ['/public', '/checkin', '/evaluate', '/evaluation-stats'];
 
 function isPublicPath(path: string): boolean {
   if (PUBLIC_PATHS.includes(path)) return true;
@@ -2215,6 +2215,77 @@ app.get('/api/scripts/:id/evaluation-stats', async (req: any, res: any) => {
     const ratings = (data || []).map((r: any) => r.rating);
     if (!ratings.length) return res.json(ok({ total: 0, avgRating: null, minRating: null, maxRating: null }));
     res.json(ok({ total: ratings.length, avgRating: Math.round((ratings.reduce((a: number, b: number) => a + b, 0) / ratings.length) * 10) / 10, minRating: Math.min(...ratings), maxRating: Math.max(...ratings) }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.get('/api/evaluations', async (req: any, res: any) => {
+  try {
+    const tenantId = currentTenantId(req);
+    const { data: schedules, error: scheduleErr } = await supabase.from('schedules')
+      .select('id, script_id, room_id, scheduled_date, start_time, end_time, status')
+      .eq('tenant_id', tenantId)
+      .order('scheduled_date', { ascending: false })
+      .limit(500);
+    if (scheduleErr) throw scheduleErr;
+    const scheduleRows = schedules || [];
+    if (!scheduleRows.length) return res.json(ok({ evaluations: [], stats: { total: 0, avgRating: null }, scriptStats: [] }));
+
+    const scheduleIds = scheduleRows.map((schedule: any) => schedule.id);
+    const scriptIds = Array.from(new Set(scheduleRows.map((schedule: any) => cleanText(schedule.script_id, 80)).filter(Boolean)));
+    const roomIds = Array.from(new Set(scheduleRows.map((schedule: any) => cleanText(schedule.room_id, 80)).filter(Boolean)));
+
+    const [{ data: evaluations, error: evalErr }, { data: scripts, error: scriptErr }, { data: rooms, error: roomErr }] = await Promise.all([
+      supabase.from('evaluations').select('*').in('schedule_id', scheduleIds).order('created_at', { ascending: false }).limit(500),
+      scriptIds.length ? supabase.from('scripts').select('id,name').in('id', scriptIds) : Promise.resolve({ data: [], error: null } as any),
+      roomIds.length ? supabase.from('rooms').select('id,name').in('id', roomIds) : Promise.resolve({ data: [], error: null } as any),
+    ]);
+    if (evalErr) throw evalErr;
+    if (scriptErr) throw scriptErr;
+    if (roomErr) throw roomErr;
+
+    const schedulesById = new Map(scheduleRows.map((schedule: any) => [schedule.id, schedule]));
+    const scriptsById = new Map((scripts || []).map((script: any) => [script.id, script]));
+    const roomsById = new Map((rooms || []).map((room: any) => [room.id, room]));
+    const rows = (evaluations || []).map((item: any) => {
+      const schedule = schedulesById.get(item.schedule_id) as any;
+      const script = schedule ? scriptsById.get(schedule.script_id) as any : null;
+      const room = schedule ? roomsById.get(schedule.room_id) as any : null;
+      return {
+        ...item,
+        schedule: schedule ? {
+          id: schedule.id,
+          startTime: `${schedule.scheduled_date}T${schedule.start_time}`,
+          endTime: `${schedule.scheduled_date}T${schedule.end_time}`,
+          status: schedule.status,
+          scriptName: script?.name || '未知剧本',
+          roomName: room?.name || null,
+        } : null,
+      };
+    });
+
+    const ratings = rows.map((item: any) => Number(item.rating || 0)).filter((rating: number) => rating > 0);
+    const byScript = new Map<string, { scriptName: string; ratings: number[]; count: number }>();
+    for (const item of rows) {
+      const key = item.schedule?.scriptName || '未知剧本';
+      const current = byScript.get(key) || { scriptName: key, ratings: [], count: 0 };
+      current.count += 1;
+      if (Number(item.rating) > 0) current.ratings.push(Number(item.rating));
+      byScript.set(key, current);
+    }
+    const scriptStats = Array.from(byScript.values()).map(item => ({
+      scriptName: item.scriptName,
+      count: item.count,
+      avgRating: item.ratings.length ? Math.round((item.ratings.reduce((a, b) => a + b, 0) / item.ratings.length) * 10) / 10 : null,
+    })).sort((a, b) => b.count - a.count);
+
+    res.json(ok({
+      evaluations: rows,
+      stats: {
+        total: rows.length,
+        avgRating: ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10 : null,
+      },
+      scriptStats,
+    }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 

@@ -8,12 +8,13 @@ import ActorManager from './ActorManager';
 import ScriptManager from './ScriptManager';
 import ScheduleCalendar from './ScheduleCalendar';
 import CustomerManager from './CustomerManager';
+import EvaluationManager from './EvaluationManager';
 import ConflictResolutionPage from '../pages/ConflictResolutionPage';
 import StoreManager from './StoreManager';
 import { useApi } from '../hooks/useApi';
 import type { StoreRecord } from '../types';
 
-type Tab = 'platform' | 'stores' | 'adminUsers' | 'templates' | 'auditLogs' | 'rooms' | 'actors' | 'scripts' | 'schedule' | 'customers' | 'conflicts';
+type Tab = 'platform' | 'stores' | 'adminUsers' | 'templates' | 'auditLogs' | 'rooms' | 'actors' | 'scripts' | 'schedule' | 'evaluations' | 'customers' | 'conflicts';
 
 const basePath = '/store/manage';
 const storeTabs = [
@@ -22,6 +23,7 @@ const storeTabs = [
   { id: 'rooms' as Tab, label: '🚪 房间管理', color: 'bg-green-500', path: `${basePath}/rooms` },
   { id: 'actors' as Tab, label: '🎭 卡司管理', color: 'bg-purple-500', path: `${basePath}/actors` },
   { id: 'scripts' as Tab, label: '📖 剧本管理', color: 'bg-orange-500', path: `${basePath}/scripts` },
+  { id: 'evaluations' as Tab, label: '⭐ 评价反馈', color: 'bg-amber-500', path: `${basePath}/evaluations` },
   { id: 'customers' as Tab, label: '⭐ 会员管理', color: 'bg-yellow-500', path: `${basePath}/customers` },
   { id: 'conflicts' as Tab, label: '⚖️ 矛盾调解', color: 'bg-red-500', path: `${basePath}/conflicts` },
 ];
@@ -38,6 +40,13 @@ export default function MainLayout() {
       { id: 'adminUsers' as Tab, label: '👤 账号管理', color: 'bg-cyan-600', path: `${basePath}/admin-users` },
       { id: 'templates' as Tab, label: '📚 模板中心', color: 'bg-emerald-600', path: `${basePath}/templates` },
       { id: 'auditLogs' as Tab, label: '🧾 操作日志', color: 'bg-amber-600', path: `${basePath}/audit-logs` },
+      { id: 'schedule' as Tab, label: '📅 我的排期', color: 'bg-blue-500', path: `${basePath}/schedule` },
+      { id: 'rooms' as Tab, label: '🚪 我的房间', color: 'bg-green-500', path: `${basePath}/rooms` },
+      { id: 'actors' as Tab, label: '🎭 我的卡司', color: 'bg-purple-500', path: `${basePath}/actors` },
+      { id: 'scripts' as Tab, label: '📖 我的剧本', color: 'bg-orange-500', path: `${basePath}/scripts` },
+      { id: 'evaluations' as Tab, label: '⭐ 我的评价', color: 'bg-amber-500', path: `${basePath}/evaluations` },
+      { id: 'customers' as Tab, label: '⭐ 我的会员', color: 'bg-yellow-500', path: `${basePath}/customers` },
+      { id: 'conflicts' as Tab, label: '⚖️ 我的调解', color: 'bg-red-500', path: `${basePath}/conflicts` },
     ]
     : storeTabs;
   
@@ -101,12 +110,13 @@ export default function MainLayout() {
           {isSuperAdmin && <Route path="admin-users" element={<AdminUsersPanel />} />}
           {isSuperAdmin && <Route path="templates" element={<TemplateCenterPanel />} />}
           {isSuperAdmin && <Route path="audit-logs" element={<AuditLogsPanel />} />}
-          {!isSuperAdmin && <Route path="rooms" element={<RoomManager />} />}
-          {!isSuperAdmin && <Route path="actors" element={<ActorManager />} />}
-          {!isSuperAdmin && <Route path="scripts" element={<ScriptManager />} />}
-          {!isSuperAdmin && <Route path="schedule" element={<ScheduleCalendar />} />}
-          {!isSuperAdmin && <Route path="customers" element={<CustomerManager />} />}
-          {!isSuperAdmin && <Route path="conflicts" element={<ConflictResolutionPage />} />}
+          <Route path="rooms" element={<RoomManager />} />
+          <Route path="actors" element={<ActorManager />} />
+          <Route path="scripts" element={<ScriptManager />} />
+          <Route path="schedule" element={<ScheduleCalendar />} />
+          <Route path="evaluations" element={<EvaluationManager />} />
+          <Route path="customers" element={<CustomerManager />} />
+          <Route path="conflicts" element={<ConflictResolutionPage />} />
           <Route path="" element={<Navigate to={isSuperAdmin ? `${basePath}/platform` : `${basePath}/schedule`} replace />} />
         </Routes>
       </main>

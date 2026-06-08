@@ -25,7 +25,7 @@ export default function EvaluationPage() {
 
   useEffect(() => {
     if (!scheduleId) return;
-    get<ScheduleInfo>(`/schedules/${scheduleId}`).then(res => {
+    get<ScheduleInfo>(`/schedules/${scheduleId}/public`).then(res => {
       if (res.success && res.data) setSchedule(res.data);
     });
   }, [scheduleId]);
