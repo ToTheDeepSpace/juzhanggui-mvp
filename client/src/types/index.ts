@@ -35,6 +35,7 @@ export interface StoreRecord {
   city?: string | null;
   address?: string | null;
   contact?: string | null;
+  default_deposit_amount?: number;
   status: 'active' | 'paused' | 'archived';
   created_at?: string;
 }

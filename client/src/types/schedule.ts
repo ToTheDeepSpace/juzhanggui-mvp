@@ -17,6 +17,7 @@ export interface CheckinInfo {
   deposit_status?: 'unpaid' | 'paid' | 'waived' | 'refunded';
   deposit_amount?: number;
   deposit_payment_method?: string | null;
+  deposit_settlement_mode?: 'deduct_final' | 'refund_after_full' | 'custom';
   final_amount?: number;
   final_payment_method?: string | null;
   settlement_status?: 'unsettled' | 'settled' | 'waived';

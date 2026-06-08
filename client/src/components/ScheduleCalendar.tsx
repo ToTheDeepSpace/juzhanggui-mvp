@@ -152,6 +152,7 @@ export default function ScheduleCalendar() {
       deposit_status: item.deposit_status || 'unpaid',
       deposit_amount: Math.round(Number(item.deposit_amount || 0) / 100),
       deposit_payment_method: item.deposit_payment_method || '',
+      deposit_settlement_mode: item.deposit_settlement_mode || 'deduct_final',
       final_amount: Math.round(Number(item.final_amount || 0) / 100),
       final_payment_method: item.final_payment_method || '',
       settlement_status: item.settlement_status || 'unsettled',
@@ -164,10 +165,12 @@ export default function ScheduleCalendar() {
     if (!financeSchedule) return;
     setFinanceSaving(true);
     for (const row of financeRows) {
+      const isRefundAfterFull = financeMode === 'settlement' && row.deposit_settlement_mode === 'refund_after_full' && row.settlement_status === 'settled';
       await put(`/schedules/${financeSchedule.id}/checkins/${row.id}/finance`, {
-        depositStatus: row.deposit_status,
+        depositStatus: isRefundAfterFull ? 'refunded' : row.deposit_status,
         depositAmount: Math.round(Number(row.deposit_amount || 0) * 100),
         depositPaymentMethod: row.deposit_payment_method || null,
+        depositSettlementMode: row.deposit_settlement_mode || 'deduct_final',
         finalAmount: Math.round(Number(row.final_amount || 0) * 100),
         finalPaymentMethod: row.final_payment_method || null,
         settlementStatus: row.settlement_status,
@@ -179,6 +182,14 @@ export default function ScheduleCalendar() {
       setShowFinanceModal(false);
     }
     setFinanceSaving(false);
+    loadData();
+  };
+
+  const lockScheduleWithDeposit = async (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('确认收定金并锁车？系统会按店家默认定金金额，给本车未收定金的玩家标记为已收。')) return;
+    const res = await post(`/schedules/${schedule.id}/lock`, { lockReason: 'deposit_guaranteed' });
+    if (!res.success) alert(res.error || '锁车失败');
     loadData();
   };
 
@@ -338,7 +349,7 @@ export default function ScheduleCalendar() {
         <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
           <span>人数 {summary.boardedCount}/{summary.targetCount || '-'}</span>
           <span>定金 {summary.depositReady}/{summary.depositRequired}</span>
-          <span>实收 {formatMoney(summary.finalTotal)}</span>
+          <span>结算收款 {formatMoney(summary.finalTotal)}</span>
           {summary.avgRating !== null && <span>评分 {summary.avgRating}</span>}
         </div>
       </div>
@@ -408,12 +419,11 @@ export default function ScheduleCalendar() {
           <td className="px-4 py-3">
             <div className="flex flex-wrap gap-2">
               <button onClick={(e) => { e.stopPropagation(); openEditModal(s); }} className="text-xs text-indigo-600 hover:underline">编辑</button>
-              <button onClick={(e) => openFinanceModal(s, e, 'deposit')} className="text-xs text-amber-700 hover:underline">定金</button>
               {pendingRequestCount > 0 && (
                 <button onClick={(e) => openQRModal(s, e)} className="text-xs text-amber-600 hover:underline font-medium">处理申请</button>
               )}
               {s.status === 'scheduled' && (
-                <button onClick={(e) => { e.stopPropagation(); if (confirm('确认锁车？可在人未满但定金/担保足够时锁车。')) { post(`/schedules/${s.id}/lock`, { lockReason: 'deposit_guaranteed' }).then(() => loadData()); } }} className="text-xs text-orange-600 hover:underline font-medium">锁车</button>
+                <button onClick={(e) => lockScheduleWithDeposit(s, e)} className="text-xs text-orange-600 hover:underline font-medium">收定金并锁车</button>
               )}
               {s.status === 'locked' && (
                 <button onClick={(e) => openStartModal(s, e)} className="text-xs text-indigo-600 hover:underline font-medium">确认排班</button>
@@ -684,7 +694,7 @@ export default function ScheduleCalendar() {
                 <p className="mt-1 text-xl font-semibold text-amber-900">{financeSchedule.progress_summary?.depositReady || 0}/{financeSchedule.progress_summary?.depositRequired || 0}</p>
               </div>
               <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3">
-                <p className="text-xs text-indigo-700">本车实收</p>
+                <p className="text-xs text-indigo-700">结算收款</p>
                 <p className="mt-1 text-xl font-semibold text-indigo-900">¥{financeRows.reduce((sum, r) => sum + Number(r.final_amount || 0), 0)}</p>
               </div>
               <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3">
@@ -703,7 +713,7 @@ export default function ScheduleCalendar() {
                       <div>
                         <p className="font-medium text-slate-900">{row.guest_name || '未命名'} <span className="text-sm font-normal text-slate-400">{row.role || '-'}</span></p>
                         <p className="mt-1 text-xs text-slate-400">
-                          定金 {row.deposit_status === 'paid' ? '已收' : row.deposit_status === 'waived' ? '免定金' : row.deposit_status === 'refunded' ? '已退' : '未收'} · 结算 {row.settlement_status === 'settled' ? '已结' : '待结'}
+                          定金 {row.deposit_status === 'paid' ? `已收 ¥${row.deposit_amount || 0}` : row.deposit_status === 'waived' ? '免定金' : row.deposit_status === 'refunded' ? '已退' : '未收'} · 结算 {row.settlement_status === 'settled' ? '已结' : '待结'}
                         </p>
                       </div>
                       {financeMode === 'settlement' && (
@@ -746,16 +756,35 @@ export default function ScheduleCalendar() {
                         />
                       </div>
                     ) : (
-                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[120px_1fr]">
-                        <input
-                          type="number"
-                          min="0"
-                          value={row.final_amount}
-                          onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, final_amount: e.target.value } : r))}
-                          className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                          placeholder="实收"
-                        />
-                        <div className="grid grid-cols-4 gap-2 md:grid-cols-7">
+                      <div className="mt-3 space-y-3">
+                        <div className="grid grid-cols-2 gap-2">
+                          {[
+                            ['deduct_final', '定金抵尾款'],
+                            ['refund_after_full', '全款后退定金'],
+                          ].map(([value, label]) => (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_settlement_mode: value } : r))}
+                              className={`rounded-lg px-3 py-2 text-xs font-medium ${row.deposit_settlement_mode === value ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-[140px_1fr]">
+                          <div>
+                            <label className="mb-1 block text-xs text-slate-500">{row.deposit_settlement_mode === 'refund_after_full' ? '全款实收' : '补齐尾款'}</label>
+                            <input
+                              type="number"
+                              min="0"
+                              value={row.final_amount}
+                              onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, final_amount: e.target.value } : r))}
+                              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                              placeholder={row.deposit_settlement_mode === 'refund_after_full' ? '全款' : '尾款'}
+                            />
+                          </div>
+                          <div className="grid grid-cols-4 gap-2 md:grid-cols-7">
                           {[
                             ['card', '扣卡'],
                             ['cash', '现金'],
@@ -774,7 +803,13 @@ export default function ScheduleCalendar() {
                               {label}
                             </button>
                           ))}
+                          </div>
                         </div>
+                        <p className="text-xs text-slate-400">
+                          {row.deposit_settlement_mode === 'refund_after_full'
+                            ? '先按全款完成结算，标记结清后这笔定金会记录为已退。'
+                            : '默认用已收定金抵扣总价，这里只填补齐的尾款。'}
+                        </p>
                       </div>
                     )}
                   </div>

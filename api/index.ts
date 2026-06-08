@@ -323,6 +323,13 @@ function buildScheduleProgress(schedule: any, checkins: any[], playerRoles: any[
   };
 }
 
+function depositSettlementMode(input: unknown): 'deduct_final' | 'refund_after_full' | 'custom' {
+  const value = cleanText(input, 40);
+  if (value === 'refund_after_full') return 'refund_after_full';
+  if (value === 'custom') return 'custom';
+  return 'deduct_final';
+}
+
 function monthKey(date = new Date()) {
   return date.toISOString().slice(0, 7);
 }
@@ -1494,10 +1501,26 @@ app.post('/api/stores', async (req: any, res: any) => {
       city: city ? String(city).trim() : null,
       address: address ? String(address).trim() : null,
       contact: contact ? String(contact).trim() : null,
+      default_deposit_amount: moneyCents(req.body?.defaultDepositAmount ?? 5000),
       status: 'active',
     }).select().single();
     if (error) throw error;
     await logPlatformAction(req, 'store_create', { type: 'store', id: data.id, label: data.name }, { city: data.city, address: data.address });
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.put('/api/stores/:id/settings', async (req: any, res: any) => {
+  try {
+    const tenantId = currentTenantId(req);
+    const storeId = cleanText(req.params.id, 80);
+    if (!storeId) return res.status(400).json(err(new Error('店家不存在')));
+    if (!isSuperAdminReq(req) && storeId !== tenantId) return res.status(403).json(err(new Error('不能修改其他店家的设置')));
+    const fields: any = {};
+    if (req.body.defaultDepositAmount !== undefined) fields.default_deposit_amount = moneyCents(req.body.defaultDepositAmount);
+    if (!Object.keys(fields).length) return res.status(400).json(err(new Error('没有可保存的设置')));
+    const { data, error } = await supabase.from('jzg_stores').update(fields).eq('id', storeId).select().single();
+    if (error) throw error;
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -2015,12 +2038,14 @@ app.put('/api/schedules/:id/checkins/:checkinId/finance', async (req: any, res: 
     if (req.body.depositAmount !== undefined) fields.deposit_amount = moneyCents(req.body.depositAmount);
     if (req.body.depositPaymentMethod !== undefined) fields.deposit_payment_method = cleanText(req.body.depositPaymentMethod, 40) || null;
     if (req.body.depositNote !== undefined) fields.deposit_note = cleanText(req.body.depositNote, 300) || null;
+    if (req.body.depositSettlementMode !== undefined) fields.deposit_settlement_mode = depositSettlementMode(req.body.depositSettlementMode);
     if (req.body.customerId !== undefined) fields.customer_id = cleanText(req.body.customerId, 80) || null;
     if (req.body.finalAmount !== undefined) fields.final_amount = moneyCents(req.body.finalAmount);
     if (req.body.finalPaymentMethod !== undefined) fields.final_payment_method = cleanText(req.body.finalPaymentMethod, 40) || null;
     if (req.body.settlementStatus !== undefined) fields.settlement_status = cleanText(req.body.settlementStatus, 30) || 'unsettled';
     if (req.body.settlementNote !== undefined) fields.settlement_note = cleanText(req.body.settlementNote, 300) || null;
     if (fields.deposit_status === 'paid') fields.deposit_paid_at = new Date().toISOString();
+    if (fields.deposit_status === 'refunded') fields.deposit_note = fields.deposit_note || '全款结算后退定金';
     if (fields.settlement_status === 'settled') fields.final_paid_at = new Date().toISOString();
     const { data, error } = await supabase.from('checkins')
       .update(fields)
@@ -2067,6 +2092,20 @@ app.post('/api/schedules/:id/lock', async (req: any, res: any) => {
       .maybeSingle();
     if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
     if (['cancelled', 'bombed', 'completed'].includes(schedule.status)) return res.status(400).json(err(new Error('当前状态不能锁车')));
+    const { data: store } = await supabase.from('jzg_stores').select('default_deposit_amount').eq('id', tenantId).maybeSingle();
+    const defaultDepositAmount = moneyCents(req.body?.depositAmount ?? store?.default_deposit_amount ?? 5000);
+    const depositPaymentMethod = cleanText(req.body?.depositPaymentMethod, 40) || 'other';
+    const { data: checkins } = await supabase.from('checkins').select('id, deposit_status, deposit_amount').eq('schedule_id', schedule.id);
+    for (const item of checkins || []) {
+      if (['paid', 'waived', 'refunded'].includes(item.deposit_status || '')) continue;
+      await supabase.from('checkins').update({
+        deposit_status: 'paid',
+        deposit_amount: Number(item.deposit_amount || 0) > 0 ? item.deposit_amount : defaultDepositAmount,
+        deposit_payment_method: depositPaymentMethod,
+        deposit_paid_at: new Date().toISOString(),
+        deposit_note: '锁车时收定金',
+      }).eq('id', item.id).eq('schedule_id', schedule.id);
+    }
     const { data, error } = await supabase.from('schedules')
       .update({
         status: 'locked',
