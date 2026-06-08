@@ -1,4 +1,10 @@
-import { Pool } from 'pg';
+import pg from 'pg';
+
+const { Pool, types } = pg;
+
+types.setTypeParser(1082, (value) => value); // date
+types.setTypeParser(1083, (value) => value); // time
+types.setTypeParser(1266, (value) => value); // timetz
 
 type FilterOp = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'ilike' | 'in' | 'is' | 'not_eq' | 'not_is';
 type Filter = { column: string; op: FilterOp; value: any };
