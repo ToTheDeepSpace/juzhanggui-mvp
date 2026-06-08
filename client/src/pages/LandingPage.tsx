@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import Logo from '../components/Logo';
+import ComplianceFooter from '../components/ComplianceFooter';
 
 const LINGQI_SITE_URL = (import.meta.env.VITE_LINGQI_SITE_URL || 'https://lingqi.jusichen.com').replace(/\/$/, '');
 
@@ -168,26 +169,7 @@ export default function LandingPage() {
         </p>
       </section>
 
-      {/* 底部 */}
-      <footer className="max-w-6xl mx-auto px-6 py-12 border-t border-white/10 text-center text-sm text-gray-500">
-        <p className="mb-2">剧司辰 · 剧本杀行业数字化运营平台</p>
-        <p className="mb-4">剧司辰负责店家排期、经营数据与 DM 内部工作台，灵契负责玩家、DM 与社区身份沉淀</p>
-        <a
-          href="https://lingqi.jusichen.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-indigo-400 hover:text-indigo-300 transition-colors font-medium"
-        >
-          灵契 · 用户与内容身份 →
-        </a>
-        <span className="mx-3 text-gray-700">·</span>
-        <a
-          href="/ai/jusichen-overview.html"
-          className="text-indigo-400 hover:text-indigo-300 transition-colors font-medium"
-        >
-          AI 可读说明 →
-        </a>
-      </footer>
+      <ComplianceFooter variant="dark" />
     </div>
   );
 }

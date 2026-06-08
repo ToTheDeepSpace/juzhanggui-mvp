@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-
 import { useAuth } from '../contexts/AuthContext';
 import Logo from './Logo';
 import NotificationBell from './NotificationBell';
+import ComplianceFooter from './ComplianceFooter';
 import RoomManager from './RoomManager';
 import ActorManager from './ActorManager';
 import ScriptManager from './ScriptManager';
@@ -156,16 +157,7 @@ export default function MainLayout() {
         </Routes>
       </main>
 
-      <footer className="text-center py-6 border-t border-gray-200 text-sm text-gray-400">
-        <a
-          href="https://lingqi.jusichen.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-indigo-500 hover:text-indigo-600 transition-colors font-medium"
-        >
-          灵契 · 创作者数字名片 →
-        </a>
-      </footer>
+      <ComplianceFooter />
     </div>
   );
 }
