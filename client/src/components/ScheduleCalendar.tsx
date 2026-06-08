@@ -527,6 +527,7 @@ export default function ScheduleCalendar() {
         visible={showQRModal}
         onClose={() => setShowQRModal(false)}
         onKickGuest={(name, role) => qrSchedule && handleKickGuest(qrSchedule.id, name, role)}
+        onChanged={loadData}
       />
 
       <ConfirmScheduleModal

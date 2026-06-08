@@ -69,6 +69,8 @@ const PUBLIC_PATHS = [
   '/api/player/auth/config',
   '/api/player/login',
   '/api/player/send-code',
+  '/api/player/auth/config',
+  '/api/player/join-schedules',
   '/api/player/verify-code',
   '/api/player/wechat/url',
   '/api/player/wechat/start',
@@ -1684,18 +1686,24 @@ app.get('/api/schedules/:id', async (req: any, res: any) => {
 });
 app.get('/api/schedules/:id/public', async (req: any, res: any) => {
   try {
-    const { data: s } = await supabase.from('schedules').select('*, scripts(name)').eq('id', req.params.id).single();
+    const { data: s } = await supabase.from('schedules').select('*, scripts(name), rooms(name)').eq('id', req.params.id).single();
     if (!s) return res.status(404).json(err(new Error('不存在')));
+    const { data: store } = await supabase.from('jzg_stores').select('name, city').eq('id', s.tenant_id).maybeSingle();
     const { data: roles } = await supabase.from('script_roles').select('*').eq('script_id', s.script_id).order('start_offset');
     // 获取玩家可选角色（含性别）
     const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
     // 获取已选角色（含性别）
     const { data: checkins } = await supabase.from('checkins').select('role').eq('schedule_id', req.params.id).not('role', 'is', null);
+    const { count: pendingRequestCount } = await supabase.from('jzg_carpool_join_requests')
+      .select('*', { count: 'exact', head: true })
+      .eq('schedule_id', req.params.id)
+      .eq('status', 'pending');
     res.json(ok({
-      ...s, script_name: s.scripts?.name, roles: roles || [],
+      ...s, script_name: s.scripts?.name, room_name: s.rooms?.name, store_name: store?.name, store_city: store?.city, roles: roles || [],
       player_roles: (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' })),
       taken_roles: (checkins || []).map((c: any) => c.role),
       checkins: (checkins || []).map((c: any) => ({ role: c.role, gender: '' })),
+      pending_request_count: pendingRequestCount || 0,
       start_time: `${s.scheduled_date}T${s.start_time}`,
       end_time: `${s.scheduled_date}T${s.end_time}`,
     }));
@@ -1890,6 +1898,151 @@ app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
       }
     }
     res.json(ok({ ...data, full }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.get('/api/schedules/:id/join-requests', async (req: any, res: any) => {
+  try {
+    const { data: schedule, error: scheduleErr } = await supabase.from('schedules')
+      .select('id')
+      .eq('id', req.params.id)
+      .eq('tenant_id', currentTenantId(req))
+      .maybeSingle();
+    if (scheduleErr) throw scheduleErr;
+    if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
+    const { data, error } = await supabase.from('jzg_carpool_join_requests')
+      .select('*')
+      .eq('schedule_id', req.params.id)
+      .order('created_at', { ascending: false });
+    if (error && String(error.message || '').includes('jzg_carpool_join_requests')) return res.json(ok([]));
+    if (error) throw error;
+    res.json(ok(data || []));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.put('/api/schedules/:id/join-requests/:requestId', async (req: any, res: any) => {
+  try {
+    const action = cleanText(req.body?.action, 20);
+    const reviewNote = cleanText(req.body?.reviewNote, 300) || null;
+    if (!['confirm', 'reject'].includes(action)) return res.status(400).json(err(new Error('操作无效')));
+    const { data: schedule, error: scheduleErr } = await supabase.from('schedules')
+      .select('id, tenant_id, script_id')
+      .eq('id', req.params.id)
+      .eq('tenant_id', currentTenantId(req))
+      .maybeSingle();
+    if (scheduleErr) throw scheduleErr;
+    if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
+    const { data: request, error: requestErr } = await supabase.from('jzg_carpool_join_requests')
+      .select('*')
+      .eq('id', req.params.requestId)
+      .eq('schedule_id', req.params.id)
+      .maybeSingle();
+    if (requestErr) throw requestErr;
+    if (!request) return res.status(404).json(err(new Error('申请不存在')));
+    if (request.status !== 'pending') return res.status(400).json(err(new Error('该申请已处理')));
+
+    if (action === 'reject') {
+      const { data, error } = await supabase.from('jzg_carpool_join_requests')
+        .update({
+          status: 'rejected',
+          reviewed_by: req.user?.adminUserId || null,
+          reviewed_at: new Date().toISOString(),
+          review_note: reviewNote,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', request.id)
+        .select()
+        .single();
+      if (error) throw error;
+      return res.json(ok(data));
+    }
+
+    const { data: checkin, error: checkinErr } = await supabase.from('checkins').insert({
+      schedule_id: req.params.id,
+      guest_name: request.display_name,
+      guest_phone: request.phone_hash || null,
+      role: request.role_name || null,
+    }).select().single();
+    if (checkinErr) throw checkinErr;
+
+    const { data, error } = await supabase.from('jzg_carpool_join_requests')
+      .update({
+        status: 'confirmed',
+        checkin_id: checkin.id,
+        reviewed_by: req.user?.adminUserId || null,
+        reviewed_at: new Date().toISOString(),
+        review_note: reviewNote,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', request.id)
+      .select()
+      .single();
+    if (error) throw error;
+
+    const { data: allRoles } = await supabase.from('script_player_roles').select('id').eq('script_id', schedule.script_id);
+    const { count } = await supabase.from('checkins').select('*', { count: 'exact', head: true }).eq('schedule_id', req.params.id);
+    if (allRoles && count !== null && count >= allRoles.length) {
+      await supabase.from('schedules').update({ status: 'scheduled' }).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
+    }
+
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/player/join-schedules/:id/requests', async (req: any, res: any) => {
+  try {
+    if (!req.user || req.user.role !== 'player') return res.status(403).json(err(new Error('请先登录玩家账号')));
+    const { data: player, error: playerErr } = await supabase.from('players')
+      .select('id, display_name, phone_hash')
+      .eq('id', req.user.playerId)
+      .maybeSingle();
+    if (playerErr) throw playerErr;
+    if (!player) return res.status(401).json(err(new Error('玩家账号不存在，请重新登录')));
+
+    const { data: schedule, error: scheduleErr } = await supabase.from('schedules')
+      .select('id, tenant_id, script_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (scheduleErr) throw scheduleErr;
+    if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
+
+    const roleName = cleanText(req.body?.roleName, 80) || null;
+    if (roleName) {
+      const { data: role } = await supabase.from('script_player_roles')
+        .select('id')
+        .eq('script_id', schedule.script_id)
+        .eq('role_name', roleName)
+        .maybeSingle();
+      if (!role) return res.status(400).json(err(new Error('这个角色不在当前排期可选范围内')));
+      const { data: taken } = await supabase.from('checkins')
+        .select('id')
+        .eq('schedule_id', schedule.id)
+        .eq('role', roleName)
+        .maybeSingle();
+      if (taken) return res.status(409).json(err(new Error('这个角色已经有人上车了')));
+    }
+
+    const { data: existing } = await supabase.from('jzg_carpool_join_requests')
+      .select('*')
+      .eq('schedule_id', schedule.id)
+      .eq('player_id', player.id)
+      .in('status', ['pending', 'confirmed'])
+      .maybeSingle();
+    if (existing) return res.json(ok({ request: existing, existing: true }));
+
+    const { data, error } = await supabase.from('jzg_carpool_join_requests').insert({
+      tenant_id: schedule.tenant_id,
+      schedule_id: schedule.id,
+      player_id: player.id,
+      display_name: player.display_name || '玩家',
+      phone_hash: player.phone_hash || null,
+      role_name: roleName,
+      note: cleanText(req.body?.note, 500) || null,
+      status: 'pending',
+      source: cleanText(req.body?.source, 40) || 'qr_join',
+    }).select().single();
+    if (error) throw error;
+    res.json(ok({ request: data, existing: false }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 

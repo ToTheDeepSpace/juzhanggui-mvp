@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { format, parseISO } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { QRCodeSVG } from 'qrcode.react';
 import { CHECKIN_BASE_URL } from '../config';
 import { useScheduleCheckins } from '../hooks/useScheduleCheckins';
 import CheckInRoles from './CheckInRoles';
+import { useApi } from '../hooks/useApi';
 
 interface RoleItem {
   name: string;
@@ -15,22 +16,72 @@ interface QRCodeModalProps {
   visible: boolean;
   onClose: () => void;
   onKickGuest?: (guestName: string, role: string) => void;
+  onChanged?: () => void;
 }
 
-type Tab = 'checkin' | 'evaluate';
+interface JoinRequest {
+  id: string;
+  display_name: string;
+  role_name?: string | null;
+  note?: string | null;
+  status: 'pending' | 'confirmed' | 'rejected' | 'cancelled';
+  created_at: string;
+}
 
-export default function QRCodeModal({ schedule, visible, onClose, onKickGuest }: QRCodeModalProps) {
-  const [tab, setTab] = useState<Tab>('checkin');
-  const { count, checkins } = useScheduleCheckins(schedule?.id);
+type Tab = 'join' | 'checkin' | 'evaluate';
+
+export default function QRCodeModal({ schedule, visible, onClose, onKickGuest, onChanged }: QRCodeModalProps) {
+  const { get, put } = useApi();
+  const [tab, setTab] = useState<Tab>('join');
+  const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
+  const [message, setMessage] = useState('');
+  const { count, checkins, refresh } = useScheduleCheckins(schedule?.id);
+
+  const loadJoinRequests = async () => {
+    if (!schedule?.id) return;
+    const result = await get<JoinRequest[]>(`/schedules/${schedule.id}/join-requests`);
+    if (result.success) setJoinRequests(result.data || []);
+  };
+
+  useEffect(() => {
+    if (visible && schedule?.id) {
+      void loadJoinRequests();
+      setMessage('');
+      setTab('join');
+    }
+  }, [visible, schedule?.id]);
 
   if (!visible || !schedule) return null;
 
   const evaluateUrl = `${CHECKIN_BASE_URL}/evaluate/${schedule.id}`;
   const checkinUrl = `${CHECKIN_BASE_URL}/checkin/${schedule.id}`;
+  const joinUrl = `${CHECKIN_BASE_URL}/join/${schedule.id}`;
+  const pendingRequests = joinRequests.filter(request => request.status === 'pending');
+
+  const copyJoinUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(joinUrl);
+      setMessage('拼车加入链接已复制');
+    } catch {
+      setMessage(joinUrl);
+    }
+  };
+
+  const reviewRequest = async (request: JoinRequest, action: 'confirm' | 'reject') => {
+    const result = await put(`/schedules/${schedule.id}/join-requests/${request.id}`, { action });
+    if (result.success) {
+      setMessage(action === 'confirm' ? '已确认上车' : '已拒绝申请');
+      await loadJoinRequests();
+      refresh();
+      onChanged?.();
+    } else {
+      setMessage(result.error || '处理失败');
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 w-full max-w-sm">
+      <div className="bg-white rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-bold">分享二维码</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-700">✕</button>
@@ -44,8 +95,16 @@ export default function QRCodeModal({ schedule, visible, onClose, onKickGuest }:
           </p>
         </div>
 
-        {/* Tab 切换：签到码 / 评价码 */}
+        {/* Tab 切换：拼车加入 / 签到码 / 评价码 */}
         <div className="flex bg-gray-100 rounded-lg p-1 mb-4">
+          <button
+            onClick={() => setTab('join')}
+            className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${
+              tab === 'join' ? 'bg-white text-emerald-600 shadow' : 'text-gray-500'
+            }`}
+          >
+            拼车加入
+          </button>
           <button
             onClick={() => setTab('checkin')}
             className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${
@@ -64,7 +123,54 @@ export default function QRCodeModal({ schedule, visible, onClose, onKickGuest }:
           </button>
         </div>
 
-        {tab === 'checkin' ? (
+        {tab === 'join' ? (
+          <>
+            <div className="text-center">
+              <div className="bg-emerald-50 border border-emerald-100 p-3 rounded-lg mb-3">
+                <p className="text-sm text-emerald-700">玩家扫码后登录，提交加入申请；店家确认后才正式上车。</p>
+              </div>
+              <div className="bg-gray-100 p-4 rounded-lg mb-3 inline-block">
+                <QRCodeSVG value={joinUrl} size={200} level="M" includeMargin />
+              </div>
+              <div className="flex gap-2 mb-3">
+                <button onClick={copyJoinUrl} className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm">
+                  复制拼车链接
+                </button>
+                <button onClick={() => window.open(joinUrl, '_blank')} className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 text-sm">
+                  打开
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 border-t border-gray-100 pt-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="font-semibold text-gray-800">待确认申请</h4>
+                <span className="text-xs px-2 py-1 rounded-full bg-amber-50 text-amber-600">{pendingRequests.length} 条</span>
+              </div>
+              <div className="space-y-2">
+                {pendingRequests.map(request => (
+                  <div key={request.id} className="rounded-lg border border-gray-100 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-gray-800">{request.display_name}</p>
+                        <p className="text-xs text-gray-500 mt-1">{request.role_name || '不挑角色'} · {new Date(request.created_at).toLocaleString('zh-CN')}</p>
+                        {request.note && <p className="text-sm text-gray-600 mt-2 whitespace-pre-wrap">{request.note}</p>}
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <button onClick={() => reviewRequest(request, 'confirm')} className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs hover:bg-indigo-700">确认</button>
+                        <button onClick={() => reviewRequest(request, 'reject')} className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 text-xs hover:bg-gray-200">拒绝</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {pendingRequests.length === 0 && (
+                  <p className="py-5 text-center text-sm text-gray-400">暂无待确认申请</p>
+                )}
+              </div>
+            </div>
+            {message && <p className="mt-3 text-sm text-emerald-600">{message}</p>}
+          </>
+        ) : tab === 'checkin' ? (
           <>
             <div className="text-center">
               <div className="bg-gray-100 p-4 rounded-lg mb-3 inline-block">

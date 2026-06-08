@@ -28,11 +28,12 @@ export function useScheduleCheckins(scheduleId: string | undefined) {
 
   const fetchCheckins = useCallback(async () => {
     if (!scheduleId) return;
-    const res = await get<ScheduleCheckInData>(`/schedules/${scheduleId}/checkins`);
+    const res = await get<ScheduleCheckInData | CheckInRecord[]>(`/schedules/${scheduleId}/checkins`);
     if (res.success) {
-      const list = res.data?.checkins || [];
+      const data = res.data;
+      const list = Array.isArray(data) ? data : data?.checkins || [];
       setCheckins(list);
-      setCount(res.data?.count ?? list.length);
+      setCount(Array.isArray(data) ? list.length : data?.count ?? list.length);
     }
   }, [scheduleId, get]);
 

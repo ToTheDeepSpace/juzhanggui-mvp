@@ -9,6 +9,7 @@ import LandingPage from './pages/LandingPage';
 import DemoPage from './pages/DemoPage';
 import StorePortal from './pages/StorePortal';
 import DmDashboard from './pages/DmDashboard';
+import PlayerJoinSchedulePage from './pages/PlayerJoinSchedulePage';
 
 const LINGQI_SITE_URL = (import.meta.env.VITE_LINGQI_SITE_URL || 'https://lingqi.jusichen.com').replace(/\/$/, '');
 
@@ -77,6 +78,7 @@ function App() {
           {/* 公开页面：签到、评价 */}
           <Route path="/checkin/:scheduleId" element={<CheckInPage />} />
           <Route path="/evaluate/:scheduleId" element={<EvaluationPage />} />
+          <Route path="/join/:scheduleId" element={<PlayerJoinSchedulePage />} />
 
           {/* 系统演示 */}
           <Route path="/demo" element={<DemoPage />} />
