@@ -22,7 +22,8 @@ interface AuthContextType {
   loginWithEmail: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   loginWithEmailCode: (email: string, code: string) => Promise<{ success: boolean; error?: string }>;
   registerWithEmail: (payload: { email: string; password: string; displayName?: string; emailCode?: string; phone?: string; phoneCode?: string }) => Promise<{ success: boolean; error?: string }>;
-  sendAdminEmailCode: (email: string, purpose: 'admin_login' | 'admin_register') => Promise<{ success: boolean; error?: string }>;
+  sendAdminEmailCode: (email: string, purpose: 'admin_login' | 'admin_register' | 'admin_reset_password') => Promise<{ success: boolean; error?: string }>;
+  resetPasswordWithEmail: (email: string, code: string, password: string) => Promise<{ success: boolean; error?: string }>;
   sendAdminCode: (phone: string) => Promise<{ success: boolean; error?: string }>;
   loginWithPhone: (phone: string, code: string) => Promise<{ success: boolean; error?: string }>;
   sendBindPhoneCode: (phone: string) => Promise<{ success: boolean; error?: string }>;
@@ -41,6 +42,7 @@ const AuthContext = createContext<AuthContextType>({
   loginWithEmailCode: async () => ({ success: false }),
   registerWithEmail: async () => ({ success: false }),
   sendAdminEmailCode: async () => ({ success: false }),
+  resetPasswordWithEmail: async () => ({ success: false }),
   sendAdminCode: async () => ({ success: false }),
   loginWithPhone: async () => ({ success: false }),
   sendBindPhoneCode: async () => ({ success: false }),
@@ -184,7 +186,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [setSession]);
 
-  const sendAdminEmailCode = useCallback(async (email: string, purpose: 'admin_login' | 'admin_register') => {
+  const sendAdminEmailCode = useCallback(async (email: string, purpose: 'admin_login' | 'admin_register' | 'admin_reset_password') => {
     try {
       const res = await fetch('/api/auth/email/send-code', {
         method: 'POST',
@@ -197,6 +199,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { success: false, error: '网络错误，请检查服务器连接' };
     }
   }, []);
+
+  const resetPasswordWithEmail = useCallback(async (email: string, code: string, password: string) => {
+    try {
+      const res = await fetch('/api/auth/password/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code, password }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSession(data.data.token, data.data.user || null);
+        return { success: true };
+      }
+      return { success: false, error: data.error || '修改密码失败' };
+    } catch {
+      return { success: false, error: '网络错误，请检查服务器连接' };
+    }
+  }, [setSession]);
 
   const sendAdminCode = useCallback(async (phone: string) => {
     try {
@@ -285,6 +305,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loginWithEmailCode,
         registerWithEmail,
         sendAdminEmailCode,
+        resetPasswordWithEmail,
         sendAdminCode,
         loginWithPhone,
         sendBindPhoneCode,

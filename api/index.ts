@@ -63,6 +63,7 @@ const PUBLIC_PATHS = [
   '/api/auth/send-code',
   '/api/auth/email/send-code',
   '/api/auth/email-login',
+  '/api/auth/password/reset',
   '/api/auth/register',
   '/api/auth/phone-login',
   '/api/player/auth/config',
@@ -623,12 +624,12 @@ async function createAndSendPhoneCode(req: any, purpose: string, rawPhone: unkno
 
 async function createAndSendEmailCode(req: any, purpose: string, rawEmail: unknown) {
   const email = normalizeEmail(rawEmail);
-  if (!['admin_register', 'admin_login'].includes(purpose)) throw new Error('邮箱验证码用途无效');
+  if (!['admin_register', 'admin_login', 'admin_reset_password'].includes(purpose)) throw new Error('邮箱验证码用途无效');
 
   const existing = await getAdminUserByEmail(email);
   if (purpose === 'admin_register' && existing) throw new Error('这个邮箱已经注册，请直接登录');
-  if (purpose === 'admin_login' && !existing) throw new Error('这个邮箱还没有注册，请先注册账号');
-  if (purpose === 'admin_login' && existing?.status !== 'active') throw new Error('这个后台账号已停用');
+  if (['admin_login', 'admin_reset_password'].includes(purpose) && !existing) throw new Error('这个邮箱还没有注册，请先注册账号');
+  if (['admin_login', 'admin_reset_password'].includes(purpose) && existing?.status !== 'active') throw new Error('这个后台账号已停用');
 
   const emailHash = makeAuthEmailHash(email);
   const { data: latest, error: latestErr } = await supabase.from('jzg_email_verification_codes')
@@ -900,6 +901,38 @@ app.post('/api/auth/email-login', async (req: any, res: any) => {
   } catch (e) { res.status(500).json(err(e)); }
 });
 
+app.post('/api/auth/password/reset', async (req: any, res: any) => {
+  try {
+    const email = await verifyEmailCode('admin_reset_password', req.body?.email, req.body?.code);
+    const newPassword = cleanText(req.body?.password || req.body?.newPassword, 120);
+    if (newPassword.length < 8) return res.status(400).json(err(new Error('新密码至少 8 位')));
+
+    let user = await getAdminUserByEmail(email);
+    if (!user || user.status !== 'active') return res.status(401).json(err(new Error('这个邮箱还没有可用的后台账号')));
+    if (user.password_hash && await bcrypt.compare(newPassword, user.password_hash)) {
+      return res.status(400).json(err(new Error('新密码不能和原密码相同')));
+    }
+    if (email === SUPER_ADMIN_EMAIL && user.role !== 'super_admin') {
+      const { data: upgraded, error: upgradeErr } = await supabase.from('jzg_admin_users').update({
+        role: 'super_admin',
+        display_name: user.display_name || '超级管理员',
+        updated_at: new Date().toISOString(),
+      }).eq('id', user.id).select('*').single();
+      if (upgradeErr) throw upgradeErr;
+      user = upgraded;
+    }
+    const { data: updated, error: updateErr } = await supabase.from('jzg_admin_users').update({
+      password_hash: await bcrypt.hash(newPassword, 10),
+      email_verified_at: user.email_verified_at || new Date().toISOString(),
+      last_login_at: new Date().toISOString(),
+      auth_provider: 'password_reset',
+      updated_at: new Date().toISOString(),
+    }).eq('id', user.id).select('*').single();
+    if (updateErr) throw updateErr;
+    res.json(ok({ token: makeAdminToken(updated), user: publicAdminUser(updated) }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
 app.post('/api/auth/login', async (req: any, res: any) => {
   try {
     const { email, password } = req.body;
@@ -1030,6 +1063,33 @@ app.post('/api/auth/bind-phone', async (req: any, res: any) => {
       user = data;
     }
     res.json(ok({ token: makeAdminToken(user), user: publicAdminUser(user) }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/auth/password/change', async (req: any, res: any) => {
+  try {
+    const newPassword = cleanText(req.body?.newPassword || req.body?.password, 120);
+    const currentPassword = cleanText(req.body?.currentPassword, 120);
+    if (newPassword.length < 8) return res.status(400).json(err(new Error('新密码至少 8 位')));
+
+    const user = await getAdminUserById(req.user?.adminUserId);
+    if (!user || user.status !== 'active') return res.status(401).json(err(new Error('请先登录后台账号')));
+    if (user.password_hash) {
+      if (!currentPassword) return res.status(400).json(err(new Error('请填写当前密码')));
+      const matched = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!matched) return res.status(401).json(err(new Error('当前密码错误')));
+      if (await bcrypt.compare(newPassword, user.password_hash)) {
+        return res.status(400).json(err(new Error('新密码不能和原密码相同')));
+      }
+    }
+
+    const { data: updated, error: updateErr } = await supabase.from('jzg_admin_users').update({
+      password_hash: await bcrypt.hash(newPassword, 10),
+      auth_provider: user.auth_provider || 'password_changed',
+      updated_at: new Date().toISOString(),
+    }).eq('id', user.id).select('*').single();
+    if (updateErr) throw updateErr;
+    res.json(ok({ token: makeAdminToken(updated), user: publicAdminUser(updated) }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.get('/api/auth/verify', (req: any, res: any) => {

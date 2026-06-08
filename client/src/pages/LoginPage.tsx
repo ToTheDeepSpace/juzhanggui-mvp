@@ -2,13 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
-type LoginMode = 'emailCode' | 'email' | 'phone' | 'register';
+type LoginMode = 'emailCode' | 'email' | 'phone' | 'register' | 'resetPassword';
 
 const modeTabs: Array<{ id: LoginMode; label: string }> = [
   { id: 'emailCode', label: '邮箱验证码' },
   { id: 'email', label: '密码登录' },
   { id: 'phone', label: '手机登录' },
   { id: 'register', label: '注册账号' },
+  { id: 'resetPassword', label: '修改密码' },
 ];
 
 interface AuthConfig {
@@ -23,6 +24,7 @@ export default function LoginPage() {
   const [mode, setMode] = useState<LoginMode>('emailCode');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
   const [emailCode, setEmailCode] = useState('');
@@ -39,7 +41,7 @@ export default function LoginPage() {
     smsEnabled: false,
     legacyPasswordEnabled: false,
   });
-  const { loginWithEmail, loginWithEmailCode, loginWithPhone, registerWithEmail, sendAdminCode, sendAdminEmailCode } = useAuth();
+  const { loginWithEmail, loginWithEmailCode, loginWithPhone, registerWithEmail, resetPasswordWithEmail, sendAdminCode, sendAdminEmailCode } = useAuth();
   const navigate = useNavigate();
 
   const goDashboard = () => navigate('/store/manage', { replace: true });
@@ -60,7 +62,7 @@ export default function LoginPage() {
       setMode(authConfig.emailCodeEnabled ? 'emailCode' : 'email');
       setInfo('短信验证码暂未启用，请先使用邮箱登录或注册。');
     }
-    if (mode === 'emailCode' && !authConfig.emailCodeEnabled) {
+    if ((mode === 'emailCode' || mode === 'resetPassword') && !authConfig.emailCodeEnabled) {
       setMode('email');
       setInfo('邮箱验证码暂未启用，请先使用密码登录。');
     }
@@ -78,7 +80,7 @@ export default function LoginPage() {
     setSendingEmailCode(true);
     setError('');
     setInfo('');
-    const purpose = mode === 'register' ? 'admin_register' : 'admin_login';
+    const purpose = mode === 'register' ? 'admin_register' : mode === 'resetPassword' ? 'admin_reset_password' : 'admin_login';
     const result = await sendAdminEmailCode(email.trim(), purpose);
     setSendingEmailCode(false);
     if (result.success) setInfo('验证码已发送，请查看邮箱');
@@ -150,6 +152,18 @@ export default function LoginPage() {
         phone: phone.trim() || undefined,
         phoneCode: phoneCode.trim() || undefined,
       });
+    } else if (mode === 'resetPassword') {
+      if (!email.trim() || !emailCode.trim() || !password.trim()) {
+        setSubmitting(false);
+        setError('请填写邮箱、验证码和新密码');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setSubmitting(false);
+        setError('两次输入的新密码不一致');
+        return;
+      }
+      result = await resetPasswordWithEmail(email.trim(), emailCode.trim(), password);
     }
 
     setSubmitting(false);
@@ -158,9 +172,9 @@ export default function LoginPage() {
   };
 
   const showPhoneCode = authConfig.smsEnabled && (mode === 'phone' || mode === 'register');
-  const showEmail = mode === 'email' || mode === 'emailCode' || mode === 'register';
-  const showEmailCode = authConfig.emailCodeEnabled && (mode === 'emailCode' || mode === 'register');
-  const showPassword = mode === 'email' || mode === 'register';
+  const showEmail = mode === 'email' || mode === 'emailCode' || mode === 'register' || mode === 'resetPassword';
+  const showEmailCode = authConfig.emailCodeEnabled && (mode === 'emailCode' || mode === 'register' || mode === 'resetPassword');
+  const showPassword = mode === 'email' || mode === 'register' || mode === 'resetPassword';
 
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
@@ -177,12 +191,12 @@ export default function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl p-6 shadow-xl border border-slate-200 space-y-4">
-          <div className="grid grid-cols-4 gap-1 rounded-xl bg-slate-100 p-1">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1 rounded-xl bg-slate-100 p-1">
             {modeTabs.map(tab => (
               <button
                 key={tab.id}
                 type="button"
-                disabled={(tab.id === 'phone' && !authConfig.smsEnabled) || (tab.id === 'emailCode' && !authConfig.emailCodeEnabled)}
+                disabled={(tab.id === 'phone' && !authConfig.smsEnabled) || ((tab.id === 'emailCode' || tab.id === 'resetPassword') && !authConfig.emailCodeEnabled)}
                 onClick={() => {
                   setMode(tab.id);
                   setError('');
@@ -212,7 +226,7 @@ export default function LoginPage() {
           )}
 
           {showEmailCode && (
-            <Field label={mode === 'register' ? '邮箱验证码' : '验证码'}>
+            <Field label={mode === 'register' ? '邮箱验证码' : mode === 'resetPassword' ? '改密验证码' : '验证码'}>
               <div className="flex gap-2">
                 <input value={emailCode} onChange={event => setEmailCode(event.target.value)} placeholder="6位验证码"
                   className={`${inputClass} flex-1`} inputMode="numeric" />
@@ -225,8 +239,15 @@ export default function LoginPage() {
           )}
 
           {showPassword && (
-            <Field label={mode === 'register' ? '设置密码' : '密码'}>
-              <input type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder={mode === 'register' ? '至少 8 位' : '请输入密码'}
+            <Field label={mode === 'register' ? '设置密码' : mode === 'resetPassword' ? '新密码' : '密码'}>
+              <input type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder={mode === 'register' || mode === 'resetPassword' ? '至少 8 位' : '请输入密码'}
+                className={inputClass} />
+            </Field>
+          )}
+
+          {mode === 'resetPassword' && (
+            <Field label="确认新密码">
+              <input type="password" value={confirmPassword} onChange={event => setConfirmPassword(event.target.value)} placeholder="再输入一次新密码"
                 className={inputClass} />
             </Field>
           )}
@@ -259,11 +280,11 @@ export default function LoginPage() {
             disabled={submitting}
             className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:bg-sky-300 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
           >
-            {submitting ? '处理中...' : mode === 'register' ? '注册并进入后台' : '进入后台'}
+            {submitting ? '处理中...' : mode === 'register' ? '注册并进入后台' : mode === 'resetPassword' ? '修改密码并进入后台' : '进入后台'}
           </button>
 
           <p className="text-xs text-slate-500 leading-6">
-            注册账号必须先验证邮箱；短信启用后可在后台绑定手机号并用验证码登录。
+            注册和修改密码都必须先验证邮箱；短信启用后可在后台绑定手机号并用验证码登录。
           </p>
         </form>
       </div>
