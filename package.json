@@ -10,6 +10,7 @@
     "build": "vite build",
     "build:server": "tsc -p tsconfig.server.build.json",
     "build:tencent": "npm run build && npm run build:server",
+    "deploy:tencent": "bash scripts/deploy-tencent.sh",
     "preview": "vite preview",
     "start:server": "node dist-server/server/standalone.js",
     "cap:sync": "npx cap sync",
