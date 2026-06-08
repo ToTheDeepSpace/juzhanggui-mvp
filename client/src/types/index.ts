@@ -49,6 +49,8 @@ export interface ScriptTemplate {
   actor_roles: { role_name: string; gender?: string }[];
   usage_count: number;
   created_by?: string | null;
+  review_status?: 'pending' | 'approved' | 'rejected';
+  reject_reason?: string | null;
   created_at: string;
 }
 

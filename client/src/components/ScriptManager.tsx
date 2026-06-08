@@ -161,7 +161,7 @@ const handleSubmit = async (e: React.FormEvent) => {
   const publishTemplate = async (script: Script) => {
     const result = await post(`/scripts/${script.id}/publish-template`, {});
     if (result.success) {
-      setTemplateMsg(`${script.name} 已发布为公共模版`);
+      setTemplateMsg(`${script.name} 已提交公共模版审核，通过后其他店家可导入`);
       void loadTemplates();
     } else {
       setTemplateMsg(`发布失败：${result.error || '未知错误'}`);
@@ -251,7 +251,7 @@ const handleSubmit = async (e: React.FormEvent) => {
         <div className="flex items-center justify-between gap-3 mb-3">
           <div>
             <h3 className="font-bold text-gray-800">公共剧本模版库</h3>
-            <p className="text-sm text-gray-500 mt-1">任一店家沉淀的剧本，都可以一键导入当前后台。</p>
+            <p className="text-sm text-gray-500 mt-1">这里展示超管审核通过的公共模版；你新建的剧本会先进入主库候选，审核通过后其他店家可导入。</p>
           </div>
           {templateMsg && <span className="text-sm text-indigo-600 font-medium">{templateMsg}</span>}
         </div>
@@ -513,7 +513,7 @@ const handleSubmit = async (e: React.FormEvent) => {
                   onClick={() => publishTemplate(script)}
                   className="text-indigo-500 hover:text-indigo-700 text-sm"
                 >
-                  发布模版
+                  提交主库审核
                 </button>
                 <button
                   onClick={() => handleDelete(script.id)}

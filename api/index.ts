@@ -832,7 +832,8 @@ function serializeRoles(rows: any[] | null | undefined) {
   }));
 }
 
-async function publishScriptRowsAsTemplates(scripts: any[], createdBy: string) {
+async function publishScriptRowsAsTemplates(scripts: any[], createdBy: string, reviewStatus: 'pending' | 'approved' = 'pending', reviewedBy?: string | null) {
+  const now = new Date().toISOString();
   const rows = (scripts || []).map((s: any) => ({
     source_script_id: s.id,
     source_tenant_id: s.tenant_id || TENANT_ID,
@@ -844,7 +845,11 @@ async function publishScriptRowsAsTemplates(scripts: any[], createdBy: string) {
     player_roles: serializeRoles(s.script_player_roles),
     actor_roles: serializeRoles(s.script_actor_roles),
     created_by: createdBy,
-    updated_at: new Date().toISOString(),
+    review_status: reviewStatus,
+    reviewed_at: reviewStatus === 'approved' ? now : null,
+    reviewed_by: reviewStatus === 'approved' ? reviewedBy || null : null,
+    reject_reason: null,
+    updated_at: now,
   }));
   if (!rows.length) return [];
   const { data, error } = await supabase.from('jzg_script_templates')
@@ -1369,9 +1374,33 @@ app.post('/api/platform/script-templates/sync-existing', async (req: any, res: a
       .select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender)')
       .order('created_at', { ascending: false });
     if (error) throw error;
-    const templates = await publishScriptRowsAsTemplates(scripts || [], '超级管理员同步');
+    const templates = await publishScriptRowsAsTemplates(scripts || [], '超级管理员同步', 'approved', req.user?.adminUserId || null);
     await logPlatformAction(req, 'script_templates_sync_existing', { type: 'script_template' }, { count: templates.length });
     res.json(ok({ count: templates.length, templates }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.put('/api/platform/script-templates/:id/review', async (req: any, res: any) => {
+  try {
+    if (!requireSuperAdmin(req, res)) return;
+    const action = cleanText(req.body?.action, 20);
+    if (!['approve', 'reject'].includes(action)) return res.status(400).json(err(new Error('审核操作无效')));
+    const reviewStatus = action === 'approve' ? 'approved' : 'rejected';
+    const rejectReason = action === 'reject' ? cleanText(req.body?.reason, 500) || '超管驳回' : null;
+    const { data, error } = await supabase.from('jzg_script_templates')
+      .update({
+        review_status: reviewStatus,
+        reviewed_at: new Date().toISOString(),
+        reviewed_by: req.user?.adminUserId || null,
+        reject_reason: rejectReason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    await logPlatformAction(req, `script_template_${reviewStatus}`, { type: 'script_template', id: data.id, label: data.name }, { rejectReason });
+    res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
 
@@ -1425,6 +1454,7 @@ app.get('/api/script-templates', async (_req: any, res: any) => {
   try {
     const { data, error } = await supabase.from('jzg_script_templates')
       .select('*')
+      .eq('review_status', 'approved')
       .order('usage_count', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(100);
@@ -1445,7 +1475,7 @@ app.post('/api/scripts/:id/publish-template', async (req: any, res: any) => {
     if (scriptErr) throw scriptErr;
     if (!s) return res.status(404).json(err(new Error('剧本不存在')));
 
-    const data = await publishScriptRowsAsTemplates([{ ...s, tenant_id: tenantId }], '剧司辰后台');
+    const data = await publishScriptRowsAsTemplates([{ ...s, tenant_id: tenantId }], req.user?.displayName || req.user?.email || '剧司辰后台', 'pending');
     res.json(ok(data[0] || null));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -1453,7 +1483,7 @@ app.post('/api/scripts/:id/publish-template', async (req: any, res: any) => {
 app.post('/api/script-templates/:id/import', async (req: any, res: any) => {
   try {
     const tenantId = currentTenantId(req);
-    const { data: t, error: templateErr } = await supabase.from('jzg_script_templates').select('*').eq('id', req.params.id).single();
+    const { data: t, error: templateErr } = await supabase.from('jzg_script_templates').select('*').eq('id', req.params.id).eq('review_status', 'approved').single();
     if (templateErr) throw templateErr;
     if (!t) return res.status(404).json(err(new Error('模版不存在')));
 
@@ -1624,6 +1654,12 @@ app.post('/api/scripts', async (req: any, res: any) => {
     for (const r of actorRoles || []) {
       await supabase.from('script_actor_roles').insert({ script_id: data!.id, ...parseRole(r) });
     }
+    await publishScriptRowsAsTemplates([{
+      ...data,
+      tenant_id: currentTenantId(req),
+      script_player_roles: (playerRoles || []).map(parseRole),
+      script_actor_roles: (actorRoles || []).map(parseRole),
+    }], req.user?.displayName || req.user?.email || '剧司辰后台', 'pending');
     res.json(ok({ id: data?.id }));
   } catch (e) { res.status(500).json(err(e)); }
 });

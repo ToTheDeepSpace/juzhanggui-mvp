@@ -215,6 +215,9 @@ interface ScriptTemplateRow {
   actor_roles?: { role_name: string; gender?: string }[];
   usage_count?: number;
   created_by?: string | null;
+  review_status?: 'pending' | 'approved' | 'rejected';
+  reject_reason?: string | null;
+  reviewed_at?: string | null;
   created_at?: string | null;
   store?: { name?: string | null; city?: string | null } | null;
 }
@@ -478,7 +481,7 @@ function AdminUsersPanel() {
 }
 
 function TemplateCenterPanel() {
-  const { get, post, loading } = useApi();
+  const { get, post, put, loading } = useApi();
   const [templates, setTemplates] = useState<ScriptTemplateRow[]>([]);
   const [message, setMessage] = useState('');
 
@@ -506,12 +509,31 @@ function TemplateCenterPanel() {
     }
   };
 
+  const reviewTemplate = async (template: ScriptTemplateRow, action: 'approve' | 'reject') => {
+    const reason = action === 'reject' ? window.prompt('填写驳回原因，店家后续可按原因重新提交：', '') || '' : '';
+    if (action === 'reject' && !reason.trim()) return;
+    const result = await put(`/platform/script-templates/${template.id}/review`, { action, reason });
+    if (result.success) {
+      setMessage(action === 'approve' ? `已通过《${template.name}》` : `已驳回《${template.name}》`);
+      void loadTemplates();
+    } else {
+      setMessage(result.error || '审核失败');
+    }
+  };
+
+  const statusText: Record<string, string> = { pending: '待审核', approved: '已入主库', rejected: '已驳回' };
+  const statusClass: Record<string, string> = {
+    pending: 'bg-amber-50 text-amber-700',
+    approved: 'bg-emerald-50 text-emerald-600',
+    rejected: 'bg-red-50 text-red-600',
+  };
+
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-lg shadow p-6 flex items-start justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-gray-900">公共剧本模板中心</h2>
-          <p className="text-sm text-gray-500 mt-1">所有店家发布到公共模板库的剧本，其他店家可一键导入。旧数据可由超管一键同步进模板库。</p>
+          <p className="text-sm text-gray-500 mt-1">店家新建剧本后会自动生成主库候选；超管审核通过后，其他店家才可从公共模板库一键导入。</p>
           {message && <p className="mt-3 text-sm text-red-600">{message}</p>}
         </div>
         <div className="flex shrink-0 gap-2">
@@ -530,16 +552,29 @@ function TemplateCenterPanel() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h3 className="font-bold text-gray-900">{template.name}</h3>
-                <p className="text-sm text-gray-500 mt-1">{template.store?.name || '未知来源'} · 已导入 {template.usage_count || 0} 次</p>
+                <p className="text-sm text-gray-500 mt-1">{template.store?.name || '未知来源'} · {template.created_by || '未知创建者'} · 已导入 {template.usage_count || 0} 次</p>
               </div>
-              <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 text-xs font-semibold">模板</span>
+              <span className={`px-2 py-1 rounded-full text-xs font-semibold ${statusClass[template.review_status || 'pending'] || 'bg-gray-100 text-gray-500'}`}>
+                {statusText[template.review_status || 'pending'] || template.review_status || '待审核'}
+              </span>
             </div>
             <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs text-gray-500">
               <div className="rounded-lg bg-gray-50 p-2"><p className="font-semibold text-gray-900">{template.duration_minutes || 0}</p><p>分钟</p></div>
               <div className="rounded-lg bg-gray-50 p-2"><p className="font-semibold text-gray-900">{template.player_roles?.length || 0}</p><p>玩家位</p></div>
               <div className="rounded-lg bg-gray-50 p-2"><p className="font-semibold text-gray-900">{template.actor_roles?.length || 0}</p><p>卡司位</p></div>
             </div>
+            {template.reject_reason && (
+              <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">驳回原因：{template.reject_reason}</p>
+            )}
             <p className="mt-4 text-xs text-gray-400">创建：{template.created_at ? new Date(template.created_at).toLocaleString('zh-CN') : ''}</p>
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => reviewTemplate(template, 'approve')} disabled={template.review_status === 'approved'} className="flex-1 rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 disabled:opacity-40">
+                通过入主库
+              </button>
+              <button onClick={() => reviewTemplate(template, 'reject')} disabled={template.review_status === 'rejected'} className="rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-40">
+                驳回
+              </button>
+            </div>
           </article>
         ))}
         {templates.length === 0 && (
