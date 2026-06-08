@@ -56,9 +56,9 @@ export default function MainLayout() {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2.5">
               <Logo size={32} />
-              <h1 className="text-2xl font-bold text-gray-800">
+              <h1 className="text-xl sm:text-2xl font-bold text-gray-800">
                 <span className="text-indigo-500">剧</span>司辰
-                <span className="text-sm font-normal text-gray-400 ml-2 tracking-wider">剧本杀排期系统</span>
+                <span className="hidden sm:inline text-sm font-normal text-gray-400 ml-2 tracking-wider">剧本杀排期系统</span>
               </h1>
             </div>
             <div className="flex items-center gap-2">
@@ -293,13 +293,9 @@ function AccountSecurityMenu() {
       <button
         type="button"
         onClick={() => setOpen(value => !value)}
-        className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
-          user?.phone
-            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-            : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
-        }`}
+        className="px-3 py-1.5 text-sm rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors"
       >
-        {user?.phone ? `${user.displayName || '管理员'} · ${user.phone}` : '账号安全'}
+        账号安全 / 改密码
       </button>
 
       {open && (
