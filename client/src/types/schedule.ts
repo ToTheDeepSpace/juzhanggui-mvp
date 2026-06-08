@@ -8,8 +8,35 @@ export interface RoleInfo {
 
 /** 签到信息 */
 export interface CheckinInfo {
+  id?: string;
+  guest_name?: string;
+  guest_phone?: string | null;
   role: string;
   gender?: string;
+  customer_id?: string | null;
+  deposit_status?: 'unpaid' | 'paid' | 'waived' | 'refunded';
+  deposit_amount?: number;
+  deposit_payment_method?: string | null;
+  final_amount?: number;
+  final_payment_method?: string | null;
+  settlement_status?: 'unsettled' | 'settled' | 'waived';
+  settlement_note?: string | null;
+}
+
+export interface ScheduleProgressSummary {
+  targetCount: number;
+  boardedCount: number;
+  isFull: boolean;
+  depositRequired: number;
+  depositReady: number;
+  unsettledCount: number;
+  settledCount: number;
+  depositTotal: number;
+  finalTotal: number;
+  paymentBreakdown: Record<string, number>;
+  evaluationCount: number;
+  avgRating: number | null;
+  steps: { key: string; label: string; done: boolean; optional?: boolean }[];
 }
 
 /** 带签到详情的排期 */
@@ -19,6 +46,7 @@ export interface ScheduleWithDetails extends Schedule {
   checkin_count?: number;
   checkins?: CheckinInfo[];
   pending_request_count?: number;
+  progress_summary?: ScheduleProgressSummary;
 }
 
 /** 排期表单数据 */

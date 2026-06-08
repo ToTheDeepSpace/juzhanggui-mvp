@@ -271,6 +271,58 @@ function isClosedSchedule(status: unknown) {
   return ['cancelled', 'bombed'].includes(cleanText(status, 30));
 }
 
+function moneyCents(input: unknown): number {
+  const value = Number(input || 0);
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.round(value));
+}
+
+function signedMoneyCents(input: unknown): number {
+  const value = Number(input || 0);
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value);
+}
+
+function buildScheduleProgress(schedule: any, checkins: any[], playerRoles: any[], evaluations: any[] = []) {
+  const targetCount = playerRoles.length || Number(schedule?.player_count || 0) || 0;
+  const boardedCount = checkins.length;
+  const depositRequired = checkins.filter((item: any) => item.deposit_status !== 'waived' && item.deposit_status !== 'refunded').length;
+  const depositReady = checkins.filter((item: any) => ['paid', 'waived'].includes(item.deposit_status || '')).length;
+  const settledCount = checkins.filter((item: any) => item.settlement_status === 'settled' || item.final_paid_at).length;
+  const finalTotal = checkins.reduce((sum: number, item: any) => sum + Number(item.final_amount || 0), 0);
+  const depositTotal = checkins.reduce((sum: number, item: any) => sum + Number(item.deposit_amount || 0), 0);
+  const ratings = evaluations.map((item: any) => Number(item.rating || 0)).filter((rating: number) => rating > 0);
+  const avgRating = ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10 : null;
+  const steps = [
+    { key: 'boarding', label: '组车', done: boardedCount > 0 },
+    { key: 'deposit', label: '定金', done: boardedCount > 0 && depositReady >= Math.max(1, depositRequired) },
+    { key: 'locked', label: '锁车', done: ['locked', 'confirmed', 'ongoing', 'settling', 'completed'].includes(schedule.status) },
+    { key: 'dm', label: '指定DM', done: schedule.dm_lock_status === 'confirmed' || schedule.dm_lock_status === 'not_needed', optional: true },
+    { key: 'started', label: '开本', done: ['ongoing', 'settling', 'completed'].includes(schedule.status) },
+    { key: 'settled', label: '结算', done: schedule.status === 'completed' || (boardedCount > 0 && settledCount >= boardedCount) },
+  ];
+  return {
+    targetCount,
+    boardedCount,
+    isFull: targetCount > 0 && boardedCount >= targetCount,
+    depositRequired,
+    depositReady,
+    unsettledCount: Math.max(0, boardedCount - settledCount),
+    settledCount,
+    depositTotal,
+    finalTotal,
+    paymentBreakdown: checkins.reduce((acc: Record<string, number>, item: any) => {
+      const key = item.final_payment_method || 'unknown';
+      acc[key] = (acc[key] || 0) + Number(item.final_amount || 0);
+      return acc;
+    }, {}),
+    evaluationCount: evaluations.length,
+    avgRating,
+    steps,
+    stepDoneCount: steps.filter(step => step.done && !step.optional).length + steps.filter(step => step.done && step.optional).length,
+  };
+}
+
 function monthKey(date = new Date()) {
   return date.toISOString().slice(0, 7);
 }
@@ -1694,21 +1746,24 @@ app.get('/api/schedules', async (req: any, res: any) => {
     if (req.query.startDate) q = q.gte('scheduled_date', req.query.startDate);
     if (req.query.endDate) q = q.lte('scheduled_date', req.query.endDate);
     const { data } = await q;
-    // 获取每个排期的签到人数
+    // 获取每个排期的上车、定金、结算和评价摘要
     const schedulesWithCheckins = await Promise.all((data || []).map(async (s: any) => {
-      const { data: checkins } = await supabase.from('checkins').select('role').eq('schedule_id', s.id);
+      const { data: checkins } = await supabase.from('checkins').select('*').eq('schedule_id', s.id);
       const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
+      const { data: evaluations } = await supabase.from('evaluations').select('rating, comment').eq('schedule_id', s.id);
       const { count: pendingRequestCount } = await supabase.from('jzg_carpool_join_requests')
         .select('*', { count: 'exact', head: true })
         .eq('schedule_id', s.id)
         .eq('status', 'pending');
+      const normalizedPlayerRoles = (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
       return {
         ...s, script_name: s.scripts?.name, room_name: s.rooms?.name,
         start_time: `${s.scheduled_date}T${s.start_time}`,
         end_time: `${s.scheduled_date}T${s.end_time}`,
         checkins: checkins || [],
-        player_roles: (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' })),
+        player_roles: normalizedPlayerRoles,
         pending_request_count: pendingRequestCount || 0,
+        progress_summary: buildScheduleProgress(s, checkins || [], normalizedPlayerRoles, evaluations || []),
       };
     }));
     res.json(ok(schedulesWithCheckins));
@@ -1719,8 +1774,15 @@ app.get('/api/schedules/:id', async (req: any, res: any) => {
     const { data: s } = await supabase.from('schedules').select('*, scripts(name), rooms(name)').eq('id', req.params.id).eq('tenant_id', currentTenantId(req)).single();
     if (!s) return res.status(404).json(err(new Error('不存在')));
     const { data: actors } = await supabase.from('schedule_actors').select('*, actors(name)').eq('schedule_id', req.params.id);
+    const { data: checkins } = await supabase.from('checkins').select('*').eq('schedule_id', req.params.id);
+    const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
+    const { data: evaluations } = await supabase.from('evaluations').select('rating, comment').eq('schedule_id', req.params.id);
+    const normalizedPlayerRoles = (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
     res.json(ok({
       ...s, script_name: s.scripts?.name, room_name: s.rooms?.name, actors: actors || [],
+      checkins: checkins || [],
+      player_roles: normalizedPlayerRoles,
+      progress_summary: buildScheduleProgress(s, checkins || [], normalizedPlayerRoles, evaluations || []),
       start_time: `${s.scheduled_date}T${s.start_time}`,
       end_time: `${s.scheduled_date}T${s.end_time}`,
     }));
@@ -1794,7 +1856,10 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
     if (d.endTime) {
       fields.end_time = d.timeEnd || d.endTime.split('T')[1]?.substring(0, 5);
     }
-    if (d.status) fields.status = d.status;
+    if (d.status) {
+      fields.status = d.status;
+      if (d.status === 'ongoing') fields.actual_started_at = new Date().toISOString();
+    }
     if (d.customerName !== undefined) fields.customer_name = d.customerName;
     if (d.customerPhone !== undefined) fields.customer_phone = d.customerPhone;
     if (d.playerCount !== undefined) fields.player_count = d.playerCount;
@@ -1846,13 +1911,32 @@ app.put('/api/schedules/:id/cancel', async (req: any, res: any) => {
   catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/schedules/:id/complete', async (req: any, res: any) => {
-  try { await supabase.from('schedules').update({ status: 'completed' }).eq('id', req.params.id).eq('tenant_id', currentTenantId(req)); res.json(ok()); }
+  try {
+    await supabase.from('schedules').update({
+      status: 'settling',
+      actual_ended_at: new Date().toISOString(),
+      settlement_status: 'pending',
+    }).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
+    res.json(ok());
+  }
+  catch (e) { res.status(500).json(err(e)); }
+});
+app.put('/api/schedules/:id/settle', async (req: any, res: any) => {
+  try {
+    await supabase.from('schedules').update({
+      status: 'completed',
+      settlement_status: 'settled',
+      settlement_completed_at: new Date().toISOString(),
+      settlement_note: cleanText(req.body?.note, 500) || null,
+    }).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
+    res.json(ok());
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.post('/api/schedules/:id/dm-start', async (req: any, res: any) => {
   try {
     const { actorId } = req.body;
-    await supabase.from('schedules').update({ status: 'ongoing', scheduled_date: new Date().toISOString().split('T')[0], start_time: new Date().toISOString().split('T')[1]?.substring(0, 5) }).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
+    await supabase.from('schedules').update({ status: 'ongoing', actual_started_at: new Date().toISOString(), scheduled_date: new Date().toISOString().split('T')[0], start_time: new Date().toISOString().split('T')[1]?.substring(0, 5) }).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
     if (actorId) {
       await supabase.from('schedule_actors').insert({ schedule_id: req.params.id, actor_id: actorId, role_name: 'DM', start_time: new Date().toISOString(), end_time: new Date(Date.now() + 240 * 60000).toISOString() });
     }
@@ -1920,6 +2004,35 @@ app.get('/api/schedules/:id/checkins', async (req: any, res: any) => {
   try { const { data } = await supabase.from('checkins').select('*').eq('schedule_id', req.params.id).order('checked_at', { ascending: false }); res.json(ok(data)); }
   catch (e) { res.status(500).json(err(e)); }
 });
+
+app.put('/api/schedules/:id/checkins/:checkinId/finance', async (req: any, res: any) => {
+  try {
+    const tenantId = currentTenantId(req);
+    const { data: schedule } = await supabase.from('schedules').select('id, tenant_id').eq('id', req.params.id).eq('tenant_id', tenantId).maybeSingle();
+    if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
+    const fields: any = {};
+    if (req.body.depositStatus !== undefined) fields.deposit_status = cleanText(req.body.depositStatus, 30) || 'unpaid';
+    if (req.body.depositAmount !== undefined) fields.deposit_amount = moneyCents(req.body.depositAmount);
+    if (req.body.depositPaymentMethod !== undefined) fields.deposit_payment_method = cleanText(req.body.depositPaymentMethod, 40) || null;
+    if (req.body.depositNote !== undefined) fields.deposit_note = cleanText(req.body.depositNote, 300) || null;
+    if (req.body.customerId !== undefined) fields.customer_id = cleanText(req.body.customerId, 80) || null;
+    if (req.body.finalAmount !== undefined) fields.final_amount = moneyCents(req.body.finalAmount);
+    if (req.body.finalPaymentMethod !== undefined) fields.final_payment_method = cleanText(req.body.finalPaymentMethod, 40) || null;
+    if (req.body.settlementStatus !== undefined) fields.settlement_status = cleanText(req.body.settlementStatus, 30) || 'unsettled';
+    if (req.body.settlementNote !== undefined) fields.settlement_note = cleanText(req.body.settlementNote, 300) || null;
+    if (fields.deposit_status === 'paid') fields.deposit_paid_at = new Date().toISOString();
+    if (fields.settlement_status === 'settled') fields.final_paid_at = new Date().toISOString();
+    const { data, error } = await supabase.from('checkins')
+      .update(fields)
+      .eq('id', req.params.checkinId)
+      .eq('schedule_id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
 app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
   try {
     const { name, phone, role, avatar } = req.body;
@@ -1940,6 +2053,84 @@ app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
       }
     }
     res.json(ok({ ...data, full }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/schedules/:id/lock', async (req: any, res: any) => {
+  try {
+    const tenantId = currentTenantId(req);
+    const lockReason = cleanText(req.body?.lockReason, 40) || 'deposit_guaranteed';
+    const { data: schedule } = await supabase.from('schedules')
+      .select('id, tenant_id, status')
+      .eq('id', req.params.id)
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
+    if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
+    if (['cancelled', 'bombed', 'completed'].includes(schedule.status)) return res.status(400).json(err(new Error('当前状态不能锁车')));
+    const { data, error } = await supabase.from('schedules')
+      .update({
+        status: 'locked',
+        lock_reason: lockReason,
+        locked_at: new Date().toISOString(),
+        locked_by: req.user?.adminUserId || null,
+      })
+      .eq('id', schedule.id)
+      .eq('tenant_id', tenantId)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/schedules/:id/dm-lock', async (req: any, res: any) => {
+  try {
+    const tenantId = currentTenantId(req);
+    const customerId = cleanText(req.body?.customerId, 80);
+    const actorId = cleanText(req.body?.actorId, 80);
+    if (!customerId) return res.status(400).json(err(new Error('请选择使用锁 DM 权益的客户/车头')));
+    if (!actorId) return res.status(400).json(err(new Error('请选择要指定的 DM')));
+    const { data: schedule } = await supabase.from('schedules')
+      .select('id, tenant_id, status, dm_lock_status')
+      .eq('id', req.params.id)
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
+    if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
+    if (!['locked', 'confirmed', 'ongoing', 'settling'].includes(schedule.status)) return res.status(400).json(err(new Error('锁车后才能指定 DM')));
+    const { data: customer } = await supabase.from('customers')
+      .select('*')
+      .eq('id', customerId)
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
+    if (!customer) return res.status(404).json(err(new Error('客户不存在')));
+    if (Number(customer.lock_dm_credits || 0) <= 0) return res.status(400).json(err(new Error('该客户没有可用锁 DM 权益，请先充卡或调整权益')));
+    const { data: actor } = await supabase.from('actors').select('id').eq('id', actorId).eq('tenant_id', tenantId).maybeSingle();
+    if (!actor) return res.status(404).json(err(new Error('DM 不存在')));
+
+    const nextCredits = Number(customer.lock_dm_credits || 0) - 1;
+    const nextUsed = Number(customer.total_lock_dm_used || 0) + 1;
+    await supabase.from('customers').update({
+      lock_dm_credits: nextCredits,
+      total_lock_dm_used: nextUsed,
+      updated_at: new Date().toISOString(),
+    }).eq('id', customer.id).eq('tenant_id', tenantId);
+    const { data: tx } = await supabase.from('membership_transactions').insert({
+      customer_id: customer.id,
+      schedule_id: schedule.id,
+      amount: 0,
+      transaction_type: 'lock_dm',
+      note: `指定 DM 权益使用`,
+      lock_dm_delta: -1,
+      metadata: { actor_id: actorId },
+    }).select().single();
+    const { data, error } = await supabase.from('schedules').update({
+      dm_lock_customer_id: customer.id,
+      requested_dm_actor_id: actorId,
+      dm_lock_status: 'requested',
+      dm_lock_credit_transaction_id: tx?.id || null,
+    }).eq('id', schedule.id).eq('tenant_id', tenantId).select().single();
+    if (error) throw error;
+    res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
 
@@ -2383,6 +2574,77 @@ app.get('/api/evaluations', async (req: any, res: any) => {
 });
 
 // ===== Customers =====
+app.get('/api/membership-packages', async (req: any, res: any) => {
+  try {
+    const { data } = await supabase.from('jzg_membership_packages')
+      .select('*')
+      .eq('tenant_id', currentTenantId(req))
+      .order('recharge_amount', { ascending: true });
+    res.json(ok(data || []));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+app.post('/api/membership-packages', async (req: any, res: any) => {
+  try {
+    const { data, error } = await supabase.from('jzg_membership_packages').insert({
+      tenant_id: currentTenantId(req),
+      name: cleanText(req.body?.name, 80) || '未命名套餐',
+      recharge_amount: moneyCents(req.body?.rechargeAmount),
+      bonus_amount: moneyCents(req.body?.bonusAmount),
+      lock_dm_credits: moneyCents(req.body?.lockDmCredits),
+      description: cleanText(req.body?.description, 300) || null,
+      is_active: req.body?.isActive !== false,
+    }).select().single();
+    if (error) throw error;
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+app.put('/api/membership-packages/:id', async (req: any, res: any) => {
+  try {
+    const fields: any = {};
+    if (req.body.name !== undefined) fields.name = cleanText(req.body.name, 80) || '未命名套餐';
+    if (req.body.rechargeAmount !== undefined) fields.recharge_amount = moneyCents(req.body.rechargeAmount);
+    if (req.body.bonusAmount !== undefined) fields.bonus_amount = moneyCents(req.body.bonusAmount);
+    if (req.body.lockDmCredits !== undefined) fields.lock_dm_credits = moneyCents(req.body.lockDmCredits);
+    if (req.body.description !== undefined) fields.description = cleanText(req.body.description, 300) || null;
+    if (req.body.isActive !== undefined) fields.is_active = Boolean(req.body.isActive);
+    fields.updated_at = new Date().toISOString();
+    await supabase.from('jzg_membership_packages').update(fields).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
+    res.json(ok());
+  } catch (e) { res.status(500).json(err(e)); }
+});
+app.delete('/api/membership-packages/:id', async (req: any, res: any) => {
+  try {
+    await supabase.from('jzg_membership_packages').update({ is_active: false, updated_at: new Date().toISOString() }).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
+    res.json(ok());
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.get('/api/marketing-items', async (req: any, res: any) => {
+  try {
+    const { data } = await supabase.from('jzg_marketing_items')
+      .select('*')
+      .eq('tenant_id', currentTenantId(req))
+      .order('created_at', { ascending: false });
+    res.json(ok(data || []));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+app.post('/api/marketing-items', async (req: any, res: any) => {
+  try {
+    const { data, error } = await supabase.from('jzg_marketing_items').insert({
+      tenant_id: currentTenantId(req),
+      name: cleanText(req.body?.name, 100) || '未命名项目',
+      item_type: cleanText(req.body?.itemType, 40) || 'custom',
+      price_amount: moneyCents(req.body?.priceAmount),
+      bonus_amount: moneyCents(req.body?.bonusAmount),
+      lock_dm_credits: moneyCents(req.body?.lockDmCredits),
+      description: cleanText(req.body?.description, 500) || null,
+      is_active: req.body?.isActive !== false,
+    }).select().single();
+    if (error) throw error;
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
 app.get('/api/customers', async (req: any, res: any) => {
   try { const { data } = await supabase.from('customers').select('*').eq('tenant_id', currentTenantId(req)).order('name'); res.json(ok(data)); }
   catch (e) { res.status(500).json(err(e)); }
@@ -2396,17 +2658,111 @@ app.get('/api/customers/search', async (req: any, res: any) => {
 });
 app.post('/api/customers', async (req: any, res: any) => {
   try {
-    const { data } = await supabase.from('customers').insert({ name: req.body.name, phone: req.body.phone || null, membership_level: req.body.membershipLevel || 'none', balance: req.body.balance || 0, tenant_id: currentTenantId(req) }).select().single();
+    const { data } = await supabase.from('customers').insert({
+      name: cleanText(req.body.name, 80),
+      phone: cleanText(req.body.phone, 40) || null,
+      membership_level: cleanText(req.body.membershipLevel, 40) || 'none',
+      balance: signedMoneyCents(req.body.balance),
+      bonus_balance: signedMoneyCents(req.body.bonusBalance),
+      lock_dm_credits: moneyCents(req.body.lockDmCredits),
+      tenant_id: currentTenantId(req),
+    }).select().single();
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/customers/:id', async (req: any, res: any) => {
-  try { await supabase.from('customers').update(req.body).eq('id', req.params.id).eq('tenant_id', currentTenantId(req)); res.json(ok()); }
+  try {
+    const fields: any = {};
+    if (req.body.name !== undefined) fields.name = cleanText(req.body.name, 80);
+    if (req.body.phone !== undefined) fields.phone = cleanText(req.body.phone, 40) || null;
+    if (req.body.membershipLevel !== undefined) fields.membership_level = cleanText(req.body.membershipLevel, 40) || 'none';
+    if (req.body.balance !== undefined) fields.balance = signedMoneyCents(req.body.balance);
+    if (req.body.bonusBalance !== undefined) fields.bonus_balance = signedMoneyCents(req.body.bonusBalance);
+    if (req.body.lockDmCredits !== undefined) fields.lock_dm_credits = moneyCents(req.body.lockDmCredits);
+    fields.updated_at = new Date().toISOString();
+    await supabase.from('customers').update(fields).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
+    res.json(ok());
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.delete('/api/customers/:id', async (req: any, res: any) => {
   try { await supabase.from('customers').delete().eq('id', req.params.id).eq('tenant_id', currentTenantId(req)); res.json(ok()); }
   catch (e) { res.status(500).json(err(e)); }
+});
+app.post('/api/customers/:id/transactions', async (req: any, res: any) => {
+  try {
+    const tenantId = currentTenantId(req);
+    const transactionType = cleanText(req.body?.transactionType, 40) || 'recharge';
+    const paymentMethod = cleanText(req.body?.paymentMethod, 40) || null;
+    const packageId = cleanText(req.body?.packageId, 80) || null;
+    const { data: customer } = await supabase.from('customers').select('*').eq('id', req.params.id).eq('tenant_id', tenantId).maybeSingle();
+    if (!customer) return res.status(404).json(err(new Error('客户不存在')));
+
+    let amount = signedMoneyCents(req.body?.amount);
+    let bonusAmount = moneyCents(req.body?.bonusAmount);
+    let lockDmCredits = moneyCents(req.body?.lockDmCredits);
+    let packageRow: any = null;
+    if (packageId) {
+      const { data: pkg } = await supabase.from('jzg_membership_packages').select('*').eq('id', packageId).eq('tenant_id', tenantId).maybeSingle();
+      if (!pkg) return res.status(404).json(err(new Error('套餐不存在')));
+      packageRow = pkg;
+      amount = moneyCents(pkg.recharge_amount);
+      bonusAmount = moneyCents(pkg.bonus_amount);
+      lockDmCredits = moneyCents(pkg.lock_dm_credits);
+    }
+
+    let balanceDelta = 0;
+    let bonusDelta = 0;
+    let lockDmDelta = 0;
+    const updates: any = { updated_at: new Date().toISOString() };
+    if (transactionType === 'recharge') {
+      if (amount <= 0) return res.status(400).json(err(new Error('充值金额必须大于 0')));
+      balanceDelta = amount + bonusAmount;
+      bonusDelta = bonusAmount;
+      lockDmDelta = lockDmCredits;
+      updates.balance = Number(customer.balance || 0) + balanceDelta;
+      updates.bonus_balance = Number(customer.bonus_balance || 0) + bonusDelta;
+      updates.lock_dm_credits = Number(customer.lock_dm_credits || 0) + lockDmDelta;
+      updates.total_recharged = Number(customer.total_recharged || 0) + amount;
+      updates.total_bonus_granted = Number(customer.total_bonus_granted || 0) + bonusDelta;
+      updates.total_lock_dm_granted = Number(customer.total_lock_dm_granted || 0) + lockDmDelta;
+    } else if (transactionType === 'consume') {
+      if (amount <= 0) return res.status(400).json(err(new Error('消费金额必须大于 0')));
+      balanceDelta = -amount;
+      updates.balance = Number(customer.balance || 0) + balanceDelta;
+      updates.total_consumed = Number(customer.total_consumed || 0) + amount;
+    } else if (transactionType === 'refund') {
+      if (amount <= 0) return res.status(400).json(err(new Error('退款金额必须大于 0')));
+      balanceDelta = amount;
+      updates.balance = Number(customer.balance || 0) + balanceDelta;
+    } else if (transactionType === 'adjust') {
+      balanceDelta = amount;
+      bonusDelta = signedMoneyCents(req.body?.bonusAmount);
+      lockDmDelta = signedMoneyCents(req.body?.lockDmCredits);
+      updates.balance = Number(customer.balance || 0) + balanceDelta;
+      updates.bonus_balance = Number(customer.bonus_balance || 0) + bonusDelta;
+      updates.lock_dm_credits = Number(customer.lock_dm_credits || 0) + lockDmDelta;
+    } else {
+      return res.status(400).json(err(new Error('交易类型无效')));
+    }
+
+    await supabase.from('customers').update(updates).eq('id', customer.id).eq('tenant_id', tenantId);
+    const { data, error } = await supabase.from('membership_transactions').insert({
+      customer_id: customer.id,
+      schedule_id: cleanText(req.body?.scheduleId, 80) || null,
+      amount,
+      transaction_type: transactionType,
+      note: cleanText(req.body?.note, 300) || null,
+      balance_delta: balanceDelta,
+      bonus_delta: bonusDelta,
+      lock_dm_delta: lockDmDelta,
+      payment_method: paymentMethod,
+      package_id: packageRow?.id || null,
+      metadata: packageRow ? { package_name: packageRow.name } : {},
+    }).select().single();
+    if (error) throw error;
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
 });
 
 // ===== Notifications =====

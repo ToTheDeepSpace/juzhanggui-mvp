@@ -45,6 +45,10 @@ export default function ScheduleCalendar() {
   const [showConflict, setShowConflict] = useState(false);
   const [conflictType, setConflictType] = useState('service_attitude');
   const [conflictDesc, setConflictDesc] = useState('');
+  const [showFinanceModal, setShowFinanceModal] = useState(false);
+  const [financeSchedule, setFinanceSchedule] = useState<ScheduleWithDetails | null>(null);
+  const [financeRows, setFinanceRows] = useState<any[]>([]);
+  const [financeSaving, setFinanceSaving] = useState(false);
 
   // 表单状态
   const [formData, setFormData] = useState<ScheduleFormData>({
@@ -134,6 +138,46 @@ export default function ScheduleCalendar() {
     e.stopPropagation(); setStartingSchedule(schedule);
     setActualStartTime(schedule.start_time ? schedule.start_time.split('T')[1]?.substring(0, 5) : '');
     setStartActors([]); setShowStartModal(true);
+  };
+
+  const openFinanceModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setFinanceSchedule(schedule);
+    setFinanceRows((schedule.checkins || []).map((item: any) => ({
+      id: item.id,
+      guest_name: item.guest_name || '',
+      role: item.role || '',
+      deposit_status: item.deposit_status || 'unpaid',
+      deposit_amount: Math.round(Number(item.deposit_amount || 0) / 100),
+      deposit_payment_method: item.deposit_payment_method || '',
+      final_amount: Math.round(Number(item.final_amount || 0) / 100),
+      final_payment_method: item.final_payment_method || '',
+      settlement_status: item.settlement_status || 'unsettled',
+      settlement_note: item.settlement_note || '',
+    })));
+    setShowFinanceModal(true);
+  };
+
+  const saveFinanceRows = async (completeAfterSave = false) => {
+    if (!financeSchedule) return;
+    setFinanceSaving(true);
+    for (const row of financeRows) {
+      await put(`/schedules/${financeSchedule.id}/checkins/${row.id}/finance`, {
+        depositStatus: row.deposit_status,
+        depositAmount: Math.round(Number(row.deposit_amount || 0) * 100),
+        depositPaymentMethod: row.deposit_payment_method || null,
+        finalAmount: Math.round(Number(row.final_amount || 0) * 100),
+        finalPaymentMethod: row.final_payment_method || null,
+        settlementStatus: row.settlement_status,
+        settlementNote: row.settlement_note || null,
+      });
+    }
+    if (completeAfterSave) {
+      await put(`/schedules/${financeSchedule.id}/settle`, { note: '后台结算确认' });
+      setShowFinanceModal(false);
+    }
+    setFinanceSaving(false);
+    loadData();
   };
 
   const handleStartConfirm = async () => {
@@ -253,14 +297,51 @@ export default function ScheduleCalendar() {
     .sort((a, b) => b.start_time.localeCompare(a.start_time));
 
   const stText: Record<string, string> = {
-    scheduled: '待锁车', pending: '待排期', locked: '已锁车', confirmed: '已排班', ongoing: '进行中', completed: '已完成', cancelled: '流车', bombed: '炸车', issue: '其他问题',
+    scheduled: '待锁车', pending: '待排期', locked: '已锁车', confirmed: '已排班', ongoing: '进行中', settling: '待结算', completed: '已完成', cancelled: '流车', bombed: '炸车', issue: '其他问题',
   };
   const stColor: Record<string, string> = {
     scheduled: 'text-blue-600 bg-blue-50', pending: 'text-yellow-600 bg-yellow-50',
     locked: 'text-orange-700 bg-orange-50', confirmed: 'text-indigo-600 bg-indigo-50',
-    ongoing: 'text-green-600 bg-green-50', completed: 'text-gray-500 bg-gray-100',
+    ongoing: 'text-green-600 bg-green-50', settling: 'text-amber-700 bg-amber-50', completed: 'text-gray-500 bg-gray-100',
     cancelled: 'text-red-500 bg-red-50', bombed: 'text-orange-600 bg-orange-50', issue: 'text-purple-600 bg-purple-50',
   };
+  const lockReasonText: Record<string, string> = {
+    full_paid: '人齐定金齐',
+    deposit_guaranteed: '定金担保',
+    manual: '店家手动',
+    other: '其他',
+  };
+  const paymentMethodText: Record<string, string> = {
+    card: '扣卡',
+    cash: '现金',
+    wechat: '微信',
+    alipay: '支付宝',
+    coupon: '券',
+    free: '免单',
+    other: '其他',
+    unknown: '未填',
+  };
+  const formatMoney = (cents?: number) => `¥${((Number(cents || 0)) / 100).toFixed(0)}`;
+
+  function ProgressLine({ schedule }: { schedule: ScheduleWithDetails }) {
+    const summary = schedule.progress_summary;
+    if (!summary?.steps?.length) return null;
+    return (
+      <div className="mt-2 min-w-[260px]">
+        <div className="grid grid-cols-6 gap-1">
+          {summary.steps.map(step => (
+            <div key={step.key} className={`h-1.5 rounded-full ${step.done ? 'bg-indigo-500' : step.optional ? 'bg-slate-100' : 'bg-slate-200'}`} title={step.label} />
+          ))}
+        </div>
+        <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
+          <span>人数 {summary.boardedCount}/{summary.targetCount || '-'}</span>
+          <span>定金 {summary.depositReady}/{summary.depositRequired}</span>
+          <span>实收 {formatMoney(summary.finalTotal)}</span>
+          {summary.avgRating !== null && <span>评分 {summary.avgRating}</span>}
+        </div>
+      </div>
+    );
+  }
 
   let carCounter = 0;
   function scheduleRow(s: ScheduleWithDetails, showActions: boolean) {
@@ -313,16 +394,24 @@ export default function ScheduleCalendar() {
           <span className={`text-xs px-2 py-0.5 rounded-full ${stColor[s.status] || 'bg-gray-50 text-gray-500'}`}>
             {stText[s.status] || s.status}
           </span>
+          {s.status === 'locked' && s.lock_reason && (
+            <div className="mt-1 text-[11px] text-orange-600">{lockReasonText[s.lock_reason] || s.lock_reason}</div>
+          )}
+          {s.dm_lock_status && s.dm_lock_status !== 'none' && (
+            <div className="mt-1 text-[11px] text-indigo-600">指定DM：{s.dm_lock_status === 'requested' ? '已扣权益待确认' : s.dm_lock_status}</div>
+          )}
+          <ProgressLine schedule={s} />
         </td>
         {showActions && (
           <td className="px-4 py-3">
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button onClick={(e) => { e.stopPropagation(); openEditModal(s); }} className="text-xs text-indigo-600 hover:underline">编辑</button>
+              <button onClick={(e) => openFinanceModal(s, e)} className="text-xs text-slate-600 hover:underline">收款</button>
               {pendingRequestCount > 0 && (
                 <button onClick={(e) => openQRModal(s, e)} className="text-xs text-amber-600 hover:underline font-medium">处理申请</button>
               )}
               {s.status === 'scheduled' && (
-                <button onClick={(e) => { e.stopPropagation(); if (confirm('确认已收到定金？点击确定后该车将锁定。')) { put(`/schedules/${s.id}`, { status: 'locked' }).then(() => loadData()); } }} className="text-xs text-orange-600 hover:underline font-medium">锁车</button>
+                <button onClick={(e) => { e.stopPropagation(); if (confirm('确认锁车？可在人未满但定金/担保足够时锁车。')) { post(`/schedules/${s.id}/lock`, { lockReason: 'deposit_guaranteed' }).then(() => loadData()); } }} className="text-xs text-orange-600 hover:underline font-medium">锁车</button>
               )}
               {s.status === 'locked' && (
                 <button onClick={(e) => openStartModal(s, e)} className="text-xs text-indigo-600 hover:underline font-medium">确认排班</button>
@@ -332,6 +421,9 @@ export default function ScheduleCalendar() {
               )}
               {s.status === 'ongoing' && (
                 <button onClick={(e) => openEndModal(s, e)} className="text-xs text-green-600 hover:underline font-medium">结束登记</button>
+              )}
+              {s.status === 'settling' && (
+                <button onClick={(e) => openFinanceModal(s, e)} className="text-xs text-amber-700 hover:underline font-medium">结算</button>
               )}
             </div>
           </td>
@@ -521,7 +613,10 @@ export default function ScheduleCalendar() {
                         </button>
                       )}
                     </td>
-                    <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${stColor[s.status] || 'bg-gray-100 text-gray-500'}`}>{stText[s.status] || s.status}</span></td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${stColor[s.status] || 'bg-gray-100 text-gray-500'}`}>{stText[s.status] || s.status}</span>
+                      <ProgressLine schedule={s} />
+                    </td>
                   </tr>);
                 })}
               </tbody>
@@ -563,6 +658,112 @@ export default function ScheduleCalendar() {
         onConfirm={handleConfirmSchedule}
         onRoomChange={setConfirmRoomId}
       />
+
+      {showFinanceModal && financeSchedule && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-5xl w-full mx-4 max-h-[88vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">车次收款与结算</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  {financeSchedule.script_name || scripts.find(s => s.id === financeSchedule.script_id)?.name || '未知剧本'} · {format(parseISO(financeSchedule.start_time), 'M/d HH:mm')}
+                </p>
+              </div>
+              <button onClick={() => setShowFinanceModal(false)} className="text-sm text-gray-400 hover:text-gray-600">关闭</button>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">上车人数</p>
+                <p className="mt-1 text-xl font-semibold text-slate-900">{financeSchedule.progress_summary?.boardedCount || 0}/{financeSchedule.progress_summary?.targetCount || '-'}</p>
+              </div>
+              <div className="rounded-lg border border-amber-100 bg-amber-50 p-3">
+                <p className="text-xs text-amber-700">定金</p>
+                <p className="mt-1 text-xl font-semibold text-amber-900">{financeSchedule.progress_summary?.depositReady || 0}/{financeSchedule.progress_summary?.depositRequired || 0}</p>
+              </div>
+              <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3">
+                <p className="text-xs text-emerald-700">已结算</p>
+                <p className="mt-1 text-xl font-semibold text-emerald-900">{financeRows.filter(r => r.settlement_status === 'settled').length}/{financeRows.length}</p>
+              </div>
+              <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3">
+                <p className="text-xs text-indigo-700">本车实收</p>
+                <p className="mt-1 text-xl font-semibold text-indigo-900">¥{financeRows.reduce((sum, r) => sum + Number(r.final_amount || 0), 0)}</p>
+              </div>
+              <div className="rounded-lg border border-purple-100 bg-purple-50 p-3">
+                <p className="text-xs text-purple-700">评价</p>
+                <p className="mt-1 text-xl font-semibold text-purple-900">{financeSchedule.progress_summary?.avgRating ?? '-'} <span className="text-xs font-normal">({financeSchedule.progress_summary?.evaluationCount || 0})</span></p>
+              </div>
+            </div>
+
+            {financeRows.length === 0 ? (
+              <div className="rounded-lg bg-slate-50 p-8 text-center text-sm text-slate-500">这车还没有上车玩家，先通过拼车加入或客服代填上车。</div>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-slate-100">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-xs text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 text-left">玩家</th>
+                      <th className="px-3 py-2 text-left">角色</th>
+                      <th className="px-3 py-2 text-left">定金状态</th>
+                      <th className="px-3 py-2 text-left">定金</th>
+                      <th className="px-3 py-2 text-left">最终收款</th>
+                      <th className="px-3 py-2 text-left">支付方式</th>
+                      <th className="px-3 py-2 text-left">结算</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {financeRows.map((row, index) => (
+                      <tr key={row.id}>
+                        <td className="px-3 py-2 font-medium text-slate-900">{row.guest_name || '未命名'}</td>
+                        <td className="px-3 py-2 text-slate-600">{row.role || '-'}</td>
+                        <td className="px-3 py-2">
+                          <select value={row.deposit_status} onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_status: e.target.value } : r))} className="rounded border border-slate-200 px-2 py-1 text-xs">
+                            <option value="unpaid">未收</option>
+                            <option value="paid">已收</option>
+                            <option value="waived">免定金</option>
+                            <option value="refunded">已退</option>
+                          </select>
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="number" min="0" value={row.deposit_amount} onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_amount: e.target.value } : r))} className="w-20 rounded border border-slate-200 px-2 py-1 text-xs" />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="number" min="0" value={row.final_amount} onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, final_amount: e.target.value } : r))} className="w-24 rounded border border-slate-200 px-2 py-1 text-xs" />
+                        </td>
+                        <td className="px-3 py-2">
+                          <select value={row.final_payment_method} onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, final_payment_method: e.target.value } : r))} className="rounded border border-slate-200 px-2 py-1 text-xs">
+                            <option value="">未填</option>
+                            <option value="card">{paymentMethodText.card}</option>
+                            <option value="cash">{paymentMethodText.cash}</option>
+                            <option value="wechat">{paymentMethodText.wechat}</option>
+                            <option value="alipay">{paymentMethodText.alipay}</option>
+                            <option value="coupon">{paymentMethodText.coupon}</option>
+                            <option value="free">{paymentMethodText.free}</option>
+                            <option value="other">{paymentMethodText.other}</option>
+                          </select>
+                        </td>
+                        <td className="px-3 py-2">
+                          <select value={row.settlement_status} onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, settlement_status: e.target.value } : r))} className="rounded border border-slate-200 px-2 py-1 text-xs">
+                            <option value="unsettled">待结算</option>
+                            <option value="settled">已结算</option>
+                            <option value="waived">免结算</option>
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button onClick={() => setShowFinanceModal(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">取消</button>
+              <button onClick={() => saveFinanceRows(false)} disabled={financeSaving} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-50">保存收款</button>
+              <button onClick={() => saveFinanceRows(true)} disabled={financeSaving || financeRows.length === 0} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">保存并完成结算</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 确认开始弹窗 */}
       {showStartModal && startingSchedule && (

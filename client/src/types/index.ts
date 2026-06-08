@@ -83,11 +83,16 @@ export interface Schedule {
   script_duration: number;
   start_time: string;
   end_time: string;
-  status: 'pending' | 'scheduled' | 'locked' | 'confirmed' | 'ongoing' | 'completed' | 'cancelled' | 'bombed' | 'issue';
+  status: 'pending' | 'scheduled' | 'locked' | 'confirmed' | 'ongoing' | 'settling' | 'completed' | 'cancelled' | 'bombed' | 'issue';
   customer_name?: string;
   customer_phone?: string;
   player_count?: number;
   note?: string;
+  lock_reason?: string | null;
+  dm_lock_status?: string | null;
+  actual_started_at?: string | null;
+  actual_ended_at?: string | null;
+  settlement_status?: string | null;
 }
 
 export interface ScheduleActor {
