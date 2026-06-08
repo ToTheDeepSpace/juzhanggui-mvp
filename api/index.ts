@@ -1942,6 +1942,57 @@ app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
   } catch (e) { res.status(500).json(err(e)); }
 });
 
+app.post('/api/schedules/:id/staff-checkin', async (req: any, res: any) => {
+  try {
+    const tenantId = currentTenantId(req);
+    const { name, phone, role, avatar } = req.body;
+    const guestName = cleanText(name, 80);
+    const roleName = cleanText(role, 80);
+    if (!guestName) return res.status(400).json(err(new Error('请填写玩家称呼')));
+    if (!roleName) return res.status(400).json(err(new Error('请选择角色')));
+
+    const { data: schedule, error: scheduleErr } = await supabase.from('schedules')
+      .select('id, tenant_id, script_id')
+      .eq('id', req.params.id)
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
+    if (scheduleErr) throw scheduleErr;
+    if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
+
+    const { data: roleExists } = await supabase.from('script_player_roles')
+      .select('id')
+      .eq('script_id', schedule.script_id)
+      .eq('role_name', roleName)
+      .maybeSingle();
+    if (!roleExists) return res.status(400).json(err(new Error('这个角色不在当前排期可选范围内')));
+
+    const { data: taken } = await supabase.from('checkins')
+      .select('id')
+      .eq('schedule_id', schedule.id)
+      .eq('role', roleName)
+      .maybeSingle();
+    if (taken) return res.status(409).json(err(new Error('这个角色已经有人上车了')));
+
+    const { data, error } = await supabase.from('checkins').insert({
+      schedule_id: schedule.id,
+      guest_name: guestName,
+      guest_phone: phone ? hashPhone(String(phone)) : null,
+      role: roleName,
+      guest_avatar: avatar || null,
+    }).select().single();
+    if (error) throw error;
+
+    const { data: allRoles } = await supabase.from('script_player_roles').select('id').eq('script_id', schedule.script_id);
+    const { count } = await supabase.from('checkins').select('*', { count: 'exact', head: true }).eq('schedule_id', schedule.id);
+    let full = false;
+    if (allRoles && count !== null && count >= allRoles.length) {
+      await supabase.from('schedules').update({ status: 'scheduled' }).eq('id', schedule.id).eq('tenant_id', tenantId);
+      full = true;
+    }
+    res.json(ok({ ...data, full }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
 app.get('/api/schedules/:id/join-requests', async (req: any, res: any) => {
   try {
     const { data: schedule, error: scheduleErr } = await supabase.from('schedules')

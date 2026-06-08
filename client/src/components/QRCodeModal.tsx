@@ -31,10 +31,15 @@ interface JoinRequest {
 type Tab = 'join' | 'checkin' | 'evaluate';
 
 export default function QRCodeModal({ schedule, visible, onClose, onKickGuest, onChanged }: QRCodeModalProps) {
-  const { get, put } = useApi();
+  const { get, post, put } = useApi();
   const [tab, setTab] = useState<Tab>('join');
   const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
   const [message, setMessage] = useState('');
+  const [showStaffForm, setShowStaffForm] = useState(false);
+  const [staffName, setStaffName] = useState('');
+  const [staffPhone, setStaffPhone] = useState('');
+  const [staffRole, setStaffRole] = useState('');
+  const [staffSubmitting, setStaffSubmitting] = useState(false);
   const { count, checkins, refresh } = useScheduleCheckins(schedule?.id);
 
   const loadJoinRequests = async () => {
@@ -48,6 +53,10 @@ export default function QRCodeModal({ schedule, visible, onClose, onKickGuest, o
       void loadJoinRequests();
       setMessage('');
       setTab('join');
+      setShowStaffForm(false);
+      setStaffName('');
+      setStaffPhone('');
+      setStaffRole('');
     }
   }, [visible, schedule?.id]);
 
@@ -57,6 +66,9 @@ export default function QRCodeModal({ schedule, visible, onClose, onKickGuest, o
   const checkinUrl = `${CHECKIN_BASE_URL}/checkin/${schedule.id}`;
   const joinUrl = `${CHECKIN_BASE_URL}/join/${schedule.id}`;
   const pendingRequests = joinRequests.filter(request => request.status === 'pending');
+  const playerRoles = Array.isArray(schedule.player_roles) ? schedule.player_roles.map((r: any) => r.name || r) : [];
+  const takenRoles = new Set(checkins.map(item => item.role).filter(Boolean));
+  const availableRoles = playerRoles.filter(role => !takenRoles.has(role));
 
   const copyJoinUrl = async () => {
     try {
@@ -76,6 +88,37 @@ export default function QRCodeModal({ schedule, visible, onClose, onKickGuest, o
       onChanged?.();
     } else {
       setMessage(result.error || '处理失败');
+    }
+  };
+
+  const submitStaffCheckin = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!staffName.trim()) {
+      setMessage('请填写玩家称呼');
+      return;
+    }
+    if (!staffRole) {
+      setMessage('请选择角色');
+      return;
+    }
+    setStaffSubmitting(true);
+    setMessage('');
+    const result = await post(`/schedules/${schedule.id}/staff-checkin`, {
+      name: staffName.trim(),
+      phone: staffPhone.trim() || null,
+      role: staffRole,
+      avatar: null,
+    });
+    setStaffSubmitting(false);
+    if (result.success) {
+      setMessage(`已为 ${staffName.trim()} 上车`);
+      setStaffName('');
+      setStaffPhone('');
+      setStaffRole('');
+      refresh();
+      onChanged?.();
+    } else {
+      setMessage(result.error || '上车失败');
     }
   };
 
@@ -180,26 +223,65 @@ export default function QRCodeModal({ schedule, visible, onClose, onKickGuest, o
                 已有 <span className="font-bold text-blue-600">{count}</span> 人扫码上车
               </p>
               
-              {/* 客服填写按钮 */}
               <div className="mt-3 mb-3">
                 <button
-                  onClick={() => {
-                    // 客服填写链接 - 直接跳转到签到页面，无需扫码
-                    window.open(`${checkinUrl}?staff=true`, '_blank');
-                  }}
+                  onClick={() => setShowStaffForm(value => !value)}
                   className="px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors text-sm"
                 >
-                  👨‍💼 客服填写（无需扫码）
+                  {showStaffForm ? '收起客服代填' : '客服代填上车'}
                 </button>
                 <p className="text-xs text-gray-500 mt-1">
-                  客服点击此按钮直接填写信息，无需扫码
+                  玩家懒得注册时，店家可直接代录入；玩家扫码加入仍需要登录。
                 </p>
               </div>
             </div>
+            {showStaffForm && (
+              <form onSubmit={submitStaffCheckin} className="mb-4 rounded-lg border border-indigo-100 bg-indigo-50/60 p-3 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">玩家称呼</label>
+                    <input
+                      value={staffName}
+                      onChange={event => setStaffName(event.target.value)}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      placeholder="例如：泡泡"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">手机号（可选）</label>
+                    <input
+                      value={staffPhone}
+                      onChange={event => setStaffPhone(event.target.value)}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      placeholder="留空也能上车"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">角色</label>
+                  <select
+                    value={staffRole}
+                    onChange={event => setStaffRole(event.target.value)}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="">选择未占用角色</option>
+                    {availableRoles.map(role => <option key={role} value={role}>{role}</option>)}
+                  </select>
+                  {availableRoles.length === 0 && <p className="mt-1 text-xs text-amber-600">当前没有可选空位。</p>}
+                </div>
+                <button
+                  type="submit"
+                  disabled={staffSubmitting || availableRoles.length === 0}
+                  className="w-full rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {staffSubmitting ? '上车中...' : '确认代填上车'}
+                </button>
+              </form>
+            )}
             {schedule.player_roles && (
               <CheckInRoles
                 checkins={checkins}
-                playerRoles={Array.isArray(schedule.player_roles) ? schedule.player_roles.map((r: any) => r.name || r) : []}
+                playerRoles={playerRoles}
                 onKickGuest={onKickGuest}
               />
             )}
