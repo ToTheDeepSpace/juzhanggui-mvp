@@ -1,16 +1,19 @@
-// 灵契数据库建表脚本 (node scripts/setup-lc-tables.mjs)
-// 通过 pg 直连 Supabase PostgreSQL
+// LingQi bootstrap helper. Usage: SUPABASE_DB_URL=postgresql://... node scripts/setup-lc-tables.mjs
 
 import pkg from 'pg';
 const { Client } = pkg;
 
+const connectionString = process.env.SUPABASE_DB_URL;
+if (!connectionString) {
+  throw new Error('Missing SUPABASE_DB_URL');
+}
+
 const client = new Client({
-  connectionString: 'postgresql://postgres:eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNudHJ5YmJ0ZGtpZmdqZmpnbXV3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM1MzE2NSwiZXhwIjoyMDkyOTI5MTY1fQ.Wpu1L-jav4qytJErtCeV-NSd0b1Ko1eMKKjGrwVy6_4@sntrybbtdkifgjfjgmuw.supabase.co:5432/postgres',
+  connectionString,
   ssl: { rejectUnauthorized: false }
 });
 
 const sql = `
--- 灵契创作者档案
 CREATE TABLE IF NOT EXISTS lc_profiles (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   phone TEXT UNIQUE NOT NULL,
@@ -27,7 +30,6 @@ CREATE TABLE IF NOT EXISTS lc_profiles (
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 可接服务
 CREATE TABLE IF NOT EXISTS lc_services (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   creator_id UUID NOT NULL REFERENCES lc_profiles(id) ON DELETE CASCADE,
@@ -39,7 +41,6 @@ CREATE TABLE IF NOT EXISTS lc_services (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 档期
 CREATE TABLE IF NOT EXISTS lc_availability (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   creator_id UUID NOT NULL REFERENCES lc_profiles(id) ON DELETE CASCADE,
@@ -51,7 +52,6 @@ CREATE TABLE IF NOT EXISTS lc_availability (
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
--- 作品集
 CREATE TABLE IF NOT EXISTS lc_portfolio (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   creator_id UUID NOT NULL REFERENCES lc_profiles(id) ON DELETE CASCADE,
@@ -65,7 +65,7 @@ try {
   await client.connect();
   console.log('Connected to Supabase PostgreSQL');
   await client.query(sql);
-  console.log('✅ All lc_ tables created successfully!');
+  console.log('OK all lc_ tables created successfully');
   await client.end();
 } catch (err) {
   console.error('Error:', err.message);

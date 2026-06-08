@@ -1,10 +1,13 @@
 import pkg from 'pg';
 const { Client } = pkg;
 
-const KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNudHJ5YmJ0ZGtpZmdqZmpnbXV3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM1MzE2NSwiZXhwIjoyMDkyOTI5MTY1fQ.Wpu1L-jav4qytJErtCeV-NSd0b1Ko1eMKKjGrwVy6_4';
+const KEY = process.env.SUPABASE_DB_PASSWORD;
+if (!KEY) {
+  throw new Error('Missing SUPABASE_DB_PASSWORD');
+}
 
 const configs = [
-  { name: 'direct (password=key)', cs: `postgresql://postgres:${KEY}@db.sntrybbtdkifgjfjgmuw.supabase.co:5432/postgres` },
+  { name: 'direct', cs: `postgresql://postgres:${KEY}@db.sntrybbtdkifgjfjgmuw.supabase.co:5432/postgres` },
   { name: 'pooler session', cs: `postgresql://postgres.sntrybbtdkifgjfjgmuw:${KEY}@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres` },
   { name: 'pooler transaction', cs: `postgresql://postgres.sntrybbtdkifgjfjgmuw:${KEY}@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres` },
 ];
@@ -46,11 +49,11 @@ async function tryConnect(config) {
     const client = new Client({ connectionString: config.cs, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 5000 });
     await client.connect();
     await client.query(SQL);
-    console.log(`✅ ${config.name}: Tables created!`);
+    console.log(`OK ${config.name}: tables created`);
     await client.end();
     return true;
   } catch (e) {
-    console.log(`❌ ${config.name}: ${e.message.substring(0, 100)}`);
+    console.log(`FAIL ${config.name}: ${e.message.substring(0, 100)}`);
     return false;
   }
 }
@@ -63,4 +66,5 @@ async function main() {
   console.log('\nAll connection methods failed.');
   console.log('Please run the SQL manually in Supabase Dashboard SQL Editor.');
 }
+
 main();

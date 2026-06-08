@@ -1,9 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
-  'https://sntrybbtdkifgjfjgmuw.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNudHJ5YmJ0ZGtpZmdqZmpnbXV3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NzM1MzE2NSwiZXhwIjoyMDkyOTI5MTY1fQ.Wpu1L-jav4qytJErtCeV-NSd0b1Ko1eMKKjGrwVy6_4'
-);
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const tables = [
   `CREATE TABLE IF NOT EXISTS lc_profiles (
@@ -55,11 +59,12 @@ async function main() {
   console.log('Go to Supabase SQL Editor and run:');
   console.log(`
 CREATE OR REPLACE FUNCTION exec_sql(sql_text text)
-RETURNS void AS \$\$
+RETURNS void AS $$
 BEGIN
   EXECUTE sql_text;
 END;
-\$\$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
   `);
 }
+
 main();
