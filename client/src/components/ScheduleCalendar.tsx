@@ -270,6 +270,7 @@ export default function ScheduleCalendar() {
     const dateStr = format(sD, 'yyyy-MM-dd');
     carCounter++;
     const carNum = `#${String(carCounter).padStart(3, '0')}`;
+    const pendingRequestCount = s.pending_request_count || 0;
     return (
       <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openEditModal(s)}>
         <td className="px-4 py-3">
@@ -287,6 +288,14 @@ export default function ScheduleCalendar() {
         <td className="px-4 py-3 text-gray-600">{s.room_name || <span className="text-yellow-500 text-xs">待分配</span>}</td>
         <td className="px-4 py-3">
           <span className="text-sm">{s.player_count || '-'}人</span>
+          {pendingRequestCount > 0 && (
+            <button
+              onClick={(e) => openQRModal(s, e)}
+              className="mt-1 block rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
+            >
+              拼车申请 {pendingRequestCount}
+            </button>
+          )}
           {s.player_roles && (s.player_roles as any[]).length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">
               {(s.player_roles as any[]).map((r: any) => {
@@ -309,6 +318,9 @@ export default function ScheduleCalendar() {
           <td className="px-4 py-3">
             <div className="flex gap-2">
               <button onClick={(e) => { e.stopPropagation(); openEditModal(s); }} className="text-xs text-indigo-600 hover:underline">编辑</button>
+              {pendingRequestCount > 0 && (
+                <button onClick={(e) => openQRModal(s, e)} className="text-xs text-amber-600 hover:underline font-medium">处理申请</button>
+              )}
               {s.status === 'scheduled' && (
                 <button onClick={(e) => { e.stopPropagation(); if (confirm('确认已收到定金？点击确定后该车将锁定。')) { put(`/schedules/${s.id}`, { status: 'locked' }).then(() => loadData()); } }} className="text-xs text-orange-600 hover:underline font-medium">锁车</button>
               )}
@@ -405,6 +417,7 @@ export default function ScheduleCalendar() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="text-left px-4 py-3 text-gray-500 font-medium">车次</th>
                 <th className="text-left px-4 py-3 text-gray-500 font-medium">日期</th>
                 <th className="text-left px-4 py-3 text-gray-500 font-medium">星期</th>
                 <th className="text-left px-4 py-3 text-gray-500 font-medium">类型</th>
@@ -419,7 +432,7 @@ export default function ScheduleCalendar() {
             <tbody>
               {otherActiveSchedules.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="text-center py-10 text-gray-400">
+                  <td colSpan={10} className="text-center py-10 text-gray-400">
                     <button onClick={() => openCreateModal(format(addDays(currentDate, 1), 'yyyy-MM-dd'))} className="text-indigo-600 hover:underline text-sm">
                       暂无排班，点击添加 →
                     </button>
@@ -486,6 +499,7 @@ export default function ScheduleCalendar() {
                   const sc = scripts.find(x => x.id === s.script_id);
                   const sd = parseISO(s.start_time);
                   const ed = parseISO(s.end_time);
+                  const pendingRequestCount = s.pending_request_count || 0;
                   carCounter++;
                   const cn = `#${String(carCounter).padStart(3, '0')}`;
                   return (<tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer" onClick={() => openEditModal(s)}>
@@ -496,7 +510,17 @@ export default function ScheduleCalendar() {
                     <td className="px-4 py-3 text-gray-800">{format(sd, 'HH:mm')}-{format(ed, 'HH:mm')}</td>
                     <td className="px-4 py-3 font-medium text-gray-900">{sc?.name || '未知剧本'}</td>
                     <td className="px-4 py-3 text-gray-600">{s.room_name || '-'}</td>
-                    <td className="px-4 py-3"><span className="text-sm">{s.player_count || '-'}人</span></td>
+                    <td className="px-4 py-3">
+                      <span className="text-sm">{s.player_count || '-'}人</span>
+                      {pendingRequestCount > 0 && (
+                        <button
+                          onClick={(e) => openQRModal(s, e)}
+                          className="mt-1 block rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
+                        >
+                          拼车申请 {pendingRequestCount}
+                        </button>
+                      )}
+                    </td>
                     <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${stColor[s.status] || 'bg-gray-100 text-gray-500'}`}>{stText[s.status] || s.status}</span></td>
                   </tr>);
                 })}

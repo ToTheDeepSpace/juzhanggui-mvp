@@ -18,6 +18,7 @@ export interface ScheduleWithDetails extends Schedule {
   player_roles?: RoleInfo[];
   checkin_count?: number;
   checkins?: CheckinInfo[];
+  pending_request_count?: number;
 }
 
 /** 排期表单数据 */

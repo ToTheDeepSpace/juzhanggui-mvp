@@ -1661,12 +1661,17 @@ app.get('/api/schedules', async (req: any, res: any) => {
     const schedulesWithCheckins = await Promise.all((data || []).map(async (s: any) => {
       const { data: checkins } = await supabase.from('checkins').select('role').eq('schedule_id', s.id);
       const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
+      const { count: pendingRequestCount } = await supabase.from('jzg_carpool_join_requests')
+        .select('*', { count: 'exact', head: true })
+        .eq('schedule_id', s.id)
+        .eq('status', 'pending');
       return {
         ...s, script_name: s.scripts?.name, room_name: s.rooms?.name,
         start_time: `${s.scheduled_date}T${s.start_time}`,
         end_time: `${s.scheduled_date}T${s.end_time}`,
         checkins: checkins || [],
         player_roles: (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' })),
+        pending_request_count: pendingRequestCount || 0,
       };
     }));
     res.json(ok(schedulesWithCheckins));
