@@ -827,6 +827,28 @@ function serializeRoles(rows: any[] | null | undefined) {
   }));
 }
 
+async function publishScriptRowsAsTemplates(scripts: any[], createdBy: string) {
+  const rows = (scripts || []).map((s: any) => ({
+    source_script_id: s.id,
+    source_tenant_id: s.tenant_id || TENANT_ID,
+    name: s.name,
+    duration_minutes: s.duration_minutes || s.duration || 240,
+    min_duration_hours: s.min_duration_hours || ((s.min_duration || s.duration_minutes || 240) / 60),
+    max_duration_hours: s.max_duration_hours || ((s.max_duration || s.duration_minutes || 240) / 60),
+    dm_gender: s.dm_gender || '未指定',
+    player_roles: serializeRoles(s.script_player_roles),
+    actor_roles: serializeRoles(s.script_actor_roles),
+    created_by: createdBy,
+    updated_at: new Date().toISOString(),
+  }));
+  if (!rows.length) return [];
+  const { data, error } = await supabase.from('jzg_script_templates')
+    .upsert(rows, { onConflict: 'source_script_id,source_tenant_id' })
+    .select();
+  if (error) throw error;
+  return data || [];
+}
+
 // ===== Health =====
 app.get('/api/health', (_: any, res: any) => res.json(ok({ message: 'OK' })));
 
@@ -1322,6 +1344,19 @@ app.get('/api/platform/script-templates', async (req: any, res: any) => {
   } catch (e) { res.status(500).json(err(e)); }
 });
 
+app.post('/api/platform/script-templates/sync-existing', async (req: any, res: any) => {
+  try {
+    if (!requireSuperAdmin(req, res)) return;
+    const { data: scripts, error } = await supabase.from('scripts')
+      .select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender)')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    const templates = await publishScriptRowsAsTemplates(scripts || [], '超级管理员同步');
+    await logPlatformAction(req, 'script_templates_sync_existing', { type: 'script_template' }, { count: templates.length });
+    res.json(ok({ count: templates.length, templates }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
 app.get('/api/platform/audit-logs', async (req: any, res: any) => {
   try {
     if (!requireSuperAdmin(req, res)) return;
@@ -1392,26 +1427,8 @@ app.post('/api/scripts/:id/publish-template', async (req: any, res: any) => {
     if (scriptErr) throw scriptErr;
     if (!s) return res.status(404).json(err(new Error('剧本不存在')));
 
-    const payload = {
-      source_script_id: s.id,
-      source_tenant_id: tenantId,
-      name: s.name,
-      duration_minutes: s.duration_minutes || s.duration || 240,
-      min_duration_hours: s.min_duration_hours || ((s.min_duration || s.duration_minutes || 240) / 60),
-      max_duration_hours: s.max_duration_hours || ((s.max_duration || s.duration_minutes || 240) / 60),
-      dm_gender: s.dm_gender || '未指定',
-      player_roles: serializeRoles(s.script_player_roles),
-      actor_roles: serializeRoles(s.script_actor_roles),
-      created_by: '剧司辰后台',
-      updated_at: new Date().toISOString(),
-    };
-
-    const { data, error } = await supabase.from('jzg_script_templates')
-      .upsert(payload, { onConflict: 'source_script_id,source_tenant_id' })
-      .select()
-      .single();
-    if (error) throw error;
-    res.json(ok(data));
+    const data = await publishScriptRowsAsTemplates([{ ...s, tenant_id: tenantId }], '剧司辰后台');
+    res.json(ok(data[0] || null));
   } catch (e) { res.status(500).json(err(e)); }
 });
 

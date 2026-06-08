@@ -431,7 +431,7 @@ function AdminUsersPanel() {
 }
 
 function TemplateCenterPanel() {
-  const { get, loading } = useApi();
+  const { get, post, loading } = useApi();
   const [templates, setTemplates] = useState<ScriptTemplateRow[]>([]);
   const [message, setMessage] = useState('');
 
@@ -449,17 +449,32 @@ function TemplateCenterPanel() {
     void loadTemplates();
   }, []);
 
+  const syncExistingScripts = async () => {
+    const result = await post<{ count: number }>('/platform/script-templates/sync-existing', {});
+    if (result.success) {
+      setMessage(`已同步 ${result.data?.count || 0} 个已有剧本模板`);
+      void loadTemplates();
+    } else {
+      setMessage(result.error || '同步失败');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-lg shadow p-6 flex items-start justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-gray-900">公共剧本模板中心</h2>
-          <p className="text-sm text-gray-500 mt-1">所有店家发布到公共模板库的剧本，其他店家可一键导入。</p>
+          <p className="text-sm text-gray-500 mt-1">所有店家发布到公共模板库的剧本，其他店家可一键导入。旧数据可由超管一键同步进模板库。</p>
           {message && <p className="mt-3 text-sm text-red-600">{message}</p>}
         </div>
-        <button onClick={loadTemplates} disabled={loading} className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm disabled:opacity-50">
-          {loading ? '刷新中' : '刷新'}
-        </button>
+        <div className="flex shrink-0 gap-2">
+          <button onClick={syncExistingScripts} disabled={loading} className="px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-sm hover:bg-emerald-100 disabled:opacity-50">
+            同步已有剧本
+          </button>
+          <button onClick={loadTemplates} disabled={loading} className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm disabled:opacity-50">
+            {loading ? '刷新中' : '刷新'}
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
