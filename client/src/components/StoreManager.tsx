@@ -3,16 +3,24 @@ import { useApi } from '../hooks/useApi';
 import { useAuth } from '../contexts/AuthContext';
 import type { StoreRecord } from '../types';
 
+interface PlatformStoreRecord extends StoreRecord {
+  admin_count?: number;
+  script_count?: number;
+  schedule_count?: number;
+  actor_count?: number;
+  customer_count?: number;
+}
+
 export default function StoreManager() {
   const { get, post, loading } = useApi();
   const { user } = useAuth();
   const isSuperAdmin = user?.role === 'super_admin';
-  const [stores, setStores] = useState<StoreRecord[]>([]);
+  const [stores, setStores] = useState<PlatformStoreRecord[]>([]);
   const [form, setForm] = useState({ name: '', city: '', address: '', contact: '' });
   const [message, setMessage] = useState('');
 
   const loadStores = async () => {
-    const result = await get<StoreRecord[]>('/stores');
+    const result = await get<PlatformStoreRecord[]>(isSuperAdmin ? '/platform/stores' : '/stores');
     if (result.success && result.data) setStores(result.data);
   };
 
@@ -34,6 +42,25 @@ export default function StoreManager() {
     } else {
       setMessage(result.error || '创建失败');
     }
+  };
+
+  const enterStore = async (store: PlatformStoreRecord) => {
+    const token = localStorage.getItem('auth_token');
+    const userJson = localStorage.getItem('admin_user');
+    if (!token || !userJson) {
+      setMessage('当前登录状态异常，请重新登录');
+      return;
+    }
+    const result = await post<{ token: string; user: unknown } >('/platform/impersonate-store', { storeId: store.id });
+    if (!result.success || !result.data?.token) {
+      setMessage(result.error || '进入店家视角失败');
+      return;
+    }
+    localStorage.setItem('super_admin_token_backup', token);
+    localStorage.setItem('super_admin_user_backup', userJson);
+    localStorage.setItem('auth_token', result.data.token);
+    localStorage.setItem('admin_user', JSON.stringify(result.data.user));
+    window.location.href = '/store/manage/schedule';
   };
 
   return (
@@ -84,6 +111,25 @@ export default function StoreManager() {
               <span className="text-xs px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 font-semibold">{store.status}</span>
             </div>
             {store.contact && <p className="text-sm text-gray-500 mt-3">联系：{store.contact}</p>}
+            {isSuperAdmin && (
+              <>
+                <div className="grid grid-cols-5 gap-2 mt-4 text-center text-xs text-gray-500">
+                  <div className="rounded-lg bg-gray-50 p-2"><p className="font-semibold text-gray-900">{store.admin_count || 0}</p><p>账号</p></div>
+                  <div className="rounded-lg bg-gray-50 p-2"><p className="font-semibold text-gray-900">{store.script_count || 0}</p><p>剧本</p></div>
+                  <div className="rounded-lg bg-gray-50 p-2"><p className="font-semibold text-gray-900">{store.schedule_count || 0}</p><p>排期</p></div>
+                  <div className="rounded-lg bg-gray-50 p-2"><p className="font-semibold text-gray-900">{store.actor_count || 0}</p><p>卡司</p></div>
+                  <div className="rounded-lg bg-gray-50 p-2"><p className="font-semibold text-gray-900">{store.customer_count || 0}</p><p>会员</p></div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => enterStore(store)}
+                  disabled={loading}
+                  className="mt-4 w-full px-3 py-2 rounded-lg bg-slate-900 text-white text-sm hover:bg-slate-700 disabled:opacity-50"
+                >
+                  进入店家视角
+                </button>
+              </>
+            )}
             <p className="text-xs text-gray-400 mt-4">店家ID：{store.id}</p>
           </article>
         ))}

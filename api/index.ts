@@ -776,6 +776,34 @@ async function touchAdminLogin(userId: string, provider: string) {
     .update({ last_login_at: new Date().toISOString(), auth_provider: provider, updated_at: new Date().toISOString() })
     .eq('id', userId);
 }
+async function logPlatformAction(req: any, action: string, target?: { type?: string; id?: unknown; label?: unknown }, detail?: Record<string, any>) {
+  try {
+    const actor = await getAdminUserById(req.user?.adminUserId);
+    await supabase.from('jzg_platform_audit_logs').insert({
+      actor_admin_user_id: actor?.id || null,
+      actor_email: actor?.email || req.user?.email || null,
+      actor_role: actor?.role || req.user?.adminRole || null,
+      action,
+      target_type: target?.type || null,
+      target_id: target?.id ? String(target.id) : null,
+      target_label: target?.label ? String(target.label) : null,
+      detail: detail || {},
+      ip_address: getClientIp(req),
+      user_agent: getUserAgent(req),
+    });
+  } catch (logErr) {
+    console.warn('[platform-audit-log-failed]', err(logErr).error);
+  }
+}
+async function getStoreMapByIds(ids: unknown[]) {
+  const uniqueIds = Array.from(new Set(ids.map(id => cleanText(id, 80)).filter(Boolean)));
+  if (uniqueIds.length === 0) return new Map<string, any>();
+  const { data, error } = await supabase.from('jzg_stores')
+    .select('id,name,city,status')
+    .in('id', uniqueIds);
+  if (error) throw error;
+  return new Map((data || []).map((store: any) => [store.id, store]));
+}
 async function createStoreForAdminAccount(name: string, city?: string | null, contact?: string | null) {
   const storeName = cleanText(name, 120) || '新店家';
   const { data, error } = await supabase.from('jzg_stores').insert({
@@ -1134,6 +1162,8 @@ app.get('/api/platform/summary', async (req: any, res: any) => {
       scriptsCount,
       schedulesCount,
       recentStores,
+      recentAdminUsers,
+      recentSchedules,
     ] = await Promise.all([
       supabase.from('jzg_stores').select('*', { count: 'exact', head: true }),
       supabase.from('jzg_stores').select('*', { count: 'exact', head: true }).eq('status', 'active'),
@@ -1141,9 +1171,20 @@ app.get('/api/platform/summary', async (req: any, res: any) => {
       supabase.from('scripts').select('*', { count: 'exact', head: true }),
       supabase.from('schedules').select('*', { count: 'exact', head: true }),
       supabase.from('jzg_stores').select('*').order('created_at', { ascending: false }).limit(8),
+      supabase.from('jzg_admin_users').select('id,email,phone,display_name,role,status,tenant_id,store_id,last_login_at,created_at').order('created_at', { ascending: false }).limit(8),
+      supabase.from('schedules').select('id,tenant_id,script_id,scheduled_date,start_time,status,created_at').order('created_at', { ascending: false }).limit(8),
     ]);
-    for (const result of [storesCount, activeStoresCount, adminUsersCount, scriptsCount, schedulesCount, recentStores]) {
+    for (const result of [storesCount, activeStoresCount, adminUsersCount, scriptsCount, schedulesCount, recentStores, recentAdminUsers, recentSchedules]) {
       if (result.error) throw result.error;
+    }
+    const adminStoreMap = await getStoreMapByIds((recentAdminUsers.data || []).map((user: any) => user.store_id || user.tenant_id));
+    const scheduleStoreMap = await getStoreMapByIds((recentSchedules.data || []).map((schedule: any) => schedule.tenant_id));
+    const scriptIds = Array.from(new Set((recentSchedules.data || []).map((schedule: any) => cleanText(schedule.script_id, 80)).filter(Boolean)));
+    const scriptsById = new Map<string, any>();
+    if (scriptIds.length) {
+      const { data: scripts, error: scriptsErr } = await supabase.from('scripts').select('id,name').in('id', scriptIds);
+      if (scriptsErr) throw scriptsErr;
+      (scripts || []).forEach((script: any) => scriptsById.set(script.id, script));
     }
     res.json(ok({
       storeCount: storesCount.count || 0,
@@ -1152,7 +1193,145 @@ app.get('/api/platform/summary', async (req: any, res: any) => {
       scriptCount: scriptsCount.count || 0,
       scheduleCount: schedulesCount.count || 0,
       recentStores: recentStores.data || [],
+      recentAdminUsers: (recentAdminUsers.data || []).map((user: any) => ({
+        ...user,
+        store: adminStoreMap.get(user.store_id || user.tenant_id) || null,
+      })),
+      recentSchedules: (recentSchedules.data || []).map((schedule: any) => ({
+        ...schedule,
+        store: scheduleStoreMap.get(schedule.tenant_id) || null,
+        script: scriptsById.get(schedule.script_id) || null,
+      })),
     }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.get('/api/platform/stores', async (req: any, res: any) => {
+  try {
+    if (!requireSuperAdmin(req, res)) return;
+    const { data: stores, error } = await supabase.from('jzg_stores').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    const rows = await Promise.all((stores || []).map(async (store: any) => {
+      const [admins, scripts, schedules, actors, customers] = await Promise.all([
+        supabase.from('jzg_admin_users').select('*', { count: 'exact', head: true }).eq('store_id', store.id),
+        supabase.from('scripts').select('*', { count: 'exact', head: true }).eq('tenant_id', store.id),
+        supabase.from('schedules').select('*', { count: 'exact', head: true }).eq('tenant_id', store.id),
+        supabase.from('actors').select('*', { count: 'exact', head: true }).eq('tenant_id', store.id),
+        supabase.from('customers').select('*', { count: 'exact', head: true }).eq('tenant_id', store.id),
+      ]);
+      return {
+        ...store,
+        admin_count: admins.count || 0,
+        script_count: scripts.count || 0,
+        schedule_count: schedules.count || 0,
+        actor_count: actors.count || 0,
+        customer_count: customers.count || 0,
+      };
+    }));
+    res.json(ok(rows));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.get('/api/platform/admin-users', async (req: any, res: any) => {
+  try {
+    if (!requireSuperAdmin(req, res)) return;
+    const { data, error } = await supabase.from('jzg_admin_users')
+      .select('id,email,phone,display_name,role,status,tenant_id,store_id,email_verified_at,phone_verified_at,last_login_at,created_at,updated_at')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) throw error;
+    const storeMap = await getStoreMapByIds((data || []).map((user: any) => user.store_id || user.tenant_id));
+    res.json(ok((data || []).map((user: any) => ({
+      ...user,
+      store: storeMap.get(user.store_id || user.tenant_id) || null,
+    }))));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.put('/api/platform/admin-users/:id/status', async (req: any, res: any) => {
+  try {
+    if (!requireSuperAdmin(req, res)) return;
+    const status = cleanText(req.body?.status, 20);
+    if (!['active', 'disabled'].includes(status)) return res.status(400).json(err(new Error('账号状态无效')));
+    const { data, error } = await supabase.from('jzg_admin_users')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select('id,email,role,status')
+      .single();
+    if (error) throw error;
+    await logPlatformAction(req, `admin_user_${status}`, { type: 'admin_user', id: data.id, label: data.email }, { status });
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/platform/admin-users/:id/reset-password', async (req: any, res: any) => {
+  try {
+    if (!requireSuperAdmin(req, res)) return;
+    const tempPassword = `JSC-${crypto.randomBytes(9).toString('base64url')}-9!`;
+    const { data, error } = await supabase.from('jzg_admin_users')
+      .update({
+        password_hash: await bcrypt.hash(tempPassword, 10),
+        auth_provider: 'super_admin_password_reset',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.id)
+      .select('id,email,role,status')
+      .single();
+    if (error) throw error;
+    await logPlatformAction(req, 'admin_user_reset_password', { type: 'admin_user', id: data.id, label: data.email });
+    res.json(ok({ user: data, tempPassword }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/platform/impersonate-store', async (req: any, res: any) => {
+  try {
+    if (!requireSuperAdmin(req, res)) return;
+    const storeId = cleanText(req.body?.storeId, 80);
+    const { data: store, error } = await supabase.from('jzg_stores').select('*').eq('id', storeId).single();
+    if (error) throw error;
+    if (!store) return res.status(404).json(err(new Error('店家不存在')));
+    const sessionUser = {
+      id: req.user?.adminUserId,
+      tenant_id: store.id,
+      store_id: store.id,
+      email: req.user?.email,
+      display_name: `超管查看：${store.name}`,
+      role: 'store_admin',
+      status: 'active',
+    };
+    await logPlatformAction(req, 'impersonate_store', { type: 'store', id: store.id, label: store.name });
+    res.json(ok({ token: makeAdminToken(sessionUser), user: publicAdminUser(sessionUser), store }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.get('/api/platform/script-templates', async (req: any, res: any) => {
+  try {
+    if (!requireSuperAdmin(req, res)) return;
+    const { data, error } = await supabase.from('jzg_script_templates')
+      .select('*')
+      .order('usage_count', { ascending: false })
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error && String(error.message || '').includes('jzg_script_templates')) return res.json(ok([]));
+    if (error) throw error;
+    const storeMap = await getStoreMapByIds((data || []).map((template: any) => template.source_tenant_id));
+    res.json(ok((data || []).map((template: any) => ({
+      ...template,
+      store: storeMap.get(template.source_tenant_id) || null,
+    }))));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.get('/api/platform/audit-logs', async (req: any, res: any) => {
+  try {
+    if (!requireSuperAdmin(req, res)) return;
+    const { data, error } = await supabase.from('jzg_platform_audit_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error && String(error.message || '').includes('jzg_platform_audit_logs')) return res.json(ok([]));
+    if (error) throw error;
+    res.json(ok(data || []));
   } catch (e) { res.status(500).json(err(e)); }
 });
 
@@ -1183,6 +1362,7 @@ app.post('/api/stores', async (req: any, res: any) => {
       status: 'active',
     }).select().single();
     if (error) throw error;
+    await logPlatformAction(req, 'store_create', { type: 'store', id: data.id, label: data.name }, { city: data.city, address: data.address });
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
