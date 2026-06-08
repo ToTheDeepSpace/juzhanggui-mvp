@@ -32,6 +32,9 @@ export default function MainLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
+  const { post } = useApi();
+  const [switchingStore, setSwitchingStore] = useState(false);
+  const [identityMessage, setIdentityMessage] = useState('');
   const isSuperAdmin = user?.role === 'super_admin';
   const tabs = isSuperAdmin
     ? [
@@ -40,13 +43,6 @@ export default function MainLayout() {
       { id: 'adminUsers' as Tab, label: '👤 账号管理', color: 'bg-cyan-600', path: `${basePath}/admin-users` },
       { id: 'templates' as Tab, label: '📚 模板中心', color: 'bg-emerald-600', path: `${basePath}/templates` },
       { id: 'auditLogs' as Tab, label: '🧾 操作日志', color: 'bg-amber-600', path: `${basePath}/audit-logs` },
-      { id: 'schedule' as Tab, label: '📅 我的排期', color: 'bg-blue-500', path: `${basePath}/schedule` },
-      { id: 'rooms' as Tab, label: '🚪 我的房间', color: 'bg-green-500', path: `${basePath}/rooms` },
-      { id: 'actors' as Tab, label: '🎭 我的卡司', color: 'bg-purple-500', path: `${basePath}/actors` },
-      { id: 'scripts' as Tab, label: '📖 我的剧本', color: 'bg-orange-500', path: `${basePath}/scripts` },
-      { id: 'evaluations' as Tab, label: '⭐ 我的评价', color: 'bg-amber-500', path: `${basePath}/evaluations` },
-      { id: 'customers' as Tab, label: '⭐ 我的会员', color: 'bg-yellow-500', path: `${basePath}/customers` },
-      { id: 'conflicts' as Tab, label: '⚖️ 我的调解', color: 'bg-red-500', path: `${basePath}/conflicts` },
     ]
     : storeTabs;
   
@@ -58,6 +54,29 @@ export default function MainLayout() {
     if (tab) {
       navigate(tab.path);
     }
+  };
+
+  const enterOwnStoreIdentity = async () => {
+    const storeId = user?.storeId || user?.tenantId;
+    const token = localStorage.getItem('auth_token');
+    const userJson = localStorage.getItem('admin_user');
+    if (!storeId || !token || !userJson) {
+      setIdentityMessage('当前超管账号还没有绑定店家，先到店家管理里进入指定店家。');
+      return;
+    }
+    setSwitchingStore(true);
+    setIdentityMessage('');
+    const result = await post<{ token: string; user: unknown }>('/platform/impersonate-store', { storeId });
+    setSwitchingStore(false);
+    if (!result.success || !result.data?.token) {
+      setIdentityMessage(result.error || '进入店家身份失败');
+      return;
+    }
+    localStorage.setItem('super_admin_token_backup', token);
+    localStorage.setItem('super_admin_user_backup', userJson);
+    localStorage.setItem('auth_token', result.data.token);
+    localStorage.setItem('admin_user', JSON.stringify(result.data.user));
+    window.location.href = `${basePath}/schedule`;
   };
 
   return (
@@ -74,6 +93,16 @@ export default function MainLayout() {
               </h1>
             </div>
             <div className="flex items-center gap-2">
+              {isSuperAdmin && (
+                <button
+                  type="button"
+                  onClick={enterOwnStoreIdentity}
+                  disabled={switchingStore}
+                  className="px-3 py-1.5 text-sm rounded-lg bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-50 transition-colors"
+                >
+                  {switchingStore ? '切换中...' : '进入店家身份'}
+                </button>
+              )}
               <AccountSecurityMenu />
               <NotificationBell />
               <button
@@ -84,6 +113,11 @@ export default function MainLayout() {
               </button>
             </div>
           </div>
+          {identityMessage && (
+            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+              {identityMessage}
+            </div>
+          )}
           <nav className="flex space-x-2 overflow-x-auto pb-1">
             {tabs.map((tab) => (
               <button
@@ -110,14 +144,15 @@ export default function MainLayout() {
           {isSuperAdmin && <Route path="admin-users" element={<AdminUsersPanel />} />}
           {isSuperAdmin && <Route path="templates" element={<TemplateCenterPanel />} />}
           {isSuperAdmin && <Route path="audit-logs" element={<AuditLogsPanel />} />}
-          <Route path="rooms" element={<RoomManager />} />
-          <Route path="actors" element={<ActorManager />} />
-          <Route path="scripts" element={<ScriptManager />} />
-          <Route path="schedule" element={<ScheduleCalendar />} />
-          <Route path="evaluations" element={<EvaluationManager />} />
-          <Route path="customers" element={<CustomerManager />} />
-          <Route path="conflicts" element={<ConflictResolutionPage />} />
+          {!isSuperAdmin && <Route path="rooms" element={<RoomManager />} />}
+          {!isSuperAdmin && <Route path="actors" element={<ActorManager />} />}
+          {!isSuperAdmin && <Route path="scripts" element={<ScriptManager />} />}
+          {!isSuperAdmin && <Route path="schedule" element={<ScheduleCalendar />} />}
+          {!isSuperAdmin && <Route path="evaluations" element={<EvaluationManager />} />}
+          {!isSuperAdmin && <Route path="customers" element={<CustomerManager />} />}
+          {!isSuperAdmin && <Route path="conflicts" element={<ConflictResolutionPage />} />}
           <Route path="" element={<Navigate to={isSuperAdmin ? `${basePath}/platform` : `${basePath}/schedule`} replace />} />
+          <Route path="*" element={<Navigate to={isSuperAdmin ? `${basePath}/platform` : `${basePath}/schedule`} replace />} />
         </Routes>
       </main>
 
