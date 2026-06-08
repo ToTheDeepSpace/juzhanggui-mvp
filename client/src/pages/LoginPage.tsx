@@ -2,33 +2,44 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
-type LoginMode = 'email' | 'phone' | 'register';
+type LoginMode = 'emailCode' | 'email' | 'phone' | 'register';
 
 const modeTabs: Array<{ id: LoginMode; label: string }> = [
-  { id: 'email', label: '邮箱登录' },
+  { id: 'emailCode', label: '邮箱验证码' },
+  { id: 'email', label: '密码登录' },
   { id: 'phone', label: '手机登录' },
   { id: 'register', label: '注册账号' },
 ];
 
 interface AuthConfig {
+  emailCodeEnabled: boolean;
+  emailCodeRequired: boolean;
   phoneEnabled: boolean;
   smsEnabled: boolean;
   legacyPasswordEnabled: boolean;
 }
 
 export default function LoginPage() {
-  const [mode, setMode] = useState<LoginMode>('email');
+  const [mode, setMode] = useState<LoginMode>('emailCode');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
-  const [code, setCode] = useState('');
+  const [emailCode, setEmailCode] = useState('');
+  const [phoneCode, setPhoneCode] = useState('');
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [sendingCode, setSendingCode] = useState(false);
-  const [authConfig, setAuthConfig] = useState<AuthConfig>({ phoneEnabled: true, smsEnabled: false, legacyPasswordEnabled: false });
-  const { loginWithEmail, loginWithPhone, registerWithEmail, sendAdminCode } = useAuth();
+  const [sendingEmailCode, setSendingEmailCode] = useState(false);
+  const [sendingPhoneCode, setSendingPhoneCode] = useState(false);
+  const [authConfig, setAuthConfig] = useState<AuthConfig>({
+    emailCodeEnabled: false,
+    emailCodeRequired: false,
+    phoneEnabled: true,
+    smsEnabled: false,
+    legacyPasswordEnabled: false,
+  });
+  const { loginWithEmail, loginWithEmailCode, loginWithPhone, registerWithEmail, sendAdminCode, sendAdminEmailCode } = useAuth();
   const navigate = useNavigate();
 
   const goDashboard = () => navigate('/store/manage', { replace: true });
@@ -46,12 +57,35 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (mode === 'phone' && !authConfig.smsEnabled) {
-      setMode('email');
+      setMode(authConfig.emailCodeEnabled ? 'emailCode' : 'email');
       setInfo('短信验证码暂未启用，请先使用邮箱登录或注册。');
     }
-  }, [authConfig.smsEnabled, mode]);
+    if (mode === 'emailCode' && !authConfig.emailCodeEnabled) {
+      setMode('email');
+      setInfo('邮箱验证码暂未启用，请先使用密码登录。');
+    }
+  }, [authConfig.emailCodeEnabled, authConfig.smsEnabled, mode]);
 
-  const sendCode = async () => {
+  const sendEmailCode = async () => {
+    if (!authConfig.emailCodeEnabled) {
+      setError('邮箱验证码暂未启用，请先使用密码登录');
+      return;
+    }
+    if (!email.trim()) {
+      setError('请先填写邮箱');
+      return;
+    }
+    setSendingEmailCode(true);
+    setError('');
+    setInfo('');
+    const purpose = mode === 'register' ? 'admin_register' : 'admin_login';
+    const result = await sendAdminEmailCode(email.trim(), purpose);
+    setSendingEmailCode(false);
+    if (result.success) setInfo('验证码已发送，请查看邮箱');
+    else setError(result.error || '邮箱验证码发送失败');
+  };
+
+  const sendPhoneCode = async () => {
     if (!authConfig.smsEnabled) {
       setError('短信验证码暂未启用，请先使用邮箱登录');
       return;
@@ -60,11 +94,11 @@ export default function LoginPage() {
       setError('请填写正确的手机号');
       return;
     }
-    setSendingCode(true);
+    setSendingPhoneCode(true);
     setError('');
     setInfo('');
     const result = await sendAdminCode(phone);
-    setSendingCode(false);
+    setSendingPhoneCode(false);
     if (result.success) setInfo('验证码已发送，请查看短信');
     else setError(result.error || '验证码发送失败');
   };
@@ -76,7 +110,14 @@ export default function LoginPage() {
     setInfo('');
 
     let result: { success: boolean; error?: string } = { success: false, error: '登录方式无效' };
-    if (mode === 'email') {
+    if (mode === 'emailCode') {
+      if (!email.trim() || !emailCode.trim()) {
+        setSubmitting(false);
+        setError('请填写邮箱和验证码');
+        return;
+      }
+      result = await loginWithEmailCode(email.trim(), emailCode.trim());
+    } else if (mode === 'email') {
       if (!email.trim() || !password.trim()) {
         setSubmitting(false);
         setError('请填写邮箱和密码');
@@ -89,24 +130,25 @@ export default function LoginPage() {
         setError('短信验证码暂未启用，请先使用邮箱登录');
         return;
       }
-      if (!phone.trim() || !code.trim()) {
+      if (!phone.trim() || !phoneCode.trim()) {
         setSubmitting(false);
         setError('请填写手机号和验证码');
         return;
       }
-      result = await loginWithPhone(phone.trim(), code.trim());
+      result = await loginWithPhone(phone.trim(), phoneCode.trim());
     } else if (mode === 'register') {
-      if (!email.trim() || !password.trim()) {
+      if (!email.trim() || !password.trim() || !emailCode.trim()) {
         setSubmitting(false);
-        setError('请填写邮箱和密码');
+        setError('请填写邮箱、邮箱验证码和密码');
         return;
       }
       result = await registerWithEmail({
         email: email.trim(),
         password,
         displayName: displayName.trim() || undefined,
+        emailCode: emailCode.trim(),
         phone: phone.trim() || undefined,
-        code: code.trim() || undefined,
+        phoneCode: phoneCode.trim() || undefined,
       });
     }
 
@@ -116,7 +158,9 @@ export default function LoginPage() {
   };
 
   const showPhoneCode = authConfig.smsEnabled && (mode === 'phone' || mode === 'register');
-  const showEmail = mode === 'email' || mode === 'register';
+  const showEmail = mode === 'email' || mode === 'emailCode' || mode === 'register';
+  const showEmailCode = authConfig.emailCodeEnabled && (mode === 'emailCode' || mode === 'register');
+  const showPassword = mode === 'email' || mode === 'register';
 
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
@@ -129,16 +173,16 @@ export default function LoginPage() {
             </svg>
           </div>
           <h1 className="text-2xl font-bold text-white">剧司辰店家后台</h1>
-          <p className="text-slate-300 mt-1">用邮箱或手机号进入排期系统</p>
+          <p className="text-slate-300 mt-1">用邮箱验证码、密码或手机号进入排期系统</p>
         </div>
 
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl p-6 shadow-xl border border-slate-200 space-y-4">
-          <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1">
+          <div className="grid grid-cols-4 gap-1 rounded-xl bg-slate-100 p-1">
             {modeTabs.map(tab => (
               <button
                 key={tab.id}
                 type="button"
-                disabled={tab.id === 'phone' && !authConfig.smsEnabled}
+                disabled={(tab.id === 'phone' && !authConfig.smsEnabled) || (tab.id === 'emailCode' && !authConfig.emailCodeEnabled)}
                 onClick={() => {
                   setMode(tab.id);
                   setError('');
@@ -163,11 +207,24 @@ export default function LoginPage() {
           {showEmail && (
             <Field label="邮箱">
               <input type="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="name@example.com"
-                className={inputClass} autoFocus={mode === 'email'} />
+                className={inputClass} autoFocus={mode === 'email' || mode === 'emailCode'} />
             </Field>
           )}
 
-          {showEmail && (
+          {showEmailCode && (
+            <Field label={mode === 'register' ? '邮箱验证码' : '验证码'}>
+              <div className="flex gap-2">
+                <input value={emailCode} onChange={event => setEmailCode(event.target.value)} placeholder="6位验证码"
+                  className={`${inputClass} flex-1`} inputMode="numeric" />
+                <button type="button" onClick={sendEmailCode} disabled={sendingEmailCode || !email.trim()}
+                  className="px-3 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold disabled:opacity-40">
+                  {sendingEmailCode ? '发送中' : '发验证码'}
+                </button>
+              </div>
+            </Field>
+          )}
+
+          {showPassword && (
             <Field label={mode === 'register' ? '设置密码' : '密码'}>
               <input type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder={mode === 'register' ? '至少 8 位' : '请输入密码'}
                 className={inputClass} />
@@ -184,11 +241,11 @@ export default function LoginPage() {
           {showPhoneCode && (
             <Field label={mode === 'register' ? '验证码（绑定手机时填写）' : '验证码'}>
               <div className="flex gap-2">
-                <input value={code} onChange={event => setCode(event.target.value)} placeholder="6位验证码"
-                  className={`${inputClass} flex-1`} />
-                <button type="button" onClick={sendCode} disabled={sendingCode || !phone.trim()}
+                <input value={phoneCode} onChange={event => setPhoneCode(event.target.value)} placeholder="6位验证码"
+                  className={`${inputClass} flex-1`} inputMode="numeric" />
+                <button type="button" onClick={sendPhoneCode} disabled={sendingPhoneCode || !phone.trim()}
                   className="px-3 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold disabled:opacity-40">
-                  {sendingCode ? '发送中' : '发验证码'}
+                  {sendingPhoneCode ? '发送中' : '发验证码'}
                 </button>
               </div>
             </Field>
@@ -206,7 +263,7 @@ export default function LoginPage() {
           </button>
 
           <p className="text-xs text-slate-500 leading-6">
-            邮箱账号可以先注册使用，短信启用后可在后台绑定手机号并用验证码登录。
+            注册账号必须先验证邮箱；短信启用后可在后台绑定手机号并用验证码登录。
           </p>
         </form>
       </div>

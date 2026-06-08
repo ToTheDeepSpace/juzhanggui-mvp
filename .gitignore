@@ -29,6 +29,9 @@ api/index.js
 *.txt
 *.bak
 
+# Supabase CLI 本地链接缓存
+supabase/.temp/
+
 # IDE
 .idea/
 .vscode/

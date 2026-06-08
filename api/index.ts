@@ -30,12 +30,20 @@ const PLAYER_LOGIN_CODE = process.env.PLAYER_LOGIN_CODE || (process.env.NODE_ENV
 const AUTH_CODE_PEPPER = process.env.AUTH_CODE_PEPPER || JWT_SECRET;
 const SMS_CODE_TTL_MINUTES = Number(process.env.SMS_CODE_TTL_MINUTES || 5);
 const SMS_CODE_COOLDOWN_SECONDS = Number(process.env.SMS_CODE_COOLDOWN_SECONDS || 60);
+const EMAIL_CODE_TTL_MINUTES = Number(process.env.EMAIL_CODE_TTL_MINUTES || 10);
+const EMAIL_CODE_COOLDOWN_SECONDS = Number(process.env.EMAIL_CODE_COOLDOWN_SECONDS || 60);
 const TENCENT_SMS_REGION = process.env.TENCENT_SMS_REGION || 'ap-guangzhou';
 const TENCENT_SMS_SDK_APP_ID = process.env.TENCENT_SMS_SDK_APP_ID || '';
 const TENCENT_SMS_SIGN_NAME = process.env.TENCENT_SMS_SIGN_NAME || '';
 const TENCENT_SMS_TEMPLATE_ID = process.env.TENCENT_SMS_TEMPLATE_ID || '';
 const TENCENTCLOUD_SECRET_ID = process.env.TENCENTCLOUD_SECRET_ID || '';
 const TENCENTCLOUD_SECRET_KEY = process.env.TENCENTCLOUD_SECRET_KEY || '';
+const TENCENT_SES_REGION = process.env.TENCENT_SES_REGION || 'ap-hongkong';
+const TENCENT_SES_FROM_EMAIL = process.env.TENCENT_SES_FROM_EMAIL || 'no-reply@mail.jusichen.com';
+const TENCENT_SES_FROM_NAME = process.env.TENCENT_SES_FROM_NAME || '剧司辰';
+const TENCENT_SES_REPLY_TO = process.env.TENCENT_SES_REPLY_TO || 'basara-twenty@foxmail.com';
+const TENCENT_SES_TEMPLATE_ID = process.env.TENCENT_SES_TEMPLATE_ID || '';
+const TENCENT_SES_ALLOW_SIMPLE = process.env.TENCENT_SES_ALLOW_SIMPLE === 'true';
 const JUZHANGGUI_SITE_URL = (process.env.JUZHANGGUI_SITE_URL || process.env.PUBLIC_SITE_URL || 'https://jusichen.com').replace(/\/$/, '');
 const LINGQI_SITE_URL = (process.env.LINGQI_SITE_URL || process.env.VITE_LINGQI_SITE_URL || 'https://lingqi.jusichen.com').replace(/\/$/, '');
 const JZG_WECHAT_OPEN_APP_ID = process.env.JZG_WECHAT_OPEN_APP_ID || process.env.WECHAT_OPEN_APP_ID || '';
@@ -53,6 +61,8 @@ const PUBLIC_PATHS = [
   '/api/auth/verify',
   '/api/auth/config',
   '/api/auth/send-code',
+  '/api/auth/email/send-code',
+  '/api/auth/email-login',
   '/api/auth/register',
   '/api/auth/phone-login',
   '/api/player/auth/config',
@@ -162,9 +172,20 @@ function normalizeEmail(input: unknown): string {
 }
 function makeAuthPhoneHash(phone: string) { return sha256(`auth-phone:${phone}`); }
 function makeAuthCodeHash(phone: string, code: string) { return sha256(`auth-code:${AUTH_CODE_PEPPER}:${phone}:${code}`); }
+function makeAuthEmailHash(email: string) { return sha256(`auth-email:${email.toLowerCase()}`); }
+function makeAuthEmailCodeHash(email: string, code: string) { return sha256(`auth-email-code:${AUTH_CODE_PEPPER}:${email.toLowerCase()}:${code}`); }
 function makeSmsCode() {
   if (process.env.NODE_ENV !== 'production' && PLAYER_LOGIN_CODE) return PLAYER_LOGIN_CODE;
   return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+}
+function makeEmailCode() {
+  if (process.env.NODE_ENV !== 'production' && PLAYER_LOGIN_CODE) return PLAYER_LOGIN_CODE;
+  return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+}
+function maskEmail(email: string) {
+  const [name, domain] = email.split('@');
+  const left = name.length <= 2 ? `${name[0] || '*'}*` : `${name.slice(0, 2)}***${name.slice(-1)}`;
+  return `${left}@${domain}`;
 }
 function getClientIp(req: any) {
   const forwarded = req.headers['x-forwarded-for'];
@@ -178,8 +199,19 @@ function getUserAgent(req: any) {
 function isTencentSmsConfigured() {
   return Boolean(TENCENTCLOUD_SECRET_ID && TENCENTCLOUD_SECRET_KEY && TENCENT_SMS_SDK_APP_ID && TENCENT_SMS_SIGN_NAME && TENCENT_SMS_TEMPLATE_ID);
 }
+function isTencentEmailConfigured() {
+  return Boolean(
+    TENCENTCLOUD_SECRET_ID &&
+    TENCENTCLOUD_SECRET_KEY &&
+    TENCENT_SES_FROM_EMAIL &&
+    (TENCENT_SES_TEMPLATE_ID || TENCENT_SES_ALLOW_SIMPLE)
+  );
+}
 function isPhoneCodeLoginAvailable() {
   return isTencentSmsConfigured() || process.env.NODE_ENV !== 'production';
+}
+function isEmailCodeLoginAvailable() {
+  return isTencentEmailConfigured() || process.env.NODE_ENV !== 'production';
 }
 function isWechatLoginConfigured() { return Boolean(JZG_WECHAT_OPEN_APP_ID && JZG_WECHAT_OPEN_APP_SECRET); }
 function safeFrontendRedirect(input: unknown) {
@@ -504,6 +536,53 @@ async function sendTencentSmsCode(phone: string, code: string) {
   if (status && status.Code && status.Code !== 'Ok') throw new Error(status.Message || `短信发送失败：${status.Code}`);
   return { provider: 'tencentcloud' };
 }
+
+async function sendTencentEmailCode(email: string, code: string) {
+  if (!isTencentEmailConfigured()) {
+    if (process.env.NODE_ENV === 'production') throw new Error('邮箱验证码服务未配置');
+    console.log(`[邮箱验证码][dev] 发送到 ${email}: ${code}`);
+    return { provider: 'dev-log' };
+  }
+
+  const imported = await import('tencentcloud-sdk-nodejs');
+  const tencentcloud = (imported as unknown as { default?: any }).default || imported as any;
+  const SesClient = tencentcloud.ses.v20201002.Client;
+  const client = new SesClient({
+    credential: { secretId: TENCENTCLOUD_SECRET_ID, secretKey: TENCENTCLOUD_SECRET_KEY },
+    region: TENCENT_SES_REGION,
+    profile: { httpProfile: { endpoint: 'ses.tencentcloudapi.com', reqMethod: 'POST', reqTimeout: 10 } },
+  });
+
+  const params: Record<string, any> = {
+    FromEmailAddress: TENCENT_SES_FROM_EMAIL,
+    ReplyToAddresses: TENCENT_SES_REPLY_TO,
+    Destination: [email],
+    Subject: '剧司辰邮箱验证码',
+    TriggerType: 1,
+  };
+
+  if (TENCENT_SES_TEMPLATE_ID) {
+    params.Template = {
+      TemplateID: Number(TENCENT_SES_TEMPLATE_ID),
+      TemplateData: JSON.stringify({
+        code,
+        ttl: String(EMAIL_CODE_TTL_MINUTES),
+        product: '剧司辰',
+      }),
+    };
+  } else {
+    const text = `您的剧司辰验证码是：${code}。${EMAIL_CODE_TTL_MINUTES} 分钟内有效。若非本人操作，请忽略本邮件。`;
+    const html = `<html><body><p>您的剧司辰验证码是：</p><p style="font-size:24px;font-weight:700;letter-spacing:4px;">${code}</p><p>${EMAIL_CODE_TTL_MINUTES} 分钟内有效。若非本人操作，请忽略本邮件。</p></body></html>`;
+    params.Simple = {
+      Text: Buffer.from(text, 'utf8').toString('base64'),
+      Html: Buffer.from(html, 'utf8').toString('base64'),
+    };
+  }
+
+  const response = await client.SendEmail(params);
+  return { provider: 'tencentcloud-ses', messageId: response?.MessageId || null };
+}
+
 async function createAndSendPhoneCode(req: any, purpose: string, rawPhone: unknown) {
   const phone = normalizeChinaPhone(rawPhone);
   const phoneHash = makeAuthPhoneHash(phone);
@@ -541,6 +620,53 @@ async function createAndSendPhoneCode(req: any, purpose: string, rawPhone: unkno
     throw sendErr;
   }
 }
+
+async function createAndSendEmailCode(req: any, purpose: string, rawEmail: unknown) {
+  const email = normalizeEmail(rawEmail);
+  if (!['admin_register', 'admin_login'].includes(purpose)) throw new Error('邮箱验证码用途无效');
+
+  const existing = await getAdminUserByEmail(email);
+  if (purpose === 'admin_register' && existing) throw new Error('这个邮箱已经注册，请直接登录');
+  if (purpose === 'admin_login' && !existing) throw new Error('这个邮箱还没有注册，请先注册账号');
+  if (purpose === 'admin_login' && existing?.status !== 'active') throw new Error('这个后台账号已停用');
+
+  const emailHash = makeAuthEmailHash(email);
+  const { data: latest, error: latestErr } = await supabase.from('jzg_email_verification_codes')
+    .select('id, created_at')
+    .eq('purpose', purpose)
+    .eq('email_hash', emailHash)
+    .is('consumed_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (latestErr) throw latestErr;
+  if (latest?.created_at && Date.now() - new Date(latest.created_at).getTime() < EMAIL_CODE_COOLDOWN_SECONDS * 1000) {
+    throw new Error(`验证码已发送，请 ${EMAIL_CODE_COOLDOWN_SECONDS} 秒后再试`);
+  }
+
+  const code = makeEmailCode();
+  const expiresAt = new Date(Date.now() + EMAIL_CODE_TTL_MINUTES * 60 * 1000).toISOString();
+  const domain = email.split('@')[1] || '';
+  const { data: row, error: insertErr } = await supabase.from('jzg_email_verification_codes').insert({
+    purpose,
+    email_hash: emailHash,
+    email_mask: maskEmail(email),
+    email_domain: domain,
+    code_hash: makeAuthEmailCodeHash(email, code),
+    ip_address: getClientIp(req),
+    user_agent: getUserAgent(req),
+    expires_at: expiresAt,
+  }).select('id').single();
+  if (insertErr) throw insertErr;
+  try {
+    const sent = await sendTencentEmailCode(email, code);
+    return { email, expiresAt, provider: sent.provider };
+  } catch (sendErr) {
+    if (row?.id) await supabase.from('jzg_email_verification_codes').update({ consumed_at: new Date().toISOString() }).eq('id', row.id);
+    throw sendErr;
+  }
+}
+
 async function verifyPhoneCode(purpose: string, rawPhone: unknown, rawCode: unknown) {
   const phone = normalizeChinaPhone(rawPhone);
   const code = typeof rawCode === 'string' ? rawCode.replace(/\D/g, '') : '';
@@ -565,6 +691,31 @@ async function verifyPhoneCode(purpose: string, rawPhone: unknown, rawCode: unkn
   await supabase.from('lc_auth_verification_codes').update({ attempts: (row.attempts || 0) + 1, consumed_at: new Date().toISOString() }).eq('id', row.id);
   return phone;
 }
+
+async function verifyEmailCode(purpose: string, rawEmail: unknown, rawCode: unknown) {
+  const email = normalizeEmail(rawEmail);
+  const code = typeof rawCode === 'string' ? rawCode.replace(/\D/g, '') : '';
+  if (!/^\d{4,8}$/.test(code)) throw new Error('请填写正确的邮箱验证码');
+  const { data: row, error: qErr } = await supabase.from('jzg_email_verification_codes')
+    .select('id, code_hash, expires_at, attempts')
+    .eq('purpose', purpose)
+    .eq('email_hash', makeAuthEmailHash(email))
+    .is('consumed_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (qErr) throw qErr;
+  if (!row) throw new Error('请先获取邮箱验证码');
+  if (new Date(row.expires_at).getTime() < Date.now()) throw new Error('邮箱验证码已过期，请重新获取');
+  if ((row.attempts || 0) >= 5) throw new Error('邮箱验证码错误次数过多，请重新获取');
+  if (row.code_hash !== makeAuthEmailCodeHash(email, code)) {
+    await supabase.from('jzg_email_verification_codes').update({ attempts: (row.attempts || 0) + 1 }).eq('id', row.id);
+    throw new Error('邮箱验证码错误');
+  }
+  await supabase.from('jzg_email_verification_codes').update({ attempts: (row.attempts || 0) + 1, consumed_at: new Date().toISOString() }).eq('id', row.id);
+  return email;
+}
+
 function publicAdminUser(user: any) {
   if (!user) return null;
   return {
@@ -576,6 +727,7 @@ function publicAdminUser(user: any) {
     tenantId: user.tenant_id || TENANT_ID,
     storeId: user.store_id || null,
     phoneVerified: !!user.phone_verified_at,
+    emailVerified: !!user.email_verified_at,
     authProvider: user.auth_provider || null,
   };
 }
@@ -653,6 +805,8 @@ app.get('/api/health', (_: any, res: any) => res.json(ok({ message: 'OK' })));
 app.get('/api/auth/config', async (_req: any, res: any) => {
   res.json(ok({
     emailEnabled: true,
+    emailCodeEnabled: isEmailCodeLoginAvailable(),
+    emailCodeRequired: isTencentEmailConfigured(),
     phoneEnabled: true,
     smsEnabled: isPhoneCodeLoginAvailable(),
     smsRequired: isTencentSmsConfigured(),
@@ -670,6 +824,17 @@ app.post('/api/auth/send-code', async (req: any, res: any) => {
   } catch (e) { res.status(500).json(err(e)); }
 });
 
+app.post('/api/auth/email/send-code', async (req: any, res: any) => {
+  try {
+    if (!isEmailCodeLoginAvailable()) {
+      return res.status(503).json(err(new Error('邮箱验证码暂未启用')));
+    }
+    const purpose = cleanText(req.body?.purpose, 40) || 'admin_login';
+    const result = await createAndSendEmailCode(req, purpose, req.body?.email);
+    res.json(ok({ sent: true, expires_at: result.expiresAt }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
 app.post('/api/auth/register', async (req: any, res: any) => {
   try {
     const email = normalizeEmail(req.body?.email);
@@ -681,9 +846,11 @@ app.post('/api/auth/register', async (req: any, res: any) => {
     const existingEmail = await getAdminUserByEmail(email);
     if (existingEmail) return res.status(409).json(err(new Error('这个邮箱已经注册，请直接登录')));
 
+    await verifyEmailCode('admin_register', email, req.body?.emailCode || req.body?.code);
+
     let verifiedPhone = '';
-    if (cleanText(req.body?.phone, 30) || cleanText(req.body?.code, 12)) {
-      verifiedPhone = await verifyPhoneCode('admin_login', req.body?.phone, req.body?.code);
+    if (cleanText(req.body?.phone, 30) || cleanText(req.body?.phoneCode, 12)) {
+      verifiedPhone = await verifyPhoneCode('admin_login', req.body?.phone, req.body?.phoneCode);
       const existingPhone = await getAdminUserByPhone(verifiedPhone);
       if (existingPhone) return res.status(409).json(err(new Error('这个手机号已经绑定后台账号，请用手机号登录')));
     }
@@ -705,6 +872,31 @@ app.post('/api/auth/register', async (req: any, res: any) => {
     }).select('*').single();
     if (error) throw error;
     res.json(ok({ token: makeAdminToken(data), user: publicAdminUser(data) }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/auth/email-login', async (req: any, res: any) => {
+  try {
+    const email = await verifyEmailCode('admin_login', req.body?.email, req.body?.code);
+    let user = await getAdminUserByEmail(email);
+    if (!user || user.status !== 'active') return res.status(401).json(err(new Error('这个邮箱还没有可用的后台账号')));
+    if (email === SUPER_ADMIN_EMAIL && user.role !== 'super_admin') {
+      const { data: upgraded, error: upgradeErr } = await supabase.from('jzg_admin_users').update({
+        role: 'super_admin',
+        display_name: user.display_name || '超级管理员',
+        updated_at: new Date().toISOString(),
+      }).eq('id', user.id).select('*').single();
+      if (upgradeErr) throw upgradeErr;
+      user = upgraded;
+    }
+    await supabase.from('jzg_admin_users').update({
+      email_verified_at: user.email_verified_at || new Date().toISOString(),
+      last_login_at: new Date().toISOString(),
+      auth_provider: 'email_code',
+      updated_at: new Date().toISOString(),
+    }).eq('id', user.id);
+    const refreshed = { ...user, email_verified_at: user.email_verified_at || new Date().toISOString(), auth_provider: 'email_code' };
+    res.json(ok({ token: makeAdminToken(refreshed), user: publicAdminUser(refreshed) }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 

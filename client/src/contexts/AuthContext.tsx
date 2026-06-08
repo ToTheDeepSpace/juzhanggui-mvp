@@ -9,6 +9,7 @@ export interface AdminUser {
   tenantId?: string;
   storeId?: string | null;
   phoneVerified?: boolean;
+  emailVerified?: boolean;
   legacy?: boolean;
 }
 
@@ -19,7 +20,9 @@ interface AuthContextType {
   loading: boolean;
   login: (password: string) => Promise<{ success: boolean; error?: string }>;
   loginWithEmail: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  registerWithEmail: (payload: { email: string; password: string; displayName?: string; phone?: string; code?: string }) => Promise<{ success: boolean; error?: string }>;
+  loginWithEmailCode: (email: string, code: string) => Promise<{ success: boolean; error?: string }>;
+  registerWithEmail: (payload: { email: string; password: string; displayName?: string; emailCode?: string; phone?: string; phoneCode?: string }) => Promise<{ success: boolean; error?: string }>;
+  sendAdminEmailCode: (email: string, purpose: 'admin_login' | 'admin_register') => Promise<{ success: boolean; error?: string }>;
   sendAdminCode: (phone: string) => Promise<{ success: boolean; error?: string }>;
   loginWithPhone: (phone: string, code: string) => Promise<{ success: boolean; error?: string }>;
   sendBindPhoneCode: (phone: string) => Promise<{ success: boolean; error?: string }>;
@@ -35,7 +38,9 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   login: async () => ({ success: false }),
   loginWithEmail: async () => ({ success: false }),
+  loginWithEmailCode: async () => ({ success: false }),
   registerWithEmail: async () => ({ success: false }),
+  sendAdminEmailCode: async () => ({ success: false }),
   sendAdminCode: async () => ({ success: false }),
   loginWithPhone: async () => ({ success: false }),
   sendBindPhoneCode: async () => ({ success: false }),
@@ -143,7 +148,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [setSession]);
 
-  const registerWithEmail = useCallback(async (payload: { email: string; password: string; displayName?: string; phone?: string; code?: string }) => {
+  const loginWithEmailCode = useCallback(async (email: string, code: string) => {
+    try {
+      const res = await fetch('/api/auth/email-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSession(data.data.token, data.data.user || null);
+        return { success: true };
+      }
+      return { success: false, error: data.error || '登录失败' };
+    } catch {
+      return { success: false, error: '网络错误，请检查服务器连接' };
+    }
+  }, [setSession]);
+
+  const registerWithEmail = useCallback(async (payload: { email: string; password: string; displayName?: string; emailCode?: string; phone?: string; phoneCode?: string }) => {
     try {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
@@ -160,6 +183,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { success: false, error: '网络错误，请检查服务器连接' };
     }
   }, [setSession]);
+
+  const sendAdminEmailCode = useCallback(async (email: string, purpose: 'admin_login' | 'admin_register') => {
+    try {
+      const res = await fetch('/api/auth/email/send-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, purpose }),
+      });
+      const data = await res.json();
+      return data.success ? { success: true } : { success: false, error: data.error || '邮箱验证码发送失败' };
+    } catch {
+      return { success: false, error: '网络错误，请检查服务器连接' };
+    }
+  }, []);
 
   const sendAdminCode = useCallback(async (phone: string) => {
     try {
@@ -245,7 +282,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loading,
         login,
         loginWithEmail,
+        loginWithEmailCode,
         registerWithEmail,
+        sendAdminEmailCode,
         sendAdminCode,
         loginWithPhone,
         sendBindPhoneCode,
