@@ -48,6 +48,7 @@ export default function ScheduleCalendar() {
   const [showFinanceModal, setShowFinanceModal] = useState(false);
   const [financeSchedule, setFinanceSchedule] = useState<ScheduleWithDetails | null>(null);
   const [financeRows, setFinanceRows] = useState<any[]>([]);
+  const [financeMode, setFinanceMode] = useState<'deposit' | 'settlement'>('deposit');
   const [financeSaving, setFinanceSaving] = useState(false);
 
   // 表单状态
@@ -140,9 +141,10 @@ export default function ScheduleCalendar() {
     setStartActors([]); setShowStartModal(true);
   };
 
-  const openFinanceModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
+  const openFinanceModal = (schedule: ScheduleWithDetails, e: React.MouseEvent, mode: 'deposit' | 'settlement') => {
     e.stopPropagation();
     setFinanceSchedule(schedule);
+    setFinanceMode(mode);
     setFinanceRows((schedule.checkins || []).map((item: any) => ({
       id: item.id,
       guest_name: item.guest_name || '',
@@ -406,7 +408,7 @@ export default function ScheduleCalendar() {
           <td className="px-4 py-3">
             <div className="flex flex-wrap gap-2">
               <button onClick={(e) => { e.stopPropagation(); openEditModal(s); }} className="text-xs text-indigo-600 hover:underline">编辑</button>
-              <button onClick={(e) => openFinanceModal(s, e)} className="text-xs text-slate-600 hover:underline">收款</button>
+              <button onClick={(e) => openFinanceModal(s, e, 'deposit')} className="text-xs text-amber-700 hover:underline">定金</button>
               {pendingRequestCount > 0 && (
                 <button onClick={(e) => openQRModal(s, e)} className="text-xs text-amber-600 hover:underline font-medium">处理申请</button>
               )}
@@ -423,7 +425,7 @@ export default function ScheduleCalendar() {
                 <button onClick={(e) => openEndModal(s, e)} className="text-xs text-green-600 hover:underline font-medium">结束登记</button>
               )}
               {s.status === 'settling' && (
-                <button onClick={(e) => openFinanceModal(s, e)} className="text-xs text-amber-700 hover:underline font-medium">结算</button>
+                <button onClick={(e) => openFinanceModal(s, e, 'settlement')} className="text-xs text-emerald-700 hover:underline font-medium">结算</button>
               )}
             </div>
           </td>
@@ -661,10 +663,10 @@ export default function ScheduleCalendar() {
 
       {showFinanceModal && financeSchedule && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-5xl w-full mx-4 max-h-[88vh] overflow-y-auto">
+          <div className="bg-white rounded-xl p-6 max-w-3xl w-full mx-4 max-h-[88vh] overflow-y-auto">
             <div className="flex items-start justify-between gap-4 mb-4">
               <div>
-                <h3 className="text-lg font-bold text-gray-900">车次收款与结算</h3>
+                <h3 className="text-lg font-bold text-gray-900">{financeMode === 'deposit' ? '定金确认' : '完车结算'}</h3>
                 <p className="text-sm text-gray-500 mt-1">
                   {financeSchedule.script_name || scripts.find(s => s.id === financeSchedule.script_id)?.name || '未知剧本'} · {format(parseISO(financeSchedule.start_time), 'M/d HH:mm')}
                 </p>
@@ -672,7 +674,7 @@ export default function ScheduleCalendar() {
               <button onClick={() => setShowFinanceModal(false)} className="text-sm text-gray-400 hover:text-gray-600">关闭</button>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
               <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
                 <p className="text-xs text-slate-500">上车人数</p>
                 <p className="mt-1 text-xl font-semibold text-slate-900">{financeSchedule.progress_summary?.boardedCount || 0}/{financeSchedule.progress_summary?.targetCount || '-'}</p>
@@ -681,85 +683,111 @@ export default function ScheduleCalendar() {
                 <p className="text-xs text-amber-700">定金</p>
                 <p className="mt-1 text-xl font-semibold text-amber-900">{financeSchedule.progress_summary?.depositReady || 0}/{financeSchedule.progress_summary?.depositRequired || 0}</p>
               </div>
-              <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3">
-                <p className="text-xs text-emerald-700">已结算</p>
-                <p className="mt-1 text-xl font-semibold text-emerald-900">{financeRows.filter(r => r.settlement_status === 'settled').length}/{financeRows.length}</p>
-              </div>
               <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3">
                 <p className="text-xs text-indigo-700">本车实收</p>
                 <p className="mt-1 text-xl font-semibold text-indigo-900">¥{financeRows.reduce((sum, r) => sum + Number(r.final_amount || 0), 0)}</p>
               </div>
-              <div className="rounded-lg border border-purple-100 bg-purple-50 p-3">
-                <p className="text-xs text-purple-700">评价</p>
-                <p className="mt-1 text-xl font-semibold text-purple-900">{financeSchedule.progress_summary?.avgRating ?? '-'} <span className="text-xs font-normal">({financeSchedule.progress_summary?.evaluationCount || 0})</span></p>
+              <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3">
+                <p className="text-xs text-emerald-700">已结算</p>
+                <p className="mt-1 text-xl font-semibold text-emerald-900">{financeRows.filter(r => r.settlement_status === 'settled').length}/{financeRows.length}</p>
               </div>
             </div>
 
             {financeRows.length === 0 ? (
               <div className="rounded-lg bg-slate-50 p-8 text-center text-sm text-slate-500">这车还没有上车玩家，先通过拼车加入或客服代填上车。</div>
             ) : (
-              <div className="overflow-x-auto rounded-lg border border-slate-100">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-50 text-xs text-slate-500">
-                    <tr>
-                      <th className="px-3 py-2 text-left">玩家</th>
-                      <th className="px-3 py-2 text-left">角色</th>
-                      <th className="px-3 py-2 text-left">定金状态</th>
-                      <th className="px-3 py-2 text-left">定金</th>
-                      <th className="px-3 py-2 text-left">最终收款</th>
-                      <th className="px-3 py-2 text-left">支付方式</th>
-                      <th className="px-3 py-2 text-left">结算</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {financeRows.map((row, index) => (
-                      <tr key={row.id}>
-                        <td className="px-3 py-2 font-medium text-slate-900">{row.guest_name || '未命名'}</td>
-                        <td className="px-3 py-2 text-slate-600">{row.role || '-'}</td>
-                        <td className="px-3 py-2">
-                          <select value={row.deposit_status} onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_status: e.target.value } : r))} className="rounded border border-slate-200 px-2 py-1 text-xs">
-                            <option value="unpaid">未收</option>
-                            <option value="paid">已收</option>
-                            <option value="waived">免定金</option>
-                            <option value="refunded">已退</option>
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <input type="number" min="0" value={row.deposit_amount} onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_amount: e.target.value } : r))} className="w-20 rounded border border-slate-200 px-2 py-1 text-xs" />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input type="number" min="0" value={row.final_amount} onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, final_amount: e.target.value } : r))} className="w-24 rounded border border-slate-200 px-2 py-1 text-xs" />
-                        </td>
-                        <td className="px-3 py-2">
-                          <select value={row.final_payment_method} onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, final_payment_method: e.target.value } : r))} className="rounded border border-slate-200 px-2 py-1 text-xs">
-                            <option value="">未填</option>
-                            <option value="card">{paymentMethodText.card}</option>
-                            <option value="cash">{paymentMethodText.cash}</option>
-                            <option value="wechat">{paymentMethodText.wechat}</option>
-                            <option value="alipay">{paymentMethodText.alipay}</option>
-                            <option value="coupon">{paymentMethodText.coupon}</option>
-                            <option value="free">{paymentMethodText.free}</option>
-                            <option value="other">{paymentMethodText.other}</option>
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <select value={row.settlement_status} onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, settlement_status: e.target.value } : r))} className="rounded border border-slate-200 px-2 py-1 text-xs">
-                            <option value="unsettled">待结算</option>
-                            <option value="settled">已结算</option>
-                            <option value="waived">免结算</option>
-                          </select>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="space-y-3">
+                {financeRows.map((row, index) => (
+                  <div key={row.id} className="rounded-lg border border-slate-100 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="font-medium text-slate-900">{row.guest_name || '未命名'} <span className="text-sm font-normal text-slate-400">{row.role || '-'}</span></p>
+                        <p className="mt-1 text-xs text-slate-400">
+                          定金 {row.deposit_status === 'paid' ? '已收' : row.deposit_status === 'waived' ? '免定金' : row.deposit_status === 'refunded' ? '已退' : '未收'} · 结算 {row.settlement_status === 'settled' ? '已结' : '待结'}
+                        </p>
+                      </div>
+                      {financeMode === 'settlement' && (
+                        <button
+                          type="button"
+                          onClick={() => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, settlement_status: r.settlement_status === 'settled' ? 'unsettled' : 'settled' } : r))}
+                          className={`rounded-full px-3 py-1 text-xs font-medium ${row.settlement_status === 'settled' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}
+                        >
+                          {row.settlement_status === 'settled' ? '已结清' : '标记结清'}
+                        </button>
+                      )}
+                    </div>
+
+                    {financeMode === 'deposit' ? (
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[1fr_120px]">
+                        <div className="grid grid-cols-4 gap-2">
+                          {[
+                            ['unpaid', '未收'],
+                            ['paid', '已收'],
+                            ['waived', '免定金'],
+                            ['refunded', '已退'],
+                          ].map(([value, label]) => (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_status: value } : r))}
+                              className={`rounded-lg px-2 py-2 text-xs font-medium ${row.deposit_status === value ? 'bg-amber-500 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        <input
+                          type="number"
+                          min="0"
+                          value={row.deposit_amount}
+                          onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_amount: e.target.value } : r))}
+                          className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                          placeholder="定金"
+                        />
+                      </div>
+                    ) : (
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[120px_1fr]">
+                        <input
+                          type="number"
+                          min="0"
+                          value={row.final_amount}
+                          onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, final_amount: e.target.value } : r))}
+                          className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                          placeholder="实收"
+                        />
+                        <div className="grid grid-cols-4 gap-2 md:grid-cols-7">
+                          {[
+                            ['card', '扣卡'],
+                            ['cash', '现金'],
+                            ['wechat', '微信'],
+                            ['alipay', '支付宝'],
+                            ['coupon', '券'],
+                            ['free', '免单'],
+                            ['other', '其他'],
+                          ].map(([value, label]) => (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, final_payment_method: value, settlement_status: value === 'free' ? 'settled' : r.settlement_status } : r))}
+                              className={`rounded-lg px-2 py-2 text-xs font-medium ${row.final_payment_method === value ? 'bg-emerald-600 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
 
             <div className="mt-5 flex flex-wrap justify-end gap-2">
               <button onClick={() => setShowFinanceModal(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">取消</button>
-              <button onClick={() => saveFinanceRows(false)} disabled={financeSaving} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-50">保存收款</button>
-              <button onClick={() => saveFinanceRows(true)} disabled={financeSaving || financeRows.length === 0} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">保存并完成结算</button>
+              <button onClick={() => saveFinanceRows(false)} disabled={financeSaving} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-50">{financeMode === 'deposit' ? '保存定金' : '保存结算'}</button>
+              {financeMode === 'settlement' && (
+                <button onClick={() => saveFinanceRows(true)} disabled={financeSaving || financeRows.length === 0} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">完成整车结算</button>
+              )}
             </div>
           </div>
         </div>
