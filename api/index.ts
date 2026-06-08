@@ -3,6 +3,7 @@
 
 import express from 'express';
 import cors from 'cors';
+import { createTencentPgClient } from './tencentPgSupabase.js';
 import { createClient } from '@supabase/supabase-js';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
@@ -12,13 +13,13 @@ function hashPhone(phone: string): string {
   return crypto.createHash('sha256').update(`juzhanggui:${phone.trim()}`).digest('hex');
 }
 
-const supabaseUrl = process.env.SUPABASE_URL;
-if (!supabaseUrl) throw new Error('Missing env: SUPABASE_URL');
-
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
-if (!supabaseKey) throw new Error('Missing env: SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY');
-
-const supabase = createClient(supabaseUrl, supabaseKey);
+const useTencentPg = Boolean(process.env.DATABASE_URL || process.env.PGHOST);
+const supabase = useTencentPg
+  ? createTencentPgClient()
+  : createClient(
+      process.env.SUPABASE_URL || '',
+      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '',
+    );
 
 const TENANT_ID = process.env.DEFAULT_TENANT_ID || 'f0d6e011-6e75-4c14-95e9-dc61b26871e3';
 const SUPER_ADMIN_EMAIL = 'hnnkkk@qq.com';
