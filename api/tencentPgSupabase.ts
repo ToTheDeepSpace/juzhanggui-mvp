@@ -10,7 +10,7 @@ type FilterOp = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'ilike' | 'in' | 'i
 type Filter = { column: string; op: FilterOp; value: any };
 type Order = { column: string; ascending: boolean };
 type SelectOptions = { count?: 'exact'; head?: boolean };
-type RelationSpec = { name: string; inner: boolean; children: RelationSpec[] };
+type RelationSpec = { name: string; inner: boolean; columns: string[]; children: RelationSpec[] };
 type RelationConfig = {
   table: string;
   localKey: string;
@@ -96,13 +96,22 @@ function parseRelations(selectClause = '*'): RelationSpec[] {
     .map(part => {
       const match = part.match(/^([A-Za-z0-9_]+)(![A-Za-z0-9_]+)?\((.*)\)$/);
       if (!match) return null;
+      const inner = match[3];
       return {
         name: match[1],
         inner: Boolean(match[2]),
-        children: parseRelations(match[3]),
+        columns: splitTopLevel(inner).filter(item => item !== '*' && !item.includes('(')),
+        children: parseRelations(inner),
       };
     })
     .filter(Boolean) as RelationSpec[];
+}
+
+function parseBaseColumns(selectClause = '*') {
+  const parts = splitTopLevel(selectClause);
+  if (!parts.length || parts.includes('*')) return null;
+  const columns = parts.filter(part => !part.includes('(') && /^[A-Za-z_][A-Za-z0-9_]*$/.test(part));
+  return columns.length ? columns : null;
 }
 
 function quoteIdent(name: string) {
@@ -141,6 +150,39 @@ function applyPostFilters(rows: Record<string, any>[], filters: Filter[]) {
       default: return true;
     }
   }));
+}
+
+function projectRow(row: Record<string, any>, baseColumns: string[] | null, relations: RelationSpec[]) {
+  const out: Record<string, any> = {};
+  if (!baseColumns) {
+    Object.assign(out, row);
+  } else {
+    for (const column of baseColumns) out[column] = row[column];
+  }
+  for (const spec of relations) {
+    if (!(spec.name in row)) continue;
+    out[spec.name] = projectRelationValue(row[spec.name], spec);
+  }
+  return out;
+}
+
+function projectRelationValue(value: any, spec: RelationSpec): any {
+  if (Array.isArray(value)) return value.map(item => projectRelationRow(item, spec));
+  if (!value || typeof value !== 'object') return value;
+  return projectRelationRow(value, spec);
+}
+
+function projectRelationRow(row: Record<string, any>, spec: RelationSpec) {
+  const out: Record<string, any> = {};
+  if (!spec.columns.length) {
+    Object.assign(out, row);
+  } else {
+    for (const column of spec.columns) out[column] = row[column];
+  }
+  for (const child of spec.children) {
+    if (child.name in row) out[child.name] = projectRelationValue(row[child.name], child);
+  }
+  return out;
 }
 
 class PgQueryBuilder {
@@ -307,8 +349,10 @@ class PgQueryBuilder {
     const sql = `SELECT * FROM ${quoteIdent(this.table)}${this.whereSql(values)}${this.orderSql()}${this.limitSql(values)}`;
     const result = await pool.query(sql, values);
     let rows = result.rows;
-    await this.attachRelations(rows, parseRelations(this.selectClause));
+    const relationSpecs = parseRelations(this.selectClause);
+    await this.attachRelations(rows, relationSpecs);
     rows = applyPostFilters(rows, this.postFilters());
+    rows = rows.map(row => projectRow(row, parseBaseColumns(this.selectClause), relationSpecs));
     const data = this.formatRows(rows);
     return { data, error: null, count: countRequested ? rows.length : null };
   }
@@ -321,7 +365,7 @@ class PgQueryBuilder {
     const placeholders = rows.map(row => `(${cols.map(col => `$${values.push(row[col])}`).join(', ')})`).join(', ');
     const sql = `INSERT INTO ${quoteIdent(this.table)} (${cols.map(quoteIdent).join(', ')}) VALUES ${placeholders} RETURNING *`;
     const result = await pool.query(sql, values);
-    const data = this.formatRows(result.rows);
+    const data = this.formatRows(this.projectMutationRows(result.rows));
     return { data, error: null, count: null };
   }
 
@@ -333,7 +377,7 @@ class PgQueryBuilder {
     const sets = cols.map(col => `${quoteIdent(col)} = $${values.push(row[col])}`).join(', ');
     const sql = `UPDATE ${quoteIdent(this.table)} SET ${sets}${this.whereSql(values)} RETURNING *`;
     const result = await pool.query(sql, values);
-    const data = this.formatRows(result.rows);
+    const data = this.formatRows(this.projectMutationRows(result.rows));
     return { data, error: null, count: null };
   }
 
@@ -341,7 +385,7 @@ class PgQueryBuilder {
     const values: any[] = [];
     const sql = `DELETE FROM ${quoteIdent(this.table)}${this.whereSql(values)} RETURNING *`;
     const result = await pool.query(sql, values);
-    const data = this.formatRows(result.rows);
+    const data = this.formatRows(this.projectMutationRows(result.rows));
     return { data, error: null, count: null };
   }
 
@@ -358,8 +402,13 @@ class PgQueryBuilder {
       : 'DO NOTHING';
     const sql = `INSERT INTO ${quoteIdent(this.table)} (${cols.map(quoteIdent).join(', ')}) VALUES ${placeholders} ON CONFLICT (${conflict.map(quoteIdent).join(', ')}) ${updateSql} RETURNING *`;
     const result = await pool.query(sql, values);
-    const data = this.formatRows(result.rows);
+    const data = this.formatRows(this.projectMutationRows(result.rows));
     return { data, error: null, count: null };
+  }
+
+  private projectMutationRows(rows: Record<string, any>[]) {
+    const relationSpecs = parseRelations(this.selectClause);
+    return rows.map(row => projectRow(row, parseBaseColumns(this.selectClause), relationSpecs));
   }
 
   private formatRows(rows: Record<string, any>[]) {

@@ -3,11 +3,32 @@ import { createClient } from '@supabase/supabase-js';
 import pg from 'pg';
 
 const DEFAULT_TABLES = [
+  'jzg_stores',
   'jzg_admin_users',
   'jzg_email_verification_codes',
   'jzg_platform_audit_logs',
-  'jzg_carpool_join_requests',
   'jzg_script_templates',
+  'actors',
+  'rooms',
+  'scripts',
+  'script_player_roles',
+  'script_actor_roles',
+  'script_roles',
+  'actor_skills',
+  'schedules',
+  'schedule_actors',
+  'players',
+  'checkins',
+  'jzg_carpool_join_requests',
+  'evaluations',
+  'customers',
+  'notifications',
+  'conflict_records',
+  'lc_auth_verification_codes',
+  'lc_profiles',
+  'lc_carpools',
+  'jzg_dm_leave_requests',
+  'jzg_dm_experience_notes',
 ];
 
 function parseEnv(file) {
@@ -56,6 +77,7 @@ const tables = process.argv.slice(2).length ? process.argv.slice(2) : DEFAULT_TA
 
 await client.connect();
 try {
+  const payloads = [];
   for (const table of tables) {
     const { data, error } = await supabase.from(table).select('*');
     if (error) throw new Error(`${table}: ${error.message}`);
@@ -67,9 +89,12 @@ try {
     const cols = colsRes.rows.map((row) => row.column_name);
     const typeByColumn = Object.fromEntries(colsRes.rows.map((row) => [row.column_name, row.udt_name]));
     if (!cols.length) throw new Error(`${table}: target table does not exist`);
+    payloads.push({ table, data: data || [], cols, typeByColumn });
+  }
 
-    await client.query('begin');
-    await client.query(`truncate table public.${quoteIdent(table)} restart identity cascade`);
+  await client.query('begin');
+  await client.query(`truncate table ${payloads.map(({ table }) => `public.${quoteIdent(table)}`).join(', ')} restart identity cascade`);
+  for (const { table, data, cols, typeByColumn } of payloads) {
     for (const row of data || []) {
       const names = cols.filter((col) => row[col] !== undefined);
       if (!names.length) continue;
@@ -84,9 +109,9 @@ try {
         values,
       );
     }
-    await client.query('commit');
     console.log(`${table}: copied ${(data || []).length}`);
   }
+  await client.query('commit');
 } catch (error) {
   try { await client.query('rollback'); } catch {}
   throw error;
