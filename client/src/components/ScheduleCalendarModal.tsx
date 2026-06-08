@@ -63,7 +63,10 @@ export default function ScheduleCalendarModal({
       const endMinute = endTotal % 60;
       params.set('endTime', `${String(endHour).padStart(2, '0')}:${String(endMinute).padStart(2, '0')}`);
       try {
-        const r = await fetch(`/api/schedules/conflicts/check?${params}`);
+        const token = localStorage.getItem('auth_token');
+        const r = await fetch(`/api/schedules/conflicts/check?${params}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
         const d = await r.json();
         setConflicts(d.success ? (d.data || []) : []);
       } catch { setConflicts([]); }

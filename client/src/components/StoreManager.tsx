@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useApi } from '../hooks/useApi';
+import { useAuth } from '../contexts/AuthContext';
 import type { StoreRecord } from '../types';
 
 export default function StoreManager() {
   const { get, post, loading } = useApi();
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'super_admin';
   const [stores, setStores] = useState<StoreRecord[]>([]);
   const [form, setForm] = useState({ name: '', city: '', address: '', contact: '' });
   const [message, setMessage] = useState('');
@@ -38,25 +41,35 @@ export default function StoreManager() {
       <div className="bg-white rounded-lg shadow p-6">
         <div className="flex items-start justify-between gap-4 mb-5">
           <div>
-            <h2 className="text-xl font-bold text-gray-800">多店家后台</h2>
-            <p className="text-sm text-gray-500 mt-1">店家档案先在这里建档，后续排期、卡司、会员会按店家隔离。</p>
+            <h2 className="text-xl font-bold text-gray-800">{isSuperAdmin ? '店家管理' : '我的店铺资料'}</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              {isSuperAdmin ? '超级管理员可以查看和新增平台店家。' : '当前账号只能看到自己绑定的店铺，排期、卡司、会员都会按店铺隔离。'}
+            </p>
           </div>
-          <span className="px-3 py-1 rounded-full bg-indigo-50 text-indigo-600 text-xs font-semibold">MVP</span>
+          <span className="px-3 py-1 rounded-full bg-indigo-50 text-indigo-600 text-xs font-semibold">
+            {isSuperAdmin ? 'SUPER ADMIN' : 'STORE'}
+          </span>
         </div>
 
-        <form onSubmit={submit} className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="店家名称"
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
-          <input value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} placeholder="城市"
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
-          <input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} placeholder="地址"
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
-          <input value={form.contact} onChange={e => setForm({ ...form, contact: e.target.value })} placeholder="联系方式"
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
-          <button disabled={loading} className="md:col-span-4 px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 disabled:opacity-50">
-            {loading ? '保存中...' : '新增店家'}
-          </button>
-        </form>
+        {isSuperAdmin ? (
+          <form onSubmit={submit} className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="店家名称"
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
+            <input value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} placeholder="城市"
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
+            <input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} placeholder="地址"
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
+            <input value={form.contact} onChange={e => setForm({ ...form, contact: e.target.value })} placeholder="联系方式"
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
+            <button disabled={loading} className="md:col-span-4 px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 disabled:opacity-50">
+              {loading ? '保存中...' : '新增店家'}
+            </button>
+          </form>
+        ) : (
+          <div className="rounded-lg bg-slate-50 border border-slate-200 p-4 text-sm text-slate-600">
+            需要修改店铺名称、城市或联系方式时，后续会在这里开放资料变更审核。
+          </div>
+        )}
         {message && <p className="text-sm text-gray-500 mt-3">{message}</p>}
       </div>
 
