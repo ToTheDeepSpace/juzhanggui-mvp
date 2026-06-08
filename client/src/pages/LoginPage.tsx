@@ -29,6 +29,7 @@ export default function LoginPage() {
   const [phone, setPhone] = useState('');
   const [emailCode, setEmailCode] = useState('');
   const [phoneCode, setPhoneCode] = useState('');
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -142,6 +143,11 @@ export default function LoginPage() {
       if (!email.trim() || !password.trim() || !emailCode.trim()) {
         setSubmitting(false);
         setError('请填写邮箱、邮箱验证码和密码');
+        return;
+      }
+      if (!acceptedTerms) {
+        setSubmitting(false);
+        setError('请先阅读并同意用户协议和隐私政策');
         return;
       }
       result = await registerWithEmail({
@@ -272,12 +278,30 @@ export default function LoginPage() {
             </Field>
           )}
 
+          {mode === 'register' && (
+            <label className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs leading-6 text-slate-600">
+              <input
+                type="checkbox"
+                checked={acceptedTerms}
+                onChange={event => setAcceptedTerms(event.target.checked)}
+                className="mt-1 h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+              />
+              <span>
+                我已阅读并同意
+                <a href="/terms" target="_blank" rel="noopener noreferrer" className="mx-1 font-semibold text-sky-700 hover:text-sky-600">《用户协议》</a>
+                和
+                <a href="/privacy" target="_blank" rel="noopener noreferrer" className="mx-1 font-semibold text-sky-700 hover:text-sky-600">《隐私政策》</a>
+                ，知悉店家数据、线下履约、费用发票和账号安全等规则。
+              </span>
+            </label>
+          )}
+
           {info && <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-700 text-sm">{info}</div>}
           {error && <div className="p-3 rounded-lg bg-red-50 border border-red-100 text-red-600 text-sm">{error}</div>}
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || (mode === 'register' && !acceptedTerms)}
             className="w-full py-2.5 bg-sky-600 hover:bg-sky-500 disabled:bg-sky-300 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors"
           >
             {submitting ? '处理中...' : mode === 'register' ? '注册并进入后台' : mode === 'resetPassword' ? '修改密码并进入后台' : '进入后台'}

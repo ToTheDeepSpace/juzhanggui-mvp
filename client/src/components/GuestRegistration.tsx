@@ -15,6 +15,7 @@ export default function GuestRegistration({ onClose, onSuccess }: GuestRegistrat
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,6 +30,12 @@ export default function GuestRegistration({ onClose, onSuccess }: GuestRegistrat
 
     if (!formData.phone.trim()) {
       setError('请输入手机号');
+      setLoading(false);
+      return;
+    }
+
+    if (!acceptedTerms) {
+      setError('请先阅读并同意用户协议和隐私政策');
       setLoading(false);
       return;
     }
@@ -134,6 +141,22 @@ export default function GuestRegistration({ onClose, onSuccess }: GuestRegistrat
         </div>
       )}
 
+      <label className="flex items-start gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 text-xs leading-6 text-gray-600">
+        <input
+          type="checkbox"
+          checked={acceptedTerms}
+          onChange={(e) => setAcceptedTerms(e.target.checked)}
+          className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+        />
+        <span>
+          我已阅读并同意
+          <a href="/terms" target="_blank" rel="noopener noreferrer" className="mx-1 font-semibold text-blue-600 hover:text-blue-500">《用户协议》</a>
+          和
+          <a href="/privacy" target="_blank" rel="noopener noreferrer" className="mx-1 font-semibold text-blue-600 hover:text-blue-500">《隐私政策》</a>
+          ，知悉平台会按规则处理登记信息。
+        </span>
+      </label>
+
       <div className="flex gap-3 pt-2">
         {onClose && (
           <button
@@ -146,7 +169,7 @@ export default function GuestRegistration({ onClose, onSuccess }: GuestRegistrat
         )}
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || !acceptedTerms}
           className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors"
         >
           {loading ? '提交中...' : '立即注册'}
