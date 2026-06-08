@@ -730,6 +730,7 @@ function publicAdminUser(user: any) {
     phoneVerified: !!user.phone_verified_at,
     emailVerified: !!user.email_verified_at,
     authProvider: user.auth_provider || null,
+    impersonating: !!user.impersonating,
   };
 }
 function makeAdminToken(user?: any) {
@@ -743,6 +744,8 @@ function makeAdminToken(user?: any) {
   if (user?.store_id) payload.storeId = user.store_id;
   if (user?.email) payload.email = user.email;
   if (user?.phone) payload.phone = user.phone;
+  if (user?.display_name) payload.displayName = user.display_name;
+  if (user?.impersonating) payload.impersonating = true;
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' });
 }
 async function getAdminUserById(id: unknown) {
@@ -1063,6 +1066,18 @@ app.post('/api/auth/phone-login', async (req: any, res: any) => {
 
 app.get('/api/auth/me', async (req: any, res: any) => {
   try {
+    if (req.user?.impersonating && req.user?.adminRole === 'store_admin' && req.user?.storeId) {
+      return res.json(ok(publicAdminUser({
+        id: req.user.adminUserId,
+        tenant_id: req.user.tenantId,
+        store_id: req.user.storeId,
+        email: req.user.email,
+        display_name: req.user.displayName || '超管查看店家',
+        role: 'store_admin',
+        status: 'active',
+        impersonating: true,
+      })));
+    }
     const user = await getAdminUserById(req.user?.adminUserId);
     if (!user) return res.json(ok({ displayName: '管理员', role: 'admin', legacy: true }));
     res.json(ok(publicAdminUser(user)));
@@ -1320,6 +1335,7 @@ app.post('/api/platform/impersonate-store', async (req: any, res: any) => {
       display_name: `超管查看：${store.name}`,
       role: 'store_admin',
       status: 'active',
+      impersonating: true,
     };
     await logPlatformAction(req, 'impersonate_store', { type: 'store', id: store.id, label: store.name });
     res.json(ok({ token: makeAdminToken(sessionUser), user: publicAdminUser(sessionUser), store }));

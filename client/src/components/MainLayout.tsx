@@ -344,15 +344,16 @@ function AdminUsersPanel() {
   };
 
   const resetPassword = async (user: PlatformAdminUser) => {
-    const confirmed = window.confirm(`确定要重置 ${user.email || user.phone || user.display_name} 的密码吗？`);
+    const accountLabel = user.email || user.phone || user.display_name || '这个账号';
+    const confirmed = window.confirm(`确定要为 ${accountLabel} 生成临时登录密码吗？\n\n这会覆盖该账号原密码。请只在账号本人无法登录时使用，并提醒对方登录后立刻修改密码。`);
     if (!confirmed) return;
     const result = await post<{ tempPassword: string }>(`/platform/admin-users/${user.id}/reset-password`, {});
     if (result.success && result.data?.tempPassword) {
       setTempPassword(result.data.tempPassword);
-      setMessage('临时密码已生成，只在这里显示一次');
+      setMessage('临时登录密码已生成，只在这里显示一次');
       void loadUsers();
     } else {
-      setMessage(result.error || '重置失败');
+      setMessage(result.error || '生成失败');
     }
   };
 
@@ -362,7 +363,7 @@ function AdminUsersPanel() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-gray-900">后台账号管理</h2>
-            <p className="text-sm text-gray-500 mt-1">查看店家后台账号，必要时停用账号或生成一次性临时密码。</p>
+            <p className="text-sm text-gray-500 mt-1">查看店家后台账号，必要时停用账号或生成一次性临时登录密码。</p>
           </div>
           <button onClick={loadUsers} disabled={loading} className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm disabled:opacity-50">
             {loading ? '刷新中' : '刷新'}
@@ -371,8 +372,9 @@ function AdminUsersPanel() {
         {message && <p className="mt-4 text-sm text-gray-600">{message}</p>}
         {tempPassword && (
           <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
-            <p className="text-xs font-semibold text-amber-700">临时密码</p>
+            <p className="text-xs font-semibold text-amber-700">临时登录密码</p>
             <p className="mt-1 break-all font-mono text-sm text-amber-900">{tempPassword}</p>
+            <p className="mt-2 text-xs text-amber-700">只在账号本人无法登录时发给对方，并要求登录后立刻修改。</p>
           </div>
         )}
       </div>
@@ -409,7 +411,7 @@ function AdminUsersPanel() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
-                      <button onClick={() => resetPassword(user)} className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">重置密码</button>
+                      <button onClick={() => resetPassword(user)} className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">生成临时登录密码</button>
                       {user.status === 'active' ? (
                         <button onClick={() => setStatus(user, 'disabled')} className="px-2.5 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50">停用</button>
                       ) : (
@@ -527,7 +529,7 @@ function AuditLogsPanel() {
       <div className="bg-white rounded-lg shadow p-6 flex items-start justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold text-gray-900">平台操作日志</h2>
-          <p className="text-sm text-gray-500 mt-1">记录超管进入店家视角、启停账号、重置密码、新建店家等关键动作。</p>
+          <p className="text-sm text-gray-500 mt-1">记录超管进入店家视角、启停账号、生成临时登录密码、新建店家等关键动作。</p>
           {message && <p className="mt-3 text-sm text-red-600">{message}</p>}
         </div>
         <button onClick={loadLogs} disabled={loading} className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm disabled:opacity-50">
