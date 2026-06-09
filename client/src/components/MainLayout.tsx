@@ -477,6 +477,7 @@ function TemplateCenterPanel() {
   const [templates, setTemplates] = useState<ScriptTemplateRow[]>([]);
   const [message, setMessage] = useState('');
   const [templateSearch, setTemplateSearch] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState<ScriptTemplateRow | null>(null);
 
   const normalizedTemplateSearch = templateSearch.trim().toLowerCase();
   const visibleTemplates = normalizedTemplateSearch
@@ -524,6 +525,7 @@ function TemplateCenterPanel() {
     const result = await put(`/platform/script-templates/${template.id}/review`, { action, reason });
     if (result.success) {
       setMessage(action === 'approve' ? `已通过《${template.name}》` : `已驳回《${template.name}》`);
+      setSelectedTemplate(null);
       void loadTemplates();
     } else {
       setMessage(result.error || '审核失败');
@@ -589,6 +591,9 @@ function TemplateCenterPanel() {
             )}
             <p className="mt-4 text-xs text-gray-400">创建：{template.created_at ? new Date(template.created_at).toLocaleString('zh-CN') : ''}</p>
             <div className="mt-4 flex gap-2">
+              <button onClick={() => setSelectedTemplate(template)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                查看详情
+              </button>
               <button onClick={() => reviewTemplate(template, 'approve')} disabled={template.review_status === 'approved'} className="flex-1 rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white hover:bg-emerald-700 disabled:opacity-40">
                 通过入主库
               </button>
@@ -605,6 +610,97 @@ function TemplateCenterPanel() {
           <div className="md:col-span-2 xl:col-span-3 bg-white rounded-lg shadow p-10 text-center text-gray-400">没有匹配的公共剧本模板</div>
         )}
       </div>
+
+      {selectedTemplate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-6">
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white shadow-xl">
+            <div className="sticky top-0 flex items-start justify-between gap-4 border-b border-gray-100 bg-white px-6 py-4">
+              <div>
+                <h3 className="text-xl font-bold text-gray-900">{selectedTemplate.name}</h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  {selectedTemplate.store?.name || '未知来源'} · {selectedTemplate.created_by || '未知创建者'} · 已导入 {selectedTemplate.usage_count || 0} 次
+                </p>
+              </div>
+              <button onClick={() => setSelectedTemplate(null)} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
+                关闭
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-5">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <div className="rounded-lg bg-gray-50 p-3">
+                  <p className="text-xs text-gray-500">审核状态</p>
+                  <p className="mt-1 font-semibold text-gray-900">{statusText[selectedTemplate.review_status || 'pending'] || selectedTemplate.review_status || '待审核'}</p>
+                </div>
+                <div className="rounded-lg bg-gray-50 p-3">
+                  <p className="text-xs text-gray-500">时长</p>
+                  <p className="mt-1 font-semibold text-gray-900">
+                    {selectedTemplate.min_duration_hours || selectedTemplate.duration_minutes ? `${selectedTemplate.min_duration_hours || Math.round((selectedTemplate.duration_minutes || 0) / 60)}~${selectedTemplate.max_duration_hours || Math.round((selectedTemplate.duration_minutes || 0) / 60)}小时` : '-'}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-gray-50 p-3">
+                  <p className="text-xs text-gray-500">玩家位</p>
+                  <p className="mt-1 font-semibold text-gray-900">{selectedTemplate.player_roles?.length || 0}</p>
+                </div>
+                <div className="rounded-lg bg-gray-50 p-3">
+                  <p className="text-xs text-gray-500">卡司位</p>
+                  <p className="mt-1 font-semibold text-gray-900">{selectedTemplate.actor_roles?.length || 0}</p>
+                </div>
+              </div>
+
+              {selectedTemplate.reject_reason && (
+                <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  驳回原因：{selectedTemplate.reject_reason}
+                </div>
+              )}
+
+              <section>
+                <h4 className="text-sm font-bold text-gray-900">玩家角色</h4>
+                {selectedTemplate.player_roles?.length ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {selectedTemplate.player_roles.map((role, index) => (
+                      <span key={`${role.role_name}-${index}`} className="rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-sm text-blue-700">
+                        {role.role_name}{role.gender ? ` · ${role.gender}` : ''}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-gray-400">暂无玩家角色</p>
+                )}
+              </section>
+
+              <section>
+                <h4 className="text-sm font-bold text-gray-900">卡司角色</h4>
+                {selectedTemplate.actor_roles?.length ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {selectedTemplate.actor_roles.map((role, index) => (
+                      <span key={`${role.role_name}-${index}`} className="rounded-full border border-purple-100 bg-purple-50 px-3 py-1 text-sm text-purple-700">
+                        {role.role_name}{role.gender ? ` · ${role.gender}` : ''}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-gray-400">暂无卡司角色</p>
+                )}
+              </section>
+
+              <div className="grid grid-cols-1 gap-3 text-sm text-gray-500 md:grid-cols-2">
+                <p>创建时间：{selectedTemplate.created_at ? new Date(selectedTemplate.created_at).toLocaleString('zh-CN') : '-'}</p>
+                <p>审核时间：{selectedTemplate.reviewed_at ? new Date(selectedTemplate.reviewed_at).toLocaleString('zh-CN') : '-'}</p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-gray-100 px-6 py-4">
+              <button onClick={() => reviewTemplate(selectedTemplate, 'approve')} disabled={selectedTemplate.review_status === 'approved'} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm text-white hover:bg-emerald-700 disabled:opacity-40">
+                通过入主库
+              </button>
+              <button onClick={() => reviewTemplate(selectedTemplate, 'reject')} disabled={selectedTemplate.review_status === 'rejected'} className="rounded-lg border border-red-200 px-4 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-40">
+                驳回
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
