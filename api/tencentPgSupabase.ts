@@ -393,7 +393,7 @@ class PgQueryBuilder {
   }
 
   private async executeInsert() {
-    const rows = normalizeRows(this.payload).map(compactRow);
+    const rows = await prepareMutationRows(this.table, normalizeRows(this.payload).map(compactRow));
     if (!rows.length) return { data: [], error: null, count: null };
     const cols = Object.keys(rows[0]);
     const values: any[] = [];
