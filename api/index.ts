@@ -55,7 +55,16 @@ const JZG_WECHAT_OPEN_APP_SECRET = process.env.JZG_WECHAT_OPEN_APP_SECRET || pro
 const JZG_WECHAT_REDIRECT_URI = process.env.JZG_WECHAT_REDIRECT_URI || `${JUZHANGGUI_SITE_URL}/api/player/wechat/callback`;
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || origin === JUZHANGGUI_SITE_URL || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+      callback(null, true);
+    } else {
+      callback(null, true);
+    }
+  },
+  credentials: true,
+}));
 app.use(express.json());
 
 // Auth middleware
@@ -1630,7 +1639,15 @@ app.post('/api/rooms', async (req: any, res: any) => {
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/rooms/:id', async (req: any, res: any) => {
-  try { await supabase.from('rooms').update(req.body).eq('id', req.params.id).eq('tenant_id', currentTenantId(req)); res.json(ok()); }
+  try {
+    const fields: any = {};
+    if (req.body.name !== undefined) fields.name = cleanText(req.body.name, 80);
+    if (req.body.capacity !== undefined) fields.capacity = parseInt(req.body.capacity, 10) || 0;
+    if (req.body.status !== undefined) fields.status = cleanText(req.body.status, 30);
+    fields.updated_at = new Date().toISOString();
+    await supabase.from('rooms').update(fields).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
+    res.json(ok());
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.delete('/api/rooms/:id', async (req: any, res: any) => {
@@ -2892,43 +2909,84 @@ app.post('/api/customers/:id/transactions', async (req: any, res: any) => {
 });
 
 // ===== Notifications =====
-app.get('/api/notifications', async (_: any, res: any) => {
+app.get('/api/notifications', async (req: any, res: any) => {
   try {
-    const { data: notifications } = await supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(50);
-    const { count } = await supabase.from('notifications').select('*', { count: 'exact', head: true }).eq('is_read', 0);
+    const tenantId = currentTenantId(req);
+    const { data: notifications } = await supabase.from('notifications').select('*').eq('tenant_id', tenantId).order('created_at', { ascending: false }).limit(50);
+    const { count } = await supabase.from('notifications').select('*', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('is_read', 0);
     res.json(ok({ notifications: notifications || [], unreadCount: count || 0 }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/notifications/:id/read', async (req: any, res: any) => {
-  try { await supabase.from('notifications').update({ is_read: 1 }).eq('id', req.params.id); res.json(ok()); }
+  try {
+    const tenantId = currentTenantId(req);
+    await supabase.from('notifications').update({ is_read: 1, updated_at: new Date().toISOString() }).eq('id', req.params.id).eq('tenant_id', tenantId);
+    res.json(ok());
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
-app.put('/api/notifications/read-all', async (_: any, res: any) => {
-  try { await supabase.from('notifications').update({ is_read: 1 }).eq('is_read', 0); res.json(ok()); }
+app.put('/api/notifications/read-all', async (req: any, res: any) => {
+  try {
+    const tenantId = currentTenantId(req);
+    await supabase.from('notifications').update({ is_read: 1, updated_at: new Date().toISOString() }).eq('tenant_id', tenantId).eq('is_read', 0);
+    res.json(ok());
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 
 // ===== Conflicts =====
-app.get('/api/conflicts/pending', async (_: any, res: any) => {
-  try { const { data } = await supabase.from('conflict_records').select('*, customers(name), actors(name)').eq('status', 'pending').order('conflict_date', { ascending: false }); res.json(ok(data)); }
+app.get('/api/conflicts/pending', async (req: any, res: any) => {
+  try {
+    const tenantId = currentTenantId(req);
+    const { data } = await supabase.from('conflict_records')
+      .select('*, customers!inner(name), actors!inner(name)')
+      .eq('tenant_id', tenantId)
+      .eq('status', 'pending')
+      .order('conflict_date', { ascending: false });
+    res.json(ok(data || []));
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.post('/api/conflicts', async (req: any, res: any) => {
   try {
+    const tenantId = currentTenantId(req);
     const { data } = await supabase.from('conflict_records').insert({
-      schedule_id: req.body.scheduleId, customer_id: req.body.customerId, actor_id: req.body.actorId,
-      conflict_type: req.body.conflictType, conflict_description: req.body.conflictDescription,
-      conflict_date: req.body.conflictDate, status: 'pending'
+      tenant_id: tenantId,
+      schedule_id: req.body.scheduleId,
+      customer_id: req.body.customerId,
+      actor_id: req.body.actorId,
+      conflict_type: cleanText(req.body.conflictType, 40),
+      conflict_description: cleanText(req.body.conflictDescription, 1000),
+      conflict_date: req.body.conflictDate,
+      status: 'pending'
     }).select().single();
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/conflicts/:id', async (req: any, res: any) => {
-  try { await supabase.from('conflict_records').update(req.body).eq('id', req.params.id); res.json(ok()); }
+  try {
+    const tenantId = currentTenantId(req);
+    const fields: any = {};
+    if (req.body.conflictType !== undefined) fields.conflict_type = cleanText(req.body.conflictType, 40);
+    if (req.body.conflictDescription !== undefined) fields.conflict_description = cleanText(req.body.conflictDescription, 1000);
+    if (req.body.conflictDate !== undefined) fields.conflict_date = req.body.conflictDate;
+    if (req.body.status !== undefined) fields.status = cleanText(req.body.status, 30);
+    if (req.body.resolveNote !== undefined) fields.resolve_note = cleanText(req.body.resolveNote, 1000);
+    if (req.body.scheduleId !== undefined) fields.schedule_id = req.body.scheduleId;
+    if (req.body.customerId !== undefined) fields.customer_id = req.body.customerId;
+    if (req.body.actorId !== undefined) fields.actor_id = req.body.actorId;
+    fields.updated_at = new Date().toISOString();
+    await supabase.from('conflict_records').update(fields).eq('id', req.params.id).eq('tenant_id', tenantId);
+    res.json(ok());
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.delete('/api/conflicts/:id', async (req: any, res: any) => {
-  try { await supabase.from('conflict_records').delete().eq('id', req.params.id); res.json(ok()); }
+  try {
+    const tenantId = currentTenantId(req);
+    await supabase.from('conflict_records').delete().eq('id', req.params.id).eq('tenant_id', tenantId);
+    res.json(ok());
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 
