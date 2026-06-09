@@ -30,6 +30,39 @@ export const tencentPgPool = new Pool({
 });
 
 const pool = tencentPgPool;
+const columnTypeCache = new Map<string, Map<string, string>>();
+
+async function getColumnTypes(table: string) {
+  const cached = columnTypeCache.get(table);
+  if (cached) return cached;
+  const result = await pool.query(
+    `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+    [table],
+  );
+  const map = new Map<string, string>();
+  for (const row of result.rows) map.set(row.column_name, row.data_type);
+  columnTypeCache.set(table, map);
+  return map;
+}
+
+function mutationValueForType(value: any, dataType?: string) {
+  if (value === undefined) return null;
+  if (value === null) return null;
+  if (Buffer.isBuffer(value)) return value;
+  if (value instanceof Date) return value;
+  if (Array.isArray(value)) return dataType === 'json' || dataType === 'jsonb' ? JSON.stringify(value) : value;
+  if (typeof value === 'object') return JSON.stringify(value);
+  return value;
+}
+
+async function prepareMutationRows(table: string, rows: Record<string, any>[]) {
+  const columnTypes = await getColumnTypes(table);
+  return rows.map(row => {
+    const out: Record<string, any> = {};
+    for (const [key, value] of Object.entries(row)) out[key] = mutationValueForType(value, columnTypes.get(key));
+    return out;
+  });
+}
 
 const RELATIONS: Record<string, Record<string, RelationConfig>> = {
   schedules: {
@@ -382,11 +415,11 @@ class PgQueryBuilder {
   }
 
   private async executeUpdate() {
-    const row = compactRow(this.payload || {});
+    const row = (await prepareMutationRows(this.table, [compactRow(this.payload || {})]))[0];
     const cols = Object.keys(row);
     if (!cols.length) return { data: null, error: null, count: null };
     const values: any[] = [];
-    const sets = cols.map(col => `${quoteIdent(col)} = $${values.push(mutationValue(row[col]))}`).join(', ');
+    const sets = cols.map(col => `${quoteIdent(col)} = $${values.push(row[col])}`).join(', ');
     const sql = `UPDATE ${quoteIdent(this.table)} SET ${sets}${this.whereSql(values)} RETURNING *`;
     const result = await pool.query(sql, values);
     const data = this.formatRows(this.projectMutationRows(result.rows));
@@ -402,11 +435,11 @@ class PgQueryBuilder {
   }
 
   private async executeUpsert() {
-    const rows = normalizeRows(this.payload).map(compactRow);
+    const rows = await prepareMutationRows(this.table, normalizeRows(this.payload).map(compactRow));
     if (!rows.length) return { data: [], error: null, count: null };
     const cols = Array.from(new Set(rows.flatMap(row => Object.keys(row))));
     const values: any[] = [];
-    const placeholders = rows.map(row => `(${cols.map(col => `$${values.push(mutationValue(row[col] ?? null))}`).join(', ')})`).join(', ');
+    const placeholders = rows.map(row => `(${cols.map(col => `$${values.push(row[col] ?? null)}`).join(', ')})`).join(', ');
     const conflict = this.upsertConflict.length ? this.upsertConflict : ['id'];
     const updateCols = cols.filter(col => !conflict.includes(col));
     const updateSql = updateCols.length
