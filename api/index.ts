@@ -4,6 +4,9 @@
 import express from 'express';
 import cors from 'cors';
 import { createTencentPgClient } from './tencentPgSupabase.js';
+import { db } from './db/drizzle.js';
+import { jzgStores, rooms } from './db/schema.js';
+import { and, eq, desc } from 'drizzle-orm';
 import { createClient } from '@supabase/supabase-js';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
@@ -1522,15 +1525,14 @@ app.get('/api/platform/audit-logs', async (req: any, res: any) => {
 // ===== Stores / 多店家后台 =====
 app.get('/api/stores', async (req: any, res: any) => {
   try {
-    let query = supabase.from('jzg_stores').select('*').order('created_at', { ascending: false });
-    if (!isSuperAdminReq(req)) query = query.eq('id', currentTenantId(req));
-    const { data, error } = await query;
-    if (error && String(error.message || '').includes('jzg_stores')) {
-      return res.json(ok([{ id: TENANT_ID, name: '默认店家', city: '未设置', status: 'active' }]));
-    }
-    if (error) throw error;
+    const data = isSuperAdminReq(req)
+      ? await db.select().from(jzgStores).orderBy(desc(jzgStores.created_at))
+      : await db.select().from(jzgStores).where(eq(jzgStores.id, currentTenantId(req))).orderBy(desc(jzgStores.created_at));
     res.json(ok(data || []));
-  } catch (e) { res.status(500).json(err(e)); }
+  } catch (e) {
+    if (String((e as any)?.message || '').includes('jzg_stores')) return res.json(ok([{ id: TENANT_ID, name: '默认店家', city: '未设置', status: 'active' }]));
+    res.status(500).json(err(e));
+  }
 });
 
 app.post('/api/stores', async (req: any, res: any) => {
@@ -1538,15 +1540,15 @@ app.post('/api/stores', async (req: any, res: any) => {
     if (!requireSuperAdmin(req, res)) return;
     const { name, city, address, contact } = req.body;
     if (!name) return res.status(400).json(err(new Error('请填写店家名称')));
-    const { data, error } = await supabase.from('jzg_stores').insert({
+    const [data] = await db.insert(jzgStores).values({
       name: String(name).trim(),
       city: city ? String(city).trim() : null,
       address: address ? String(address).trim() : null,
       contact: contact ? String(contact).trim() : null,
       default_deposit_amount: moneyCents(req.body?.defaultDepositAmount ?? 5000),
       status: 'active',
-    }).select().single();
-    if (error) throw error;
+    }).returning();
+    if (!data) throw new Error('创建店家失败');
     await logPlatformAction(req, 'store_create', { type: 'store', id: data.id, label: data.name }, { city: data.city, address: data.address });
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
@@ -1561,8 +1563,8 @@ app.put('/api/stores/:id/settings', async (req: any, res: any) => {
     const fields: any = {};
     if (req.body.defaultDepositAmount !== undefined) fields.default_deposit_amount = moneyCents(req.body.defaultDepositAmount);
     if (!Object.keys(fields).length) return res.status(400).json(err(new Error('没有可保存的设置')));
-    const { data, error } = await supabase.from('jzg_stores').update(fields).eq('id', storeId).select().single();
-    if (error) throw error;
+    const [data] = await db.update(jzgStores).set(fields).where(eq(jzgStores.id, storeId)).returning();
+    if (!data) return res.status(404).json(err(new Error('店家不存在')));
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -1647,14 +1649,18 @@ app.post('/api/script-templates/:id/import', async (req: any, res: any) => {
 
 // ===== Rooms =====
 app.get('/api/rooms', async (req: any, res: any) => {
-  try { const { data } = await supabase.from('rooms').select('*').eq('tenant_id', currentTenantId(req)).order('name'); res.json(ok(data)); }
+  try {
+    const data = await db.select().from(rooms).where(eq(rooms.tenant_id, currentTenantId(req))).orderBy(rooms.name);
+    res.json(ok(data));
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.post('/api/rooms', async (req: any, res: any) => {
   try {
     const { name, capacity } = req.body;
     if (!name) return res.status(400).json(err(new Error('请填写房间名称')));
-    const { data } = await supabase.from('rooms').insert({ name, capacity: capacity || 0, tenant_id: currentTenantId(req), status: 'active' }).select().single();
+    const tenantId = currentTenantId(req);
+    const [data] = await db.insert(rooms).values({ name, capacity: capacity || 0, tenant_id: tenantId, status: 'active' }).returning();
     res.json(ok({ id: data?.id }));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -1664,14 +1670,17 @@ app.put('/api/rooms/:id', async (req: any, res: any) => {
     if (req.body.name !== undefined) fields.name = cleanText(req.body.name, 80);
     if (req.body.capacity !== undefined) fields.capacity = parseInt(req.body.capacity, 10) || 0;
     if (req.body.status !== undefined) fields.status = cleanText(req.body.status, 30);
-    fields.updated_at = new Date().toISOString();
-    await supabase.from('rooms').update(fields).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
+    if (!Object.keys(fields).length) return res.json(ok());
+    await db.update(rooms).set(fields).where(and(eq(rooms.id, req.params.id), eq(rooms.tenant_id, currentTenantId(req))));
     res.json(ok());
   }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.delete('/api/rooms/:id', async (req: any, res: any) => {
-  try { await supabase.from('rooms').delete().eq('id', req.params.id).eq('tenant_id', currentTenantId(req)); res.json(ok()); }
+  try {
+    await db.delete(rooms).where(and(eq(rooms.id, req.params.id), eq(rooms.tenant_id, currentTenantId(req))));
+    res.json(ok());
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 
