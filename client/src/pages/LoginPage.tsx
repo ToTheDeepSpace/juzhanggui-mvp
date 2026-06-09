@@ -36,7 +36,7 @@ export default function LoginPage() {
     smsEnabled: false,
     legacyPasswordEnabled: false,
   });
-  const { loginWithEmail, loginWithEmailCode, registerWithEmail, resetPasswordWithEmail, sendAdminEmailCode } = useAuth();
+  const { loginWithEmail, registerWithEmail, resetPasswordWithEmail, sendAdminEmailCode } = useAuth();
   const navigate = useNavigate();
 
   const goDashboard = () => navigate('/store/manage', { replace: true });
@@ -71,7 +71,7 @@ export default function LoginPage() {
     setSendingEmailCode(true);
     setError('');
     setInfo('');
-    const purpose = mode === 'register' ? 'admin_register' : mode === 'resetPassword' ? 'admin_reset_password' : 'admin_login';
+    const purpose = mode === 'register' ? 'admin_register' : 'admin_reset_password';
     const result = await sendAdminEmailCode(email.trim(), purpose);
     setSendingEmailCode(false);
     if (result.success) setInfo('验证码已发送，请查看邮箱');
@@ -91,21 +91,12 @@ export default function LoginPage() {
         setError('请填写邮箱');
         return;
       }
-      if (authConfig.emailCodeEnabled) {
-        if (!emailCode.trim()) {
-          setSubmitting(false);
-          setError('请填写邮箱验证码');
-          return;
-        }
-        result = await loginWithEmailCode(email.trim(), emailCode.trim());
-      } else {
-        if (!password.trim()) {
-          setSubmitting(false);
-          setError('请填写密码');
-          return;
-        }
-        result = await loginWithEmail(email.trim(), password);
+      if (!password.trim()) {
+        setSubmitting(false);
+        setError('请填写密码');
+        return;
       }
+      result = await loginWithEmail(email.trim(), password);
     } else if (mode === 'register') {
       if (!authConfig.emailCodeEnabled) {
         setSubmitting(false);
@@ -147,8 +138,8 @@ export default function LoginPage() {
     else setError(result.error || '登录失败');
   };
 
-  const showEmailCode = authConfig.emailCodeEnabled && (mode === 'login' || mode === 'register' || mode === 'resetPassword');
-  const showPassword = (!authConfig.emailCodeEnabled && mode === 'login') || mode === 'register' || mode === 'resetPassword';
+  const showEmailCode = authConfig.emailCodeEnabled && (mode === 'register' || mode === 'resetPassword');
+  const showPassword = mode === 'login' || mode === 'register' || mode === 'resetPassword';
 
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
@@ -200,6 +191,11 @@ export default function LoginPage() {
           {!authConfig.emailCodeEnabled && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs leading-6 text-amber-800">
               邮箱验证码暂未启用，当前只能使用已注册账号的邮箱密码登录；注册账号和忘记密码会在邮箱验证码服务开通后开放。
+            </div>
+          )}
+          {authConfig.emailCodeEnabled && mode === 'login' && (
+            <div className="rounded-xl border border-sky-100 bg-sky-50 px-3 py-3 text-xs leading-6 text-sky-800">
+              邮箱只需在注册或忘记密码时验证一次，日常登录请直接使用邮箱和密码。
             </div>
           )}
 
@@ -280,7 +276,7 @@ export default function LoginPage() {
           )}
 
           <p className="text-xs text-slate-500 leading-6">
-            注册和忘记密码都必须先验证邮箱；手机号可在进入后台后绑定。
+            注册和忘记密码都必须先验证邮箱；验证通过后请用邮箱密码日常登录，手机号可在进入后台后绑定。
           </p>
         </form>
       </div>
