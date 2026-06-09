@@ -1630,8 +1630,13 @@ app.get('/api/actors', async (req: any, res: any) => {
   try {
     const { data } = await supabase.from('actors').select('*').eq('tenant_id', currentTenantId(req)).order('name');
     const enriched = await Promise.all((data || []).map(async (a: any) => {
-      const lc = await ensureLingqiDmProfileForActor(a);
-      return { ...a, lc_profile: lc };
+      try {
+        const lc = await ensureLingqiDmProfileForActor(a);
+        return { ...a, lc_profile: lc };
+      } catch (profileErr) {
+        console.warn('actor LingQi profile sync skipped', a?.id, err(profileErr).error);
+        return { ...a, lc_profile: null, lc_profile_error: '灵契档案同步失败' };
+      }
     }));
     res.json(ok(enriched));
   }
