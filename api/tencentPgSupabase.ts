@@ -136,7 +136,7 @@ function mutationValue(value: any) {
   if (value === null) return null;
   if (Buffer.isBuffer(value)) return value;
   if (value instanceof Date) return value;
-  if (Array.isArray(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return value;
   if (typeof value === 'object') return JSON.stringify(value);
   return value;
 }
