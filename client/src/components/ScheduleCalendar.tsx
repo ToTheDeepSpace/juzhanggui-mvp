@@ -396,10 +396,21 @@ export default function ScheduleCalendar() {
     const summary = schedule.progress_summary;
     if (!summary?.steps?.length) return null;
     return (
-      <div className="mt-2 min-w-[260px]">
-        <div className="grid grid-cols-6 gap-1">
+      <div className="mt-2 min-w-[300px] max-w-[520px]">
+        <div className="grid grid-cols-3 gap-1.5 lg:grid-cols-6">
           {summary.steps.map(step => (
-            <div key={step.key} className={`h-1.5 rounded-full ${step.done ? 'bg-indigo-500' : step.optional ? 'bg-slate-100' : 'bg-slate-200'}`} title={step.label} />
+            <div
+              key={step.key}
+              title={step.done ? `${step.label}已完成` : step.optional ? `${step.label}可选，未处理` : `${step.label}未完成`}
+              className={`rounded-lg border px-1.5 py-1 text-center text-[11px] leading-tight ${step.done
+                ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                : step.optional
+                  ? 'border-slate-100 bg-slate-50 text-slate-400'
+                  : 'border-slate-200 bg-white text-slate-500'}`}
+            >
+              <span className="block font-medium">{step.label}</span>
+              <span className="mt-0.5 block text-[10px]">{step.done ? '已完成' : step.optional ? '可选' : '未完成'}</span>
+            </div>
           ))}
         </div>
         <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
