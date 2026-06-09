@@ -480,6 +480,11 @@ export default function ScheduleCalendar() {
           {s.dm_lock_status && s.dm_lock_status !== 'none' && (
             <div className="mt-1 text-[11px] text-indigo-600">指定DM：{s.dm_lock_status === 'requested' ? '已扣权益待确认' : s.dm_lock_status}</div>
           )}
+          {s.status === 'scheduled' && (
+            <button onClick={(e) => { e.stopPropagation(); openFinanceModal(s, e, 'deposit'); }} className="mt-1 block rounded-lg border border-orange-200 bg-orange-50 px-2 py-1 text-xs font-medium text-orange-700 hover:bg-orange-100">
+              锁车 · 确认定金
+            </button>
+          )}
           <ProgressLine schedule={s} />
         </td>
         {showActions && (
@@ -490,7 +495,7 @@ export default function ScheduleCalendar() {
                 <button onClick={(e) => openQRModal(s, e)} className="text-xs text-amber-600 hover:underline font-medium">处理申请</button>
               )}
               {s.status === 'scheduled' && (
-                <button onClick={(e) => openFinanceModal(s, e, 'deposit')} className="text-xs text-orange-600 hover:underline font-medium">定金锁车</button>
+                <button onClick={(e) => openFinanceModal(s, e, 'deposit')} className="text-xs text-orange-600 hover:underline font-medium">锁车</button>
               )}
               {s.status === 'locked' && (
                 <button onClick={(e) => openFinanceModal(s, e, 'deposit')} className="text-xs text-amber-700 hover:underline">定金记录</button>
