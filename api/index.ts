@@ -376,6 +376,11 @@ function depositSettlementMode(input: unknown): 'deduct_final' | 'refund_after_f
   return 'deduct_final';
 }
 
+function actorGender(input: unknown) {
+  const value = cleanText(input, 20);
+  return ['男', '女', '可男可女'].includes(value) ? value : null;
+}
+
 function monthKey(date = new Date()) {
   return date.toISOString().slice(0, 7);
 }
@@ -1705,14 +1710,14 @@ app.post('/api/actors', async (req: any, res: any) => {
   try {
     const { name, phone } = req.body;
     if (!name) return res.status(400).json(err(new Error('请填写卡司姓名')));
-    const { data } = await supabase.from('actors').insert({ name, phone: phone || null, tenant_id: currentTenantId(req) }).select().single();
+    const { data } = await supabase.from('actors').insert({ name, phone: phone || null, gender: actorGender(req.body?.gender), tenant_id: currentTenantId(req) }).select().single();
     const lcProfile = await ensureLingqiDmProfileForActor(data || { name, phone });
     res.json(ok({ id: data?.id, lc_profile: lcProfile }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/actors/:id', async (req: any, res: any) => {
   try {
-    await supabase.from('actors').update({ name: req.body.name, phone: req.body.phone || null }).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
+    await supabase.from('actors').update({ name: req.body.name, phone: req.body.phone || null, gender: actorGender(req.body?.gender) }).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
     const lcProfile = await ensureLingqiDmProfileForActor({ name: req.body.name, phone: req.body.phone });
     res.json(ok({ lc_profile: lcProfile }));
   }
@@ -2217,6 +2222,38 @@ app.post('/api/schedules/:id/lock', async (req: any, res: any) => {
       .eq('tenant_id', tenantId)
       .select()
       .single();
+    if (error) throw error;
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.put('/api/schedules/:id/dm-assignment', async (req: any, res: any) => {
+  try {
+    const tenantId = currentTenantId(req);
+    const mode = cleanText(req.body?.mode, 30);
+    const actorId = cleanText(req.body?.actorId, 80);
+    const { data: schedule } = await supabase.from('schedules')
+      .select('id, tenant_id, status')
+      .eq('id', req.params.id)
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
+    if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
+    if (['cancelled', 'bombed', 'completed'].includes(schedule.status)) return res.status(400).json(err(new Error('当前状态不能指定 DM')));
+    const fields: any = { dm_lock_customer_id: null, dm_lock_credit_transaction_id: null };
+    if (mode === 'not_needed') {
+      fields.requested_dm_actor_id = null;
+      fields.dm_lock_status = 'not_needed';
+    } else if (mode === 'clear') {
+      fields.requested_dm_actor_id = null;
+      fields.dm_lock_status = 'none';
+    } else {
+      if (!actorId) return res.status(400).json(err(new Error('请选择要指定的 DM')));
+      const { data: actor } = await supabase.from('actors').select('id').eq('id', actorId).eq('tenant_id', tenantId).maybeSingle();
+      if (!actor) return res.status(404).json(err(new Error('DM 不存在')));
+      fields.requested_dm_actor_id = actor.id;
+      fields.dm_lock_status = 'confirmed';
+    }
+    const { data, error } = await supabase.from('schedules').update(fields).eq('id', schedule.id).eq('tenant_id', tenantId).select().single();
     if (error) throw error;
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }

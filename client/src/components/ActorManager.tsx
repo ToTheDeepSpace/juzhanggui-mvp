@@ -12,7 +12,7 @@ export default function ActorManager() {
   const [actorSkills, setActorSkills] = useState<ActorSkill[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [showSkillModal, setShowSkillModal] = useState(false);
-  const [formData, setFormData] = useState({ name: '', phone: '' });
+  const [formData, setFormData] = useState({ name: '', phone: '', gender: '' });
   const [editingActor, setEditingActor] = useState<Actor | null>(null);
   const [selectedScript, setSelectedScript] = useState('');
   const [selectedRole, setSelectedRole] = useState('');
@@ -52,20 +52,20 @@ export default function ActorManager() {
     } else {
       await post('/actors', formData);
     }
-    setFormData({ name: '', phone: '' });
+    setFormData({ name: '', phone: '', gender: '' });
     setShowForm(false);
     loadActors();
   };
 
   const handleEdit = (actor: Actor) => {
     setEditingActor(actor);
-    setFormData({ name: actor.name, phone: actor.phone || '' });
+    setFormData({ name: actor.name, phone: actor.phone || '', gender: actor.gender || '' });
     setShowForm(true);
   };
 
   const handleCancelEdit = () => {
     setEditingActor(null);
-    setFormData({ name: '', phone: '' });
+    setFormData({ name: '', phone: '', gender: '' });
     setShowForm(false);
   };
 
@@ -130,7 +130,7 @@ export default function ActorManager() {
         <button
           onClick={() => {
             setEditingActor(null);
-            setFormData({ name: '', phone: '' });
+            setFormData({ name: '', phone: '', gender: '' });
             setShowForm(true);
           }}
           className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors"
@@ -164,6 +164,19 @@ export default function ActorManager() {
                 placeholder="联系电话"
               />
             </div>
+            <div className="w-36">
+              <label className="block text-sm font-medium text-gray-700 mb-1">性别</label>
+              <select
+                value={formData.gender}
+                onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              >
+                <option value="">未设置</option>
+                <option value="男">男</option>
+                <option value="女">女</option>
+                <option value="可男可女">可男可女</option>
+              </select>
+            </div>
             <div className="flex gap-2">
               <button
                 type="submit"
@@ -190,6 +203,9 @@ export default function ActorManager() {
             <div className="flex justify-between items-start">
               <div>
                 <h3 className="font-medium text-lg text-gray-800">{actor.name}</h3>
+                {actor.gender && (
+                  <span className="mt-1 inline-flex rounded-full bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700">{actor.gender}</span>
+                )}
                 {actor.phone && (
                   <p className="text-sm text-gray-500 mt-1">📞 {actor.phone}</p>
                 )}

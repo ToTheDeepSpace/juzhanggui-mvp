@@ -53,6 +53,10 @@ export default function ScheduleCalendar() {
   const [financeRows, setFinanceRows] = useState<any[]>([]);
   const [financeMode, setFinanceMode] = useState<'deposit' | 'settlement'>('deposit');
   const [financeSaving, setFinanceSaving] = useState(false);
+  const [showDmModal, setShowDmModal] = useState(false);
+  const [dmSchedule, setDmSchedule] = useState<ScheduleWithDetails | null>(null);
+  const [dmActorId, setDmActorId] = useState('');
+  const [dmSaving, setDmSaving] = useState(false);
 
   // 表单状态
   const [formData, setFormData] = useState<ScheduleFormData>({
@@ -173,6 +177,32 @@ export default function ScheduleCalendar() {
       settlement_note: item.settlement_note || '',
     })));
     setShowFinanceModal(true);
+  };
+
+  const openDmModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDmSchedule(schedule);
+    setDmActorId(schedule.requested_dm_actor_id || '');
+    setShowDmModal(true);
+  };
+
+  const saveDmAssignment = async (mode: 'assign' | 'not_needed' | 'clear' = 'assign') => {
+    if (!dmSchedule) return;
+    if (mode === 'assign' && !dmActorId) {
+      alert('请选择要指定的 DM');
+      return;
+    }
+    setDmSaving(true);
+    const res = await put(`/schedules/${dmSchedule.id}/dm-assignment`, { mode, actorId: dmActorId || null });
+    setDmSaving(false);
+    if (!res.success) {
+      alert(res.error || '保存指定 DM 失败');
+      return;
+    }
+    setShowDmModal(false);
+    setDmSchedule(null);
+    setDmActorId('');
+    loadData();
   };
 
   const saveFinanceRows = async (completeAfterSave = false) => {
@@ -374,6 +404,8 @@ export default function ScheduleCalendar() {
     ongoing: 'text-green-600 bg-green-50', settling: 'text-amber-700 bg-amber-50', completed: 'text-gray-500 bg-gray-100',
     cancelled: 'text-red-500 bg-red-50', bombed: 'text-orange-600 bg-orange-50', issue: 'text-purple-600 bg-purple-50',
   };
+  const actorName = (id?: string | null) => actors.find(a => a.id === id)?.name || '';
+  const actorGenderText = (actor?: Actor) => actor?.gender ? ` · ${actor.gender}` : '';
   const lockReasonText: Record<string, string> = {
     full_paid: '人齐定金齐',
     deposit_guaranteed: '定金担保',
@@ -477,8 +509,14 @@ export default function ScheduleCalendar() {
           {s.status === 'locked' && s.lock_reason && (
             <div className="mt-1 text-[11px] text-orange-600">{lockReasonText[s.lock_reason] || s.lock_reason}</div>
           )}
-          {s.dm_lock_status && s.dm_lock_status !== 'none' && (
-            <div className="mt-1 text-[11px] text-indigo-600">指定DM：{s.dm_lock_status === 'requested' ? '已扣权益待确认' : s.dm_lock_status}</div>
+          {!['cancelled', 'bombed', 'completed'].includes(s.status) && (
+            <button onClick={(e) => openDmModal(s, e)} className="mt-1 block rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100">
+              {s.dm_lock_status === 'confirmed'
+                ? `指定DM：${actorName(s.requested_dm_actor_id) || '已指定'}`
+                : s.dm_lock_status === 'not_needed'
+                  ? '指定DM：不需要'
+                  : '指定DM'}
+            </button>
           )}
           {s.status === 'scheduled' && (
             <button onClick={(e) => { e.stopPropagation(); openFinanceModal(s, e, 'deposit'); }} className="mt-1 block rounded-lg border border-orange-200 bg-orange-50 px-2 py-1 text-xs font-medium text-orange-700 hover:bg-orange-100">
@@ -788,6 +826,37 @@ export default function ScheduleCalendar() {
         onRoomChange={setConfirmRoomId}
       />
 
+      {showDmModal && dmSchedule && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 max-w-lg w-full mx-4">
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">指定 DM</h3>
+                <p className="mt-1 text-sm text-gray-500">{dmSchedule.script_name || scripts.find(s => s.id === dmSchedule.script_id)?.name || '未知剧本'} · {format(parseISO(dmSchedule.start_time), 'M/d HH:mm')}</p>
+              </div>
+              <button onClick={() => setShowDmModal(false)} className="text-sm text-gray-400 hover:text-gray-600">关闭</button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">选择 DM/卡司</label>
+                <select value={dmActorId} onChange={e => setDmActorId(e.target.value)} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
+                  <option value="">请选择 DM</option>
+                  {actors.map(actor => <option key={actor.id} value={actor.id}>{actor.name}{actorGenderText(actor)}</option>)}
+                </select>
+              </div>
+              <div className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">
+                保存后进度条里的“指定DM”会变成已完成；如果这车不需要指定 DM，可以点“不需要指定DM”。
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <button onClick={() => saveDmAssignment('clear')} disabled={dmSaving} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">清除指定</button>
+                <button onClick={() => saveDmAssignment('not_needed')} disabled={dmSaving} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">不需要指定DM</button>
+                <button onClick={() => saveDmAssignment('assign')} disabled={dmSaving || !dmActorId} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">保存指定</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showFinanceModal && financeSchedule && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-6 max-w-3xl w-full mx-4 max-h-[88vh] overflow-y-auto">
@@ -997,7 +1066,7 @@ export default function ScheduleCalendar() {
                 <label className="text-sm text-gray-600 mb-1 block">选择卡司/DM</label>
                 <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" value="" onChange={e => { if (e.target.value) setStartActors([...startActors, { actorId: e.target.value, roleName: 'DM', startOffset: 0, duration: 240 }]); }}>
                   <option value="">选择卡司...</option>
-                  {actors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  {actors.map(a => <option key={a.id} value={a.id}>{a.name}{actorGenderText(a)}</option>)}
                 </select>
                 {startActors.map((sa, i) => {
                   const actor = actors.find(a => a.id === sa.actorId);

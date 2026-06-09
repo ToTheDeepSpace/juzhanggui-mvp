@@ -13,6 +13,7 @@ export interface Actor {
   id: string;
   name: string;
   phone?: string;
+  gender?: '男' | '女' | '可男可女' | string | null;
   lc_profile?: { id: string; display_name: string; role_type?: string; identity_roles?: string[]; verified_dm?: boolean } | null;
 }
 
@@ -91,6 +92,7 @@ export interface Schedule {
   note?: string;
   lock_reason?: string | null;
   dm_lock_status?: string | null;
+  requested_dm_actor_id?: string | null;
   actual_started_at?: string | null;
   actual_ended_at?: string | null;
   settlement_status?: string | null;
