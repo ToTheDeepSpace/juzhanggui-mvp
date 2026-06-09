@@ -59,7 +59,7 @@ export default function MainLayout() {
 
   const enterOwnStoreIdentity = async () => {
     const storeId = user?.storeId || user?.tenantId;
-    const token = localStorage.getItem('auth_token');
+    const token = localStorage.getItem('admin_auth_token') || localStorage.getItem('auth_token');
     const userJson = localStorage.getItem('admin_user');
     if (!storeId || !token || !userJson) {
       setIdentityMessage('当前超管账号还没有绑定店家，先到店家管理里进入指定店家。');
@@ -75,6 +75,7 @@ export default function MainLayout() {
     }
     localStorage.setItem('super_admin_token_backup', token);
     localStorage.setItem('super_admin_user_backup', userJson);
+    localStorage.setItem('admin_auth_token', result.data.token);
     localStorage.setItem('auth_token', result.data.token);
     localStorage.setItem('admin_user', JSON.stringify(result.data.user));
     window.location.href = `${basePath}/schedule`;
@@ -799,6 +800,7 @@ function AccountSecurityMenu() {
       setMessage('没有可恢复的超管会话');
       return;
     }
+    localStorage.setItem('admin_auth_token', token);
     localStorage.setItem('auth_token', token);
     localStorage.setItem('admin_user', userJson);
     localStorage.removeItem('super_admin_token_backup');

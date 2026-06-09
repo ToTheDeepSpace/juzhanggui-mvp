@@ -46,7 +46,7 @@ function decodeLoginPayload(payload: string) {
 
 function getPlayerToken() {
   if (!localStorage.getItem('player_info')) return '';
-  return localStorage.getItem('auth_token') || '';
+  return localStorage.getItem('player_auth_token') || '';
 }
 
 export default function PlayerJoinSchedulePage() {
@@ -81,7 +81,7 @@ export default function PlayerJoinSchedulePage() {
     if (!payload) return;
     const data = decodeLoginPayload(payload);
     if (data?.token && data?.player) {
-      localStorage.setItem('auth_token', data.token);
+      localStorage.setItem('player_auth_token', data.token);
       localStorage.setItem('player_info', JSON.stringify(data.player));
       window.history.replaceState(null, '', `/join/${scheduleId}`);
       setMessage('微信登录成功，可以提交加入申请');
@@ -156,7 +156,7 @@ export default function PlayerJoinSchedulePage() {
       setMessage(data.error || '登录失败');
       return false;
     }
-    localStorage.setItem('auth_token', data.data.token);
+    localStorage.setItem('player_auth_token', data.data.token);
     localStorage.setItem('player_info', JSON.stringify(data.data.player));
     return true;
   };
@@ -182,7 +182,7 @@ export default function PlayerJoinSchedulePage() {
         setMessage(data.data?.existing ? '你已经提交过申请了，等待店家确认' : '申请已提交，等待店家确认');
       } else if (res.status === 401 || res.status === 403) {
         localStorage.removeItem('player_info');
-        if (!localStorage.getItem('admin_user')) localStorage.removeItem('auth_token');
+        localStorage.removeItem('player_auth_token');
         setMessage(data.error || '请先登录玩家账号');
       } else {
         setMessage(data.error || '提交失败');

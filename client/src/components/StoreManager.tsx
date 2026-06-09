@@ -45,7 +45,7 @@ export default function StoreManager() {
   };
 
   const enterStore = async (store: PlatformStoreRecord) => {
-    const token = localStorage.getItem('auth_token');
+    const token = localStorage.getItem('admin_auth_token') || localStorage.getItem('auth_token');
     const userJson = localStorage.getItem('admin_user');
     if (!token || !userJson) {
       setMessage('当前登录状态异常，请重新登录');
@@ -58,6 +58,7 @@ export default function StoreManager() {
     }
     localStorage.setItem('super_admin_token_backup', token);
     localStorage.setItem('super_admin_user_backup', userJson);
+    localStorage.setItem('admin_auth_token', result.data.token);
     localStorage.setItem('auth_token', result.data.token);
     localStorage.setItem('admin_user', JSON.stringify(result.data.user));
     window.location.href = '/store/manage/schedule';

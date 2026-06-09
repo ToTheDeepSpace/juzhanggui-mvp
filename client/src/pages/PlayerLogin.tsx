@@ -51,7 +51,7 @@ export default function PlayerLogin() {
     if (!payload) return;
     const data = decodeLoginPayload(payload);
     if (data?.token && data?.player) {
-      localStorage.setItem('auth_token', data.token);
+      localStorage.setItem('player_auth_token', data.token);
       localStorage.setItem('player_info', JSON.stringify(data.player));
       navigate('/player/dashboard', { replace: true });
     } else {
@@ -156,7 +156,7 @@ export default function PlayerLogin() {
       const data = await res.json();
 
       if (data.success) {
-        localStorage.setItem('auth_token', data.data.token);
+        localStorage.setItem('player_auth_token', data.data.token);
         localStorage.setItem('player_info', JSON.stringify(data.data.player));
         navigate('/player/dashboard');
       } else {

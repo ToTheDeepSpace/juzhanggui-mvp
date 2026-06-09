@@ -53,7 +53,7 @@ export default function PlayerDashboard() {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = localStorage.getItem('player_auth_token');
       const res = await fetch(`${API_BASE}/player/schedules`, {
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -65,7 +65,7 @@ export default function PlayerDashboard() {
       } else {
         setErrorMsg(data.error || '加载失败');
         if (res.status === 401) {
-          localStorage.removeItem('auth_token');
+          localStorage.removeItem('player_auth_token');
           localStorage.removeItem('player_info');
           navigate('/player/login');
         }
@@ -78,7 +78,7 @@ export default function PlayerDashboard() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('auth_token');
+    localStorage.removeItem('player_auth_token');
     localStorage.removeItem('player_info');
     navigate('/player/login');
   };

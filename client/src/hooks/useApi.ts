@@ -30,7 +30,7 @@ async function fetchApi<T>(
       headers: {
         'Content-Type': 'application/json',
         // 自动附加认证 token
-        ...(localStorage.getItem('auth_token') ? { Authorization: `Bearer ${localStorage.getItem('auth_token')}` } : {}),
+        ...((localStorage.getItem('admin_auth_token') || localStorage.getItem('auth_token')) ? { Authorization: `Bearer ${localStorage.getItem('admin_auth_token') || localStorage.getItem('auth_token')}` } : {}),
       },
       ...options,
       signal: controller.signal,

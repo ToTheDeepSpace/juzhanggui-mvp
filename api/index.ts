@@ -24,8 +24,11 @@ const supabase = useTencentPg
 const TENANT_ID = process.env.DEFAULT_TENANT_ID || 'f0d6e011-6e75-4c14-95e9-dc61b26871e3';
 const SUPER_ADMIN_EMAIL = 'hnnkkk@qq.com';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'script-scheduler-secret-change-me';
-if (!process.env.JWT_SECRET) console.warn('⚠ JWT_SECRET env is not set — using fallback. Set it in Vercel dev dashboard!');
+const JWT_SECRET = process.env.JWT_SECRET || (() => {
+  if (process.env.NODE_ENV === 'production') throw new Error('Missing JWT_SECRET');
+  console.warn('⚠ JWT_SECRET env is not set — using local development fallback.');
+  return 'local-dev-jwt-secret-change-me';
+})();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || (process.env.NODE_ENV === 'production' ? '' : 'admin123');
 const PLAYER_LOGIN_CODE = process.env.PLAYER_LOGIN_CODE || (process.env.NODE_ENV === 'production' ? '' : '8888');
 const AUTH_CODE_PEPPER = process.env.AUTH_CODE_PEPPER || JWT_SECRET;
@@ -168,6 +171,16 @@ function normalizeChinaPhone(input: unknown): string {
   const phone = typeof input === 'string' ? input.replace(/\D/g, '') : '';
   if (!/^1[3-9]\d{9}$/.test(phone)) throw new Error('请填写正确的中国大陆手机号');
   return phone;
+}
+function publicScheduleStatus(status: unknown): string {
+  const value = cleanText(status, 30);
+  return value || 'pending';
+}
+function canPublicJoinSchedule(status: unknown): boolean {
+  return ['pending', 'scheduled', 'confirmed'].includes(publicScheduleStatus(status));
+}
+function publicRoleKey(role: unknown): string {
+  return cleanText(role, 80).toLowerCase();
 }
 function normalizeEmail(input: unknown): string {
   const email = cleanText(input, 160).toLowerCase();
@@ -1818,20 +1831,32 @@ app.get('/api/schedules/:id', async (req: any, res: any) => {
 });
 app.get('/api/schedules/:id/public', async (req: any, res: any) => {
   try {
-    const { data: s } = await supabase.from('schedules').select('*, scripts(name), rooms(name)').eq('id', req.params.id).single();
+    const { data: s } = await supabase.from('schedules')
+      .select('id,tenant_id,script_id,room_id,scheduled_date,start_time,end_time,status,player_count,scripts(name),rooms(name)')
+      .eq('id', req.params.id)
+      .single();
     if (!s) return res.status(404).json(err(new Error('不存在')));
     const { data: store } = await supabase.from('jzg_stores').select('name, city').eq('id', s.tenant_id).maybeSingle();
-    const { data: roles } = await supabase.from('script_roles').select('*').eq('script_id', s.script_id).order('start_offset');
-    // 获取玩家可选角色（含性别）
+    const { data: roles } = await supabase.from('script_roles').select('role_name, gender, start_offset, end_offset').eq('script_id', s.script_id).order('start_offset');
     const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
-    // 获取已选角色（含性别）
     const { data: checkins } = await supabase.from('checkins').select('role').eq('schedule_id', req.params.id).not('role', 'is', null);
     const { count: pendingRequestCount } = await supabase.from('jzg_carpool_join_requests')
       .select('*', { count: 'exact', head: true })
       .eq('schedule_id', req.params.id)
       .eq('status', 'pending');
     res.json(ok({
-      ...s, script_name: s.scripts?.name, room_name: s.rooms?.name, store_name: store?.name, store_city: store?.city, roles: roles || [],
+      id: s.id,
+      script_id: s.script_id,
+      room_id: s.room_id,
+      scheduled_date: s.scheduled_date,
+      status: publicScheduleStatus(s.status),
+      player_count: s.player_count,
+      note: null,
+      script_name: s.scripts?.name,
+      room_name: s.rooms?.name,
+      store_name: store?.name,
+      store_city: store?.city,
+      roles: roles || [],
       player_roles: (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' })),
       taken_roles: (checkins || []).map((c: any) => c.role),
       checkins: (checkins || []).map((c: any) => ({ role: c.role, gender: '' })),
@@ -2072,20 +2097,46 @@ app.put('/api/schedules/:id/checkins/:checkinId/finance', async (req: any, res: 
 
 app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
   try {
-    const { name, phone, role, avatar } = req.body;
+    const name = cleanText(req.body?.name, 80);
+    const phone = cleanText(req.body?.phone, 40);
+    const role = cleanText(req.body?.role, 80);
+    const avatar = cleanText(req.body?.avatar, 500);
     if (!name) return res.status(400).json(err(new Error('请填写姓名')));
+    const { data: sched } = await supabase.from('schedules')
+      .select('id,tenant_id,script_id,status')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!sched) return res.status(404).json(err(new Error('排期不存在')));
+    if (!canPublicJoinSchedule(sched.status)) return res.status(400).json(err(new Error('当前排期不允许报名')));
+    const { data: allRoles } = await supabase.from('script_player_roles').select('role_name').eq('script_id', sched.script_id);
+    const validRoles = (allRoles || []).map((item: any) => publicRoleKey(item.role_name)).filter(Boolean);
+    if (role && validRoles.length && !validRoles.includes(publicRoleKey(role))) {
+      return res.status(400).json(err(new Error('角色不存在')));
+    }
+    if (role) {
+      const { data: taken } = await supabase.from('checkins')
+        .select('id')
+        .eq('schedule_id', req.params.id)
+        .eq('role', role)
+        .maybeSingle();
+      if (taken) return res.status(409).json(err(new Error('这个角色已经被选择')));
+    }
     const { data } = await supabase.from('checkins').insert({
-      schedule_id: req.params.id, guest_name: name, guest_phone: phone ? hashPhone(phone) : null,
-      role, guest_avatar: avatar || null
+      schedule_id: req.params.id,
+      guest_name: name,
+      guest_phone: phone ? hashPhone(phone) : null,
+      role: role || null,
+      guest_avatar: avatar || null
     }).select().single();
-    // 满员自动确认
-    const { data: sched } = await supabase.from('schedules').select('script_id').eq('id', req.params.id).single();
     let full = false;
     if (sched && data) {
-      const { data: allRoles } = await supabase.from('script_player_roles').select('id').eq('script_id', sched.script_id);
       const { count } = await supabase.from('checkins').select('*', { count: 'exact', head: true }).eq('schedule_id', req.params.id);
-      if (allRoles && count !== null && count >= allRoles.length) {
-        await supabase.from('schedules').update({ status: 'scheduled' }).eq('id', req.params.id);
+      if (validRoles.length && count !== null && count >= validRoles.length) {
+        await supabase.from('schedules')
+          .update({ status: 'scheduled' })
+          .eq('id', req.params.id)
+          .eq('tenant_id', sched.tenant_id)
+          .in('status', ['pending', 'confirmed']);
         full = true;
       }
     }
@@ -2526,7 +2577,40 @@ app.get('/api/schedules/:id/evaluation', async (req: any, res: any) => {
   catch (e) { res.status(500).json(err(e)); }
 });
 app.post('/api/schedules/:id/evaluate', async (req: any, res: any) => {
-  try { await supabase.from('evaluations').upsert({ schedule_id: req.params.id, guest_name: req.body.guestName, rating: req.body.rating, comment: req.body.comment || null }, { onConflict: 'schedule_id,guest_name' }); res.json(ok()); }
+  try {
+    const guestName = cleanText(req.body?.guestName, 80);
+    const rating = Number(req.body?.rating);
+    const comment = cleanText(req.body?.comment, 1000);
+    if (!guestName) return res.status(400).json(err(new Error('请填写评价人')));
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) return res.status(400).json(err(new Error('评分必须在 1 到 5 分之间')));
+    const { data: schedule } = await supabase.from('schedules')
+      .select('id,status')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
+    if (!['completed', 'settling', 'ongoing'].includes(publicScheduleStatus(schedule.status))) {
+      return res.status(400).json(err(new Error('当前排期暂不能评价')));
+    }
+    const { data: checkin } = await supabase.from('checkins')
+      .select('id')
+      .eq('schedule_id', req.params.id)
+      .eq('guest_name', guestName)
+      .maybeSingle();
+    if (!checkin) return res.status(403).json(err(new Error('只有已报名玩家可以评价')));
+    const { data: existing } = await supabase.from('evaluations')
+      .select('id')
+      .eq('schedule_id', req.params.id)
+      .eq('guest_name', guestName)
+      .maybeSingle();
+    if (existing) return res.status(409).json(err(new Error('你已经评价过这场')));
+    await supabase.from('evaluations').insert({
+      schedule_id: req.params.id,
+      guest_name: guestName,
+      rating,
+      comment: comment || null
+    });
+    res.json(ok());
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.get('/api/scripts/:id/evaluations', async (req: any, res: any) => {

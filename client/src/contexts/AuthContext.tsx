@@ -33,6 +33,16 @@ interface AuthContextType {
   logout: () => void;
 }
 
+const ADMIN_TOKEN_KEY = 'admin_auth_token';
+const LEGACY_TOKEN_KEY = 'auth_token';
+const ADMIN_USER_KEY = 'admin_user';
+const SUPER_ADMIN_TOKEN_BACKUP_KEY = 'super_admin_token_backup';
+const SUPER_ADMIN_USER_BACKUP_KEY = 'super_admin_user_backup';
+
+function isAdminUser(user?: AdminUser | null) {
+  return user?.role === 'store_admin' || user?.role === 'super_admin';
+}
+
 const AuthContext = createContext<AuthContextType>({
   token: null,
   user: null,
@@ -59,16 +69,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const setSession = useCallback((newToken: string, newUser?: AdminUser | null) => {
-    localStorage.setItem('auth_token', newToken);
-    if (newUser) localStorage.setItem('admin_user', JSON.stringify(newUser));
-    else localStorage.removeItem('admin_user');
+    localStorage.setItem(ADMIN_TOKEN_KEY, newToken);
+    localStorage.setItem(LEGACY_TOKEN_KEY, newToken);
+    if (newUser) localStorage.setItem(ADMIN_USER_KEY, JSON.stringify(newUser));
+    else localStorage.removeItem(ADMIN_USER_KEY);
     setToken(newToken);
     setUser(newUser || null);
   }, []);
 
   const clearSession = useCallback(() => {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('admin_user');
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
+    localStorage.removeItem(LEGACY_TOKEN_KEY);
+    localStorage.removeItem(ADMIN_USER_KEY);
+    localStorage.removeItem(SUPER_ADMIN_TOKEN_BACKUP_KEY);
+    localStorage.removeItem(SUPER_ADMIN_USER_BACKUP_KEY);
     setToken(null);
     setUser(null);
   }, []);
@@ -79,34 +93,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     const data = await res.json();
     if (!res.ok || !data.success) throw new Error(data.error || '登录已过期');
-    setUser(data.data || null);
-    if (data.data) localStorage.setItem('admin_user', JSON.stringify(data.data));
+    const nextUser = data.data || null;
+    if (!isAdminUser(nextUser)) throw new Error('不是后台账号');
+    setUser(nextUser);
+    localStorage.setItem(ADMIN_USER_KEY, JSON.stringify(nextUser));
   }, []);
 
   // 启动时从 localStorage 恢复 token
   useEffect(() => {
-    const saved = localStorage.getItem('auth_token');
+    const saved = localStorage.getItem(ADMIN_TOKEN_KEY) || localStorage.getItem(LEGACY_TOKEN_KEY);
     if (saved) {
       setToken(saved);
-      const savedUser = localStorage.getItem('admin_user');
+      const savedUser = localStorage.getItem(ADMIN_USER_KEY);
       if (savedUser) {
-        try { setUser(JSON.parse(savedUser)); } catch { localStorage.removeItem('admin_user'); }
+        try {
+          const parsed = JSON.parse(savedUser);
+          if (isAdminUser(parsed)) setUser(parsed);
+          else localStorage.removeItem(ADMIN_USER_KEY);
+        } catch { localStorage.removeItem(ADMIN_USER_KEY); }
       }
-      // 验证 token 是否有效
       fetch('/api/auth/verify', {
         headers: { Authorization: `Bearer ${saved}` },
       })
         .then((res) => {
-          if (!res.ok) {
-            clearSession();
-            return;
-          }
+          if (!res.ok) throw new Error('登录已过期');
           return res.json();
         })
         .then((data) => {
-          if (data && !data.success) clearSession();
-          else if (data?.data?.valid) return loadUser(saved).catch(() => {});
-          else if (data) clearSession();
+          if (!data?.success || !data?.data?.valid) throw new Error('登录已过期');
+          return loadUser(saved);
+        })
+        .then(() => {
+          localStorage.setItem(ADMIN_TOKEN_KEY, saved);
+          localStorage.setItem(LEGACY_TOKEN_KEY, saved);
         })
         .catch(() => clearSession())
         .finally(() => setLoading(false));
@@ -319,7 +338,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         token,
         user,
-        isAuthenticated: !!token,
+        isAuthenticated: !!token && isAdminUser(user),
         loading,
         login,
         loginWithEmail,
