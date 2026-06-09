@@ -29,10 +29,17 @@ async function tableHasColumn(tableName: string, columnName: string) {
 }
 
 async function cleanup() {
-  await tencentPgPool.query('DELETE FROM evaluations WHERE guest_name = $1', [marker]);
-  await tencentPgPool.query('DELETE FROM checkins WHERE guest_name = $1', [marker]);
-  await tencentPgPool.query('DELETE FROM notifications WHERE title = $1', [marker]);
-  await tencentPgPool.query('DELETE FROM lc_profiles WHERE phone = $1', [marker]);
+  await tencentPgPool.query('DELETE FROM evaluations WHERE guest_name = $1', [marker]).catch(() => {});
+  await tencentPgPool.query('DELETE FROM checkins WHERE guest_name = $1', [marker]).catch(() => {});
+  await tencentPgPool.query('DELETE FROM notifications WHERE title = $1', [marker]).catch(() => {});
+  await tencentPgPool.query('DELETE FROM lc_profiles WHERE phone = $1 OR phone = $2', [marker, `${marker}-jsonb`]).catch(() => {});
+}
+
+let poolEnded = false;
+async function closePool() {
+  if (poolEnded) return;
+  poolEnded = true;
+  await tencentPgPool.end();
 }
 
 const steps: Step[] = [
@@ -76,11 +83,23 @@ const steps: Step[] = [
       assertOk(hasIdentityRoles, 'lc_profiles.identity_roles 字段不存在');
       const inserted = await checked<any>('lc_profiles insert array', supabase
         .from('lc_profiles')
-        .insert({ tenant_id: tenantId, phone: marker, display_name: marker, role_type: 'player', role: 'player', identity_roles: ['player', 'dm'] })
+        .insert({ phone: marker, display_name: marker, role_type: 'player', role: 'player', identity_roles: ['player', 'dm'] })
         .select('id, identity_roles')
         .single());
       assertOk(Array.isArray(inserted.data?.identity_roles), 'identity_roles 没有作为数组读回');
       assertOk(inserted.data.identity_roles.includes('dm'), 'identity_roles 数组内容不正确');
+    },
+  },
+  {
+    name: 'jsonb 字段写入',
+    run: async () => {
+      const inserted = await checked<any>('lc_profiles jsonb insert', supabase
+        .from('lc_profiles')
+        .insert({ phone: `${marker}-jsonb`, display_name: marker, role_type: 'dm', role: 'dm', tags: ['推理', '恐怖'], social_links: { wechat: 'test123' } })
+        .select('id, tags, social_links')
+        .single());
+      assertOk(Array.isArray(inserted.data?.tags), 'tags jsonb 没有作为数组读回');
+      assertOk(inserted.data?.social_links?.wechat === 'test123', 'social_links jsonb 内容不正确');
     },
   },
   {
@@ -136,13 +155,13 @@ async function main() {
     }
   } finally {
     await cleanup();
-    await tencentPgPool.end();
+    await closePool();
   }
 }
 
 main().catch(async error => {
   console.error(`FAIL ${error?.message || error}`);
   try { await cleanup(); } catch {}
-  await tencentPgPool.end();
+  await closePool();
   process.exit(1);
 });
