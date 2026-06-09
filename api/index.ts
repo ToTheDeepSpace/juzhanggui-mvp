@@ -1908,21 +1908,28 @@ app.get('/api/schedules', async (req: any, res: any) => {
     // 获取每个排期的上车、定金、结算和评价摘要
     const schedulesWithCheckins = await Promise.all((data || []).map(async (s: any) => {
       const { data: checkins } = await supabase.from('checkins').select('*').eq('schedule_id', s.id);
+      const customerIds = Array.from(new Set((checkins || []).map((c: any) => c.customer_id).filter(Boolean)));
+      const { data: customers } = customerIds.length ? await supabase.from('customers').select('id, name, phone, lock_dm_credits').in('id', customerIds).eq('tenant_id', currentTenantId(req)) : { data: [] as any[] };
+      const customerMap = new Map<string, any>((customers || []).map((c: any) => [c.id, c]));
+      const checkinsWithCustomer = (checkins || []).map((c: any) => ({ ...c, customer: customerMap.get(c.customer_id) || null, lock_dm_credits: customerMap.get(c.customer_id)?.lock_dm_credits || 0 }));
       const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
+      const { data: actorRoles } = await supabase.from('script_actor_roles').select('role_name, gender').eq('script_id', s.script_id);
       const { data: evaluations } = await supabase.from('evaluations').select('rating, comment').eq('schedule_id', s.id);
       const { count: pendingRequestCount } = await supabase.from('jzg_carpool_join_requests')
         .select('*', { count: 'exact', head: true })
         .eq('schedule_id', s.id)
         .eq('status', 'pending');
       const normalizedPlayerRoles = (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
+      const normalizedActorRoles = (actorRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
       return {
         ...s, script_name: s.scripts?.name, room_name: s.rooms?.name,
         start_time: `${s.scheduled_date}T${s.start_time}`,
         end_time: `${s.scheduled_date}T${s.end_time}`,
-        checkins: checkins || [],
+        checkins: checkinsWithCustomer,
         player_roles: normalizedPlayerRoles,
+        actor_roles: normalizedActorRoles,
         pending_request_count: pendingRequestCount || 0,
-        progress_summary: buildScheduleProgress(s, checkins || [], normalizedPlayerRoles, evaluations || []),
+        progress_summary: buildScheduleProgress(s, checkinsWithCustomer, normalizedPlayerRoles, evaluations || []),
       };
     }));
     res.json(ok(schedulesWithCheckins));
@@ -1934,14 +1941,21 @@ app.get('/api/schedules/:id', async (req: any, res: any) => {
     if (!s) return res.status(404).json(err(new Error('不存在')));
     const { data: actors } = await supabase.from('schedule_actors').select('*, actors(name)').eq('schedule_id', req.params.id);
     const { data: checkins } = await supabase.from('checkins').select('*').eq('schedule_id', req.params.id);
+    const customerIds = Array.from(new Set((checkins || []).map((c: any) => c.customer_id).filter(Boolean)));
+    const { data: customers } = customerIds.length ? await supabase.from('customers').select('id, name, phone, lock_dm_credits').in('id', customerIds).eq('tenant_id', currentTenantId(req)) : { data: [] as any[] };
+    const customerMap = new Map<string, any>((customers || []).map((c: any) => [c.id, c]));
+    const checkinsWithCustomer = (checkins || []).map((c: any) => ({ ...c, customer: customerMap.get(c.customer_id) || null, lock_dm_credits: customerMap.get(c.customer_id)?.lock_dm_credits || 0 }));
     const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
+    const { data: actorRoles } = await supabase.from('script_actor_roles').select('role_name, gender').eq('script_id', s.script_id);
     const { data: evaluations } = await supabase.from('evaluations').select('rating, comment').eq('schedule_id', req.params.id);
     const normalizedPlayerRoles = (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
+    const normalizedActorRoles = (actorRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
     res.json(ok({
       ...s, script_name: s.scripts?.name, room_name: s.rooms?.name, actors: actors || [],
-      checkins: checkins || [],
+      checkins: checkinsWithCustomer,
       player_roles: normalizedPlayerRoles,
-      progress_summary: buildScheduleProgress(s, checkins || [], normalizedPlayerRoles, evaluations || []),
+      actor_roles: normalizedActorRoles,
+      progress_summary: buildScheduleProgress(s, checkinsWithCustomer, normalizedPlayerRoles, evaluations || []),
       start_time: `${s.scheduled_date}T${s.start_time}`,
       end_time: `${s.scheduled_date}T${s.end_time}`,
     }));
@@ -2299,28 +2313,118 @@ app.put('/api/schedules/:id/dm-assignment', async (req: any, res: any) => {
     const tenantId = currentTenantId(req);
     const mode = cleanText(req.body?.mode, 30);
     const actorId = cleanText(req.body?.actorId, 80);
+    const customerId = cleanText(req.body?.customerId, 80);
+    const roleName = cleanText(req.body?.roleName, 120);
     const { data: schedule } = await supabase.from('schedules')
-      .select('id, tenant_id, status')
+      .select('id, tenant_id, status, script_id, dm_lock_customer_id, requested_dm_actor_id, requested_dm_role_name, dm_lock_status, dm_lock_credit_transaction_id')
       .eq('id', req.params.id)
       .eq('tenant_id', tenantId)
       .maybeSingle();
     if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
     if (['cancelled', 'bombed', 'completed'].includes(schedule.status)) return res.status(400).json(err(new Error('当前状态不能指定 DM')));
-    const fields: any = { dm_lock_customer_id: null, dm_lock_credit_transaction_id: null };
-    if (mode === 'not_needed') {
-      fields.requested_dm_actor_id = null;
-      fields.dm_lock_status = 'not_needed';
-    } else if (mode === 'clear') {
-      fields.requested_dm_actor_id = null;
-      fields.dm_lock_status = 'none';
-    } else {
-      if (!actorId) return res.status(400).json(err(new Error('请选择要指定的 DM')));
-      const { data: actor } = await supabase.from('actors').select('id').eq('id', actorId).eq('tenant_id', tenantId).maybeSingle();
-      if (!actor) return res.status(404).json(err(new Error('DM 不存在')));
-      fields.requested_dm_actor_id = actor.id;
-      fields.dm_lock_status = 'confirmed';
+
+    const refundExistingLockCredit = async () => {
+      if (!schedule.dm_lock_customer_id || !schedule.dm_lock_credit_transaction_id) return;
+      const { data: customer } = await supabase.from('customers')
+        .select('*')
+        .eq('id', schedule.dm_lock_customer_id)
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+      if (!customer) return;
+      await supabase.from('customers').update({
+        lock_dm_credits: Number(customer.lock_dm_credits || 0) + 1,
+        total_lock_dm_used: Math.max(0, Number(customer.total_lock_dm_used || 0) - 1),
+        updated_at: new Date().toISOString(),
+      }).eq('id', customer.id).eq('tenant_id', tenantId);
+      await supabase.from('membership_transactions').insert({
+        customer_id: customer.id,
+        schedule_id: schedule.id,
+        amount: 0,
+        transaction_type: 'lock_dm_refund',
+        note: `取消指定卡司，退回锁卡司次数：${schedule.requested_dm_role_name || '未记录角色'}`,
+        balance_delta: 0,
+        bonus_delta: 0,
+        lock_dm_delta: 1,
+        metadata: {
+          actor_id: schedule.requested_dm_actor_id,
+          role_name: schedule.requested_dm_role_name,
+          refund_for_transaction_id: schedule.dm_lock_credit_transaction_id,
+        },
+      });
+    };
+
+    if (mode === 'not_needed' || mode === 'clear') {
+      await refundExistingLockCredit();
+      const { data, error } = await supabase.from('schedules').update({
+        dm_lock_customer_id: null,
+        requested_dm_actor_id: null,
+        requested_dm_role_name: null,
+        dm_lock_status: mode === 'not_needed' ? 'not_needed' : 'none',
+        dm_lock_credit_transaction_id: null,
+      }).eq('id', schedule.id).eq('tenant_id', tenantId).select().single();
+      if (error) throw error;
+      return res.json(ok(data));
     }
-    const { data, error } = await supabase.from('schedules').update(fields).eq('id', schedule.id).eq('tenant_id', tenantId).select().single();
+
+    if (!actorId) return res.status(400).json(err(new Error('请选择要指定的卡司/DM')));
+    if (!customerId) return res.status(400).json(err(new Error('请选择扣除锁卡司次数的玩家')));
+    if (!roleName) return res.status(400).json(err(new Error('请选择要指定的卡司角色')));
+
+    const { data: actor } = await supabase.from('actors').select('id').eq('id', actorId).eq('tenant_id', tenantId).maybeSingle();
+    if (!actor) return res.status(404).json(err(new Error('卡司/DM 不存在')));
+    const { data: role } = await supabase.from('script_actor_roles')
+      .select('id, role_name')
+      .eq('script_id', schedule.script_id)
+      .eq('role_name', roleName)
+      .maybeSingle();
+    if (!role) return res.status(400).json(err(new Error('这个卡司角色不属于当前剧本')));
+    const { data: checkin } = await supabase.from('checkins')
+      .select('id, customer_id, guest_name')
+      .eq('schedule_id', schedule.id)
+      .eq('customer_id', customerId)
+      .maybeSingle();
+    if (!checkin) return res.status(400).json(err(new Error('请选择本车已上车玩家扣除锁卡司次数')));
+    const { data: customer } = await supabase.from('customers')
+      .select('*')
+      .eq('id', customerId)
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
+    if (!customer) return res.status(404).json(err(new Error('玩家会员不存在')));
+
+    const sameAssignment = schedule.dm_lock_customer_id === customerId && schedule.requested_dm_actor_id === actorId && schedule.requested_dm_role_name === roleName && schedule.dm_lock_credit_transaction_id;
+    if (!sameAssignment && !schedule.dm_lock_credit_transaction_id && Number(customer.lock_dm_credits || 0) <= 0) return res.status(400).json(err(new Error('该玩家没有可用锁卡司次数，请先充卡或调整权益')));
+
+    let txId = schedule.dm_lock_credit_transaction_id || null;
+    if (!sameAssignment) {
+      await refundExistingLockCredit();
+      const { data: latestCustomer } = await supabase.from('customers').select('*').eq('id', customerId).eq('tenant_id', tenantId).maybeSingle();
+      if (!latestCustomer || Number(latestCustomer.lock_dm_credits || 0) <= 0) return res.status(400).json(err(new Error('该玩家没有可用锁卡司次数，请先充卡或调整权益')));
+      await supabase.from('customers').update({
+        lock_dm_credits: Number(latestCustomer.lock_dm_credits || 0) - 1,
+        total_lock_dm_used: Number(latestCustomer.total_lock_dm_used || 0) + 1,
+        updated_at: new Date().toISOString(),
+      }).eq('id', customerId).eq('tenant_id', tenantId);
+      const { data: tx } = await supabase.from('membership_transactions').insert({
+        customer_id: customerId,
+        schedule_id: schedule.id,
+        amount: 0,
+        transaction_type: 'lock_dm',
+        note: `指定卡司：${roleName}`,
+        balance_delta: 0,
+        bonus_delta: 0,
+        lock_dm_delta: -1,
+        metadata: { actor_id: actorId, role_name: roleName, checkin_id: checkin.id },
+      }).select().single();
+      txId = tx?.id || null;
+    }
+
+    const { data, error } = await supabase.from('schedules').update({
+      dm_lock_customer_id: customerId,
+      requested_dm_actor_id: actorId,
+      requested_dm_role_name: roleName,
+      dm_lock_status: 'confirmed',
+      dm_lock_credit_transaction_id: txId,
+    }).eq('id', schedule.id).eq('tenant_id', tenantId).select().single();
     if (error) throw error;
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
@@ -2363,6 +2467,8 @@ app.post('/api/schedules/:id/dm-lock', async (req: any, res: any) => {
       amount: 0,
       transaction_type: 'lock_dm',
       note: `指定 DM 权益使用`,
+      balance_delta: 0,
+      bonus_delta: 0,
       lock_dm_delta: -1,
       metadata: { actor_id: actorId },
     }).select().single();

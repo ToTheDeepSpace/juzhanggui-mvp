@@ -56,6 +56,8 @@ export default function ScheduleCalendar() {
   const [showDmModal, setShowDmModal] = useState(false);
   const [dmSchedule, setDmSchedule] = useState<ScheduleWithDetails | null>(null);
   const [dmActorId, setDmActorId] = useState('');
+  const [dmRoleName, setDmRoleName] = useState('');
+  const [dmCustomerId, setDmCustomerId] = useState('');
   const [dmSaving, setDmSaving] = useState(false);
 
   // 表单状态
@@ -183,17 +185,29 @@ export default function ScheduleCalendar() {
     e.stopPropagation();
     setDmSchedule(schedule);
     setDmActorId(schedule.requested_dm_actor_id || '');
+    setDmRoleName(schedule.requested_dm_role_name || schedule.actor_roles?.[0]?.name || '');
+    setDmCustomerId(schedule.dm_lock_customer_id || schedule.checkins?.find(item => item.customer_id)?.customer_id || '');
     setShowDmModal(true);
   };
 
   const saveDmAssignment = async (mode: 'assign' | 'not_needed' | 'clear' = 'assign') => {
     if (!dmSchedule) return;
-    if (mode === 'assign' && !dmActorId) {
-      alert('请选择要指定的 DM');
-      return;
+    if (mode === 'assign') {
+      if (!dmRoleName) {
+        alert('请选择要指定的卡司角色');
+        return;
+      }
+      if (!dmActorId) {
+        alert('请选择扮演这个角色的卡司/DM');
+        return;
+      }
+      if (!dmCustomerId) {
+        alert('请选择扣除哪个玩家的锁卡司次数');
+        return;
+      }
     }
     setDmSaving(true);
-    const res = await put(`/schedules/${dmSchedule.id}/dm-assignment`, { mode, actorId: dmActorId || null });
+    const res = await put(`/schedules/${dmSchedule.id}/dm-assignment`, { mode, actorId: dmActorId || null, roleName: dmRoleName || null, customerId: dmCustomerId || null });
     setDmSaving(false);
     if (!res.success) {
       alert(res.error || '保存指定 DM 失败');
@@ -202,6 +216,8 @@ export default function ScheduleCalendar() {
     setShowDmModal(false);
     setDmSchedule(null);
     setDmActorId('');
+    setDmRoleName('');
+    setDmCustomerId('');
     loadData();
   };
 
@@ -512,10 +528,10 @@ export default function ScheduleCalendar() {
           {!['cancelled', 'bombed', 'completed'].includes(s.status) && (
             <button onClick={(e) => openDmModal(s, e)} className="mt-1 block rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100">
               {s.dm_lock_status === 'confirmed'
-                ? `指定DM：${actorName(s.requested_dm_actor_id) || '已指定'}`
+                ? `指定卡司：${s.requested_dm_role_name || '角色'} · ${actorName(s.requested_dm_actor_id) || '已指定'}`
                 : s.dm_lock_status === 'not_needed'
-                  ? '指定DM：不需要'
-                  : '指定DM'}
+                  ? '指定卡司：不需要'
+                  : '指定卡司'}
             </button>
           )}
           {s.status === 'scheduled' && (
@@ -838,19 +854,35 @@ export default function ScheduleCalendar() {
             </div>
             <div className="space-y-4">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">选择 DM/卡司</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700">指定哪个卡司角色</label>
+                <select value={dmRoleName} onChange={e => setDmRoleName(e.target.value)} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
+                  <option value="">请选择卡司角色</option>
+                  {(dmSchedule.actor_roles || []).map(role => <option key={role.name} value={role.name}>{role.name}{role.gender ? ` · ${role.gender}` : ''}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">由哪个 DM/卡司扮演</label>
                 <select value={dmActorId} onChange={e => setDmActorId(e.target.value)} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
-                  <option value="">请选择 DM</option>
+                  <option value="">请选择 DM/卡司</option>
                   {actors.map(actor => <option key={actor.id} value={actor.id}>{actor.name}{actorGenderText(actor)}</option>)}
                 </select>
               </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">扣哪个玩家的锁卡司次数</label>
+                <select value={dmCustomerId} onChange={e => setDmCustomerId(e.target.value)} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
+                  <option value="">请选择本车玩家</option>
+                  {(dmSchedule.checkins || []).filter(item => item.customer_id).map(item => (
+                    <option key={item.customer_id || item.id} value={item.customer_id || ''}>{item.guest_name || item.customer?.name || '未命名玩家'} · {item.role || '未选角色'} · 剩余{item.lock_dm_credits ?? item.customer?.lock_dm_credits ?? 0}次</option>
+                  ))}
+                </select>
+              </div>
               <div className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">
-                保存后进度条里的“指定DM”会变成已完成；如果这车不需要指定 DM，可以点“不需要指定DM”。
+                保存后会扣除所选玩家 1 次锁卡司次数，并记录“哪个卡司扮演哪个角色”；清除或标记不需要会退回本次已扣次数。
               </div>
               <div className="flex flex-wrap justify-end gap-2">
-                <button onClick={() => saveDmAssignment('clear')} disabled={dmSaving} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">清除指定</button>
-                <button onClick={() => saveDmAssignment('not_needed')} disabled={dmSaving} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">不需要指定DM</button>
-                <button onClick={() => saveDmAssignment('assign')} disabled={dmSaving || !dmActorId} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">保存指定</button>
+                <button onClick={() => saveDmAssignment('clear')} disabled={dmSaving} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50">清除并退回次数</button>
+                <button onClick={() => saveDmAssignment('not_needed')} disabled={dmSaving} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">不需要指定卡司</button>
+                <button onClick={() => saveDmAssignment('assign')} disabled={dmSaving || !dmActorId || !dmRoleName || !dmCustomerId} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">保存并扣次数</button>
               </div>
             </div>
           </div>

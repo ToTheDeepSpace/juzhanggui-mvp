@@ -93,6 +93,8 @@ export interface Schedule {
   lock_reason?: string | null;
   dm_lock_status?: string | null;
   requested_dm_actor_id?: string | null;
+  requested_dm_role_name?: string | null;
+  dm_lock_customer_id?: string | null;
   actual_started_at?: string | null;
   actual_ended_at?: string | null;
   settlement_status?: string | null;

@@ -14,6 +14,8 @@ export interface CheckinInfo {
   role: string;
   gender?: string;
   customer_id?: string | null;
+  customer?: { id?: string; name?: string; phone?: string; lock_dm_credits?: number } | null;
+  lock_dm_credits?: number;
   deposit_status?: 'unpaid' | 'paid' | 'waived' | 'refunded';
   deposit_amount?: number;
   deposit_payment_method?: string | null;
@@ -44,6 +46,7 @@ export interface ScheduleProgressSummary {
 export interface ScheduleWithDetails extends Schedule {
   actors?: ScheduleActor[];
   player_roles?: RoleInfo[];
+  actor_roles?: RoleInfo[];
   checkin_count?: number;
   checkins?: CheckinInfo[];
   pending_request_count?: number;
