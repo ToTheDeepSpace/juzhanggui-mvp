@@ -481,6 +481,8 @@ export default function ScheduleCalendar() {
     carCounter++;
     const carNum = `#${String(carCounter).padStart(3, '0')}`;
     const pendingRequestCount = s.pending_request_count || 0;
+    const isOverdueUnfinished = eD.getTime() < Date.now() && !terminalStatuses.includes(s.status);
+    const missingSteps = (s.progress_summary?.steps || []).filter(step => !step.done && !step.optional).map(step => step.label);
     return (
       <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openEditModal(s)}>
         <td className="px-4 py-3">
@@ -525,6 +527,12 @@ export default function ScheduleCalendar() {
           </span>
           {s.status === 'locked' && s.lock_reason && (
             <div className="mt-1 text-[11px] text-orange-600">{lockReasonText[s.lock_reason] || s.lock_reason}</div>
+          )}
+          {isOverdueUnfinished && (
+            <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] leading-snug text-red-700">
+              这车按排期时间已经开完了，但没有补齐应有记录。
+              {missingSteps.length > 0 && <span className="block">待补：{missingSteps.join('、')}</span>}
+            </div>
           )}
           {!['cancelled', 'bombed', 'completed'].includes(s.status) && (
             <button onClick={(e) => openDmModal(s, e)} className="mt-1 block rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100">
