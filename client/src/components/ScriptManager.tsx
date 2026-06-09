@@ -25,6 +25,19 @@ export default function ScriptManager() {
   const [batchPlayerRoles, setBatchPlayerRoles] = useState('');
   const [batchActorRoles, setBatchActorRoles] = useState('');
   const [templateMsg, setTemplateMsg] = useState('');
+  const [templateSearch, setTemplateSearch] = useState('');
+
+  const normalizedTemplateSearch = templateSearch.trim().toLowerCase();
+  const visibleTemplates = normalizedTemplateSearch
+    ? templates.filter(template => {
+        const searchText = [
+          template.name,
+          ...(template.player_roles || []).map(role => role.role_name),
+          ...(template.actor_roles || []).map(role => role.role_name),
+        ].join(' ').toLowerCase();
+        return searchText.includes(normalizedTemplateSearch);
+      })
+    : [];
 
   useEffect(() => {
     void loadScripts();
@@ -255,11 +268,30 @@ const handleSubmit = async (e: React.FormEvent) => {
           </div>
           {templateMsg && <span className="text-sm text-indigo-600 font-medium">{templateMsg}</span>}
         </div>
+        <div className="mb-3">
+          <label className="sr-only" htmlFor="script-template-search">搜索公共剧本模版</label>
+          <input
+            id="script-template-search"
+            type="search"
+            value={templateSearch}
+            onChange={(e) => setTemplateSearch(e.target.value)}
+            className="w-full rounded-lg border border-indigo-100 bg-white px-3 py-2 text-sm text-gray-800 placeholder:text-gray-400 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+            placeholder="搜索剧本名 / 玩家角色 / 卡司角色"
+          />
+        </div>
         {templates.length === 0 ? (
           <p className="text-sm text-gray-500">暂无公共模版</p>
+        ) : !normalizedTemplateSearch ? (
+          <p className="rounded-lg border border-dashed border-indigo-100 bg-white/70 px-3 py-4 text-sm text-gray-500">
+            输入关键词后显示匹配模版，避免公共主库一次性铺满页面。
+          </p>
+        ) : visibleTemplates.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-indigo-100 bg-white/70 px-3 py-4 text-sm text-gray-500">
+            没有匹配的公共模版，换个剧本名或角色名试试。
+          </p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {templates.map(template => (
+            {visibleTemplates.map(template => (
               <article key={template.id} className="rounded-lg border border-indigo-100 bg-white p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div>

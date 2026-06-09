@@ -476,6 +476,23 @@ function TemplateCenterPanel() {
   const { get, post, put, loading } = useApi();
   const [templates, setTemplates] = useState<ScriptTemplateRow[]>([]);
   const [message, setMessage] = useState('');
+  const [templateSearch, setTemplateSearch] = useState('');
+
+  const normalizedTemplateSearch = templateSearch.trim().toLowerCase();
+  const visibleTemplates = normalizedTemplateSearch
+    ? templates.filter(template => {
+        const searchText = [
+          template.name,
+          template.store?.name || '',
+          template.store?.city || '',
+          template.created_by || '',
+          template.review_status || '',
+          ...(template.player_roles || []).map(role => role.role_name),
+          ...(template.actor_roles || []).map(role => role.role_name),
+        ].join(' ').toLowerCase();
+        return searchText.includes(normalizedTemplateSearch);
+      })
+    : templates;
 
   const loadTemplates = async () => {
     const result = await get<ScriptTemplateRow[]>('/platform/script-templates');
@@ -538,8 +555,20 @@ function TemplateCenterPanel() {
         </div>
       </div>
 
+      <div className="bg-white rounded-lg shadow p-4">
+        <label className="sr-only" htmlFor="platform-template-search">搜索公共剧本模板</label>
+        <input
+          id="platform-template-search"
+          type="search"
+          value={templateSearch}
+          onChange={(e) => setTemplateSearch(e.target.value)}
+          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-800 placeholder:text-gray-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-100"
+          placeholder="搜索剧本名 / 角色名 / 店家 / 创建者 / 审核状态"
+        />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {templates.map(template => (
+        {visibleTemplates.map(template => (
           <article key={template.id} className="bg-white rounded-lg shadow p-5 border border-gray-100">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -571,6 +600,9 @@ function TemplateCenterPanel() {
         ))}
         {templates.length === 0 && (
           <div className="md:col-span-2 xl:col-span-3 bg-white rounded-lg shadow p-10 text-center text-gray-400">暂无公共剧本模板</div>
+        )}
+        {templates.length > 0 && visibleTemplates.length === 0 && (
+          <div className="md:col-span-2 xl:col-span-3 bg-white rounded-lg shadow p-10 text-center text-gray-400">没有匹配的公共剧本模板</div>
         )}
       </div>
     </div>
