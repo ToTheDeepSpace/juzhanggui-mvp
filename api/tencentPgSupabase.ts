@@ -131,6 +131,16 @@ function compactRow(row: Record<string, any>) {
   return out;
 }
 
+function mutationValue(value: any) {
+  if (value === undefined) return null;
+  if (value === null) return null;
+  if (Buffer.isBuffer(value)) return value;
+  if (value instanceof Date) return value;
+  if (Array.isArray(value)) return JSON.stringify(value);
+  if (typeof value === 'object') return JSON.stringify(value);
+  return value;
+}
+
 function applyPostFilters(rows: Record<string, any>[], filters: Filter[]) {
   return rows.filter(row => filters.every(filter => {
     const [relation, column] = filter.column.split('.');
@@ -362,7 +372,7 @@ class PgQueryBuilder {
     if (!rows.length) return { data: [], error: null, count: null };
     const cols = Object.keys(rows[0]);
     const values: any[] = [];
-    const placeholders = rows.map(row => `(${cols.map(col => `$${values.push(row[col])}`).join(', ')})`).join(', ');
+    const placeholders = rows.map(row => `(${cols.map(col => `$${values.push(mutationValue(row[col]))}`).join(', ')})`).join(', ');
     const sql = `INSERT INTO ${quoteIdent(this.table)} (${cols.map(quoteIdent).join(', ')}) VALUES ${placeholders} RETURNING *`;
     const result = await pool.query(sql, values);
     const data = this.formatRows(this.projectMutationRows(result.rows));
@@ -374,7 +384,7 @@ class PgQueryBuilder {
     const cols = Object.keys(row);
     if (!cols.length) return { data: null, error: null, count: null };
     const values: any[] = [];
-    const sets = cols.map(col => `${quoteIdent(col)} = $${values.push(row[col])}`).join(', ');
+    const sets = cols.map(col => `${quoteIdent(col)} = $${values.push(mutationValue(row[col]))}`).join(', ');
     const sql = `UPDATE ${quoteIdent(this.table)} SET ${sets}${this.whereSql(values)} RETURNING *`;
     const result = await pool.query(sql, values);
     const data = this.formatRows(this.projectMutationRows(result.rows));
@@ -394,7 +404,7 @@ class PgQueryBuilder {
     if (!rows.length) return { data: [], error: null, count: null };
     const cols = Array.from(new Set(rows.flatMap(row => Object.keys(row))));
     const values: any[] = [];
-    const placeholders = rows.map(row => `(${cols.map(col => `$${values.push(row[col] ?? null)}`).join(', ')})`).join(', ');
+    const placeholders = rows.map(row => `(${cols.map(col => `$${values.push(mutationValue(row[col] ?? null))}`).join(', ')})`).join(', ');
     const conflict = this.upsertConflict.length ? this.upsertConflict : ['id'];
     const updateCols = cols.filter(col => !conflict.includes(col));
     const updateSql = updateCols.length
