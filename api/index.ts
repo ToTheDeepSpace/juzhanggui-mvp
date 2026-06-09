@@ -57,11 +57,16 @@ const JZG_WECHAT_REDIRECT_URI = process.env.JZG_WECHAT_REDIRECT_URI || `${JUZHAN
 const app = express();
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || origin === JUZHANGGUI_SITE_URL || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+    const allowedOrigins = new Set([
+      JUZHANGGUI_SITE_URL,
+      LINGQI_SITE_URL,
+      ...(process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(item => item.trim()).filter(Boolean),
+    ]);
+    if (!origin || allowedOrigins.has(origin) || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
       callback(null, true);
-    } else {
-      callback(null, true);
+      return;
     }
+    callback(null, false);
   },
   credentials: true,
 }));
@@ -126,13 +131,29 @@ app.use((req: any, res: any, next: any) => {
 });
 
 function ok(d?: any) { return { success: true, data: d }; }
-function err(e: any) { return { success: false, error: e?.message || String(e) }; }
+function err(e: any) {
+  if (process.env.NODE_ENV === 'production' && (e?.code || e?.details || e?.hint)) {
+    console.error('[api-error]', e?.code || '', e?.message || e);
+    return { success: false, error: '服务器错误，请稍后重试' };
+  }
+  return { success: false, error: e?.message || String(e) };
+}
 function sha256(input: string): string { return crypto.createHash('sha256').update(input).digest('hex'); }
 function cleanText(input: unknown, max = 120): string {
   return typeof input === 'string' ? input.trim().slice(0, max) : '';
 }
 function currentTenantId(req: any): string {
   return cleanText(req?.user?.tenantId, 80) || TENANT_ID;
+}
+async function tenantIdFromRequest(req: any): Promise<string> {
+  const direct = cleanText(req?.body?.tenantId || req?.query?.tenantId, 80);
+  if (direct) return direct;
+  const scheduleId = cleanText(req?.body?.scheduleId || req?.query?.scheduleId, 80);
+  if (scheduleId) {
+    const { data } = await supabase.from('schedules').select('tenant_id').eq('id', scheduleId).maybeSingle();
+    if (data?.tenant_id) return data.tenant_id;
+  }
+  return TENANT_ID;
 }
 function currentAdminRole(req: any): string {
   return cleanText(req?.user?.adminRole || req?.user?.roleName || '', 40);
@@ -382,7 +403,6 @@ function dmRatingLevel(score: number) {
 async function findActorByPhone(phone: string) {
   const { data, error } = await supabase.from('actors')
     .select('*')
-    .eq('tenant_id', TENANT_ID)
     .order('name');
   if (error) throw error;
   return (data || []).find((actor: any) => normalizeProfilePhone(actor.phone) === phone) || null;
@@ -3021,7 +3041,8 @@ app.post('/api/dm/login', async (req: any, res: any) => {
       return res.status(404).json(err(new Error('这个手机号还没有登记为店内 DM，请先让店家在卡司管理里登记手机号')));
     }
     await ensureLingqiDmProfileForActor(actor);
-    const token = jwt.sign({ role: 'dm', actorId: actor.id, tenantId: TENANT_ID }, JWT_SECRET, { expiresIn: '24h' });
+    const actorTenantId = cleanText(actor.tenant_id, 80) || TENANT_ID;
+    const token = jwt.sign({ role: 'dm', actorId: actor.id, tenantId: actorTenantId }, JWT_SECRET, { expiresIn: '24h' });
     res.json(ok({
       token,
       actor: {
@@ -3035,13 +3056,14 @@ app.post('/api/dm/login', async (req: any, res: any) => {
 
 app.get('/api/dm/dashboard', async (req: any, res: any) => {
   try {
-    const actorId = cleanText(req.user?.actorId || req.query.actorId, 80);
+    const actorId = cleanText(req.user?.actorId || (req.user?.role === 'admin' ? req.query.actorId : ''), 80);
+    const tenantId = currentTenantId(req);
     if (!actorId) return res.status(403).json(err(new Error('缺少 DM 身份')));
 
     const { data: actor, error: actorErr } = await supabase.from('actors')
       .select('*')
       .eq('id', actorId)
-      .eq('tenant_id', TENANT_ID)
+      .eq('tenant_id', tenantId)
       .maybeSingle();
     if (actorErr) throw actorErr;
     if (!actor) return res.status(404).json(err(new Error('DM 不存在')));
@@ -3049,7 +3071,7 @@ app.get('/api/dm/dashboard', async (req: any, res: any) => {
     const { data: assignmentRows, error: assignmentErr } = await supabase.from('schedule_actors')
       .select('id, role_name, start_time, end_time, schedules!inner(id, tenant_id, scheduled_date, start_time, end_time, status, player_count, customer_name, note, script_id, room_id, scripts(id, name), rooms(id, name))')
       .eq('actor_id', actorId)
-      .eq('schedules.tenant_id', TENANT_ID);
+      .eq('schedules.tenant_id', tenantId);
     if (assignmentErr) throw assignmentErr;
 
     const schedules = (assignmentRows || []).map((row: any) => {
@@ -3225,6 +3247,7 @@ app.get('/api/dm/dashboard', async (req: any, res: any) => {
 app.post('/api/dm/leave-requests', async (req: any, res: any) => {
   try {
     const actorId = cleanText(req.user?.actorId, 80);
+    const tenantId = currentTenantId(req);
     if (!actorId) return res.status(403).json(err(new Error('缺少 DM 身份')));
     const startDate = cleanText(req.body?.startDate, 20);
     const endDate = cleanText(req.body?.endDate, 20) || startDate;
@@ -3235,7 +3258,7 @@ app.post('/api/dm/leave-requests', async (req: any, res: any) => {
       return res.status(400).json(err(new Error('结束日期不能早于开始日期')));
     }
     const payload = {
-      tenant_id: TENANT_ID,
+      tenant_id: tenantId,
       actor_id: actorId,
       start_date: startDate,
       end_date: endDate,
@@ -3252,6 +3275,7 @@ app.post('/api/dm/leave-requests', async (req: any, res: any) => {
 app.post('/api/dm/experience-notes', async (req: any, res: any) => {
   try {
     const actorId = cleanText(req.user?.actorId, 80);
+    const tenantId = currentTenantId(req);
     if (!actorId) return res.status(403).json(err(new Error('缺少 DM 身份')));
     const scheduleId = cleanText(req.body?.scheduleId, 80);
     let scriptId = cleanText(req.body?.scriptId, 80) || null;
@@ -3262,7 +3286,7 @@ app.post('/api/dm/experience-notes', async (req: any, res: any) => {
         .select('schedules!inner(id, tenant_id, script_id, scripts(id, name))')
         .eq('actor_id', actorId)
         .eq('schedule_id', scheduleId)
-        .eq('schedules.tenant_id', TENANT_ID)
+        .eq('schedules.tenant_id', tenantId)
         .maybeSingle();
       if (assignmentErr) throw assignmentErr;
       const schedule = scheduleRelation(assignment);
@@ -3283,7 +3307,7 @@ app.post('/api/dm/experience-notes', async (req: any, res: any) => {
     const tags = uniqueTexts(rawTags, 8);
     const visibility = cleanText(req.body?.visibility, 20) === 'private' ? 'private' : 'internal';
     const { data, error } = await supabase.from('jzg_dm_experience_notes').insert({
-      tenant_id: TENANT_ID,
+      tenant_id: tenantId,
       actor_id: actorId,
       schedule_id: scheduleId || null,
       script_id: scriptId,
@@ -3307,7 +3331,8 @@ app.post('/api/player/login', async (req: any, res: any) => {
     if (isTencentSmsConfigured() && !hasCode) return res.status(400).json(err(new Error('请先获取并填写短信验证码')));
     const verifiedPhone = hasCode ? await verifyPhoneCode('player_login', phone, code) : normalizeChinaPhone(phone);
     const phoneHash = hashPhone(verifiedPhone);
-    let { data: p } = await supabase.from('players').select('*').eq('phone_hash', phoneHash).eq('tenant_id', TENANT_ID).maybeSingle();
+    const playerTenantId = await tenantIdFromRequest(req);
+    let { data: p } = await supabase.from('players').select('*').eq('phone_hash', phoneHash).eq('tenant_id', playerTenantId).maybeSingle();
     const nowIso = new Date().toISOString();
     if (p) {
       const updatePayload: Record<string, any> = { display_name: displayName.trim() };
@@ -3323,7 +3348,7 @@ app.post('/api/player/login', async (req: any, res: any) => {
         phone_hash: phoneHash,
         display_name: displayName.trim(),
         name_encrypted: displayName.trim(),
-        tenant_id: TENANT_ID,
+        tenant_id: playerTenantId,
       };
       if (hasCode) {
         insertPayload.auth_provider = 'phone';
@@ -3332,20 +3357,25 @@ app.post('/api/player/login', async (req: any, res: any) => {
       const r = await supabase.from('players').insert(insertPayload).select().single();
       p = r.data;
     }
-    const token = jwt.sign({ role: 'player', playerId: p!.id, tenantId: TENANT_ID }, JWT_SECRET, { expiresIn: '24h' });
+    const token = jwt.sign({ role: 'player', playerId: p!.id, tenantId: playerTenantId }, JWT_SECRET, { expiresIn: '24h' });
     res.json(ok({ token, player: { id: p!.id, displayName: p!.display_name, phone: verifiedPhone, totalGames: p!.total_games || 0 } }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.get('/api/player/schedules', async (req: any, res: any) => {
   try {
     if (!req.user || req.user.role !== 'player') return res.status(403).json(err(new Error('无权限')));
-    const { data: player } = await supabase.from('players').select('phone_hash').eq('id', req.user.playerId).maybeSingle();
+    const tenantId = currentTenantId(req);
+    const { data: player } = await supabase.from('players').select('phone_hash').eq('id', req.user.playerId).eq('tenant_id', tenantId).maybeSingle();
     if (!player?.phone_hash) return res.json(ok([]));
-    const { data, error } = await supabase.from('checkins').select('*, schedules!inner(*, scripts(name), rooms(name))').eq('guest_phone', player.phone_hash).order('checked_at', { ascending: false });
+    const { data, error } = await supabase.from('checkins')
+      .select('id, role, checked_at, schedules!inner(id, tenant_id, scheduled_date, start_time, end_time, status, player_count, script_id, room_id, scripts(name), rooms(name))')
+      .eq('guest_phone', player.phone_hash)
+      .eq('schedules.tenant_id', tenantId)
+      .order('checked_at', { ascending: false });
     if (error) throw error;
     res.json(ok((data || []).map((c: any) => ({
       checkinId: c.id, role: c.role, checkedAt: c.checked_at,
-      schedule: c.schedules ? { id: c.schedules.id, scriptName: c.schedules.scripts?.name, roomName: c.schedules.rooms?.name, startTime: c.schedules.start_time, endTime: c.schedules.end_time, status: c.schedules.status, customerName: c.schedules.customer_name, playerCount: c.schedules.player_count } : null,
+      schedule: c.schedules ? { id: c.schedules.id, scriptName: c.schedules.scripts?.name, roomName: c.schedules.rooms?.name, startTime: c.schedules.start_time, endTime: c.schedules.end_time, status: c.schedules.status, customerName: null, playerCount: c.schedules.player_count } : null,
     }))));
   } catch (e) { res.status(500).json(err(e)); }
 });
