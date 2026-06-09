@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.js",
+    "test:pg-adapter": "tsx scripts/pg-adapter-smoke.ts",
     "server": "nodemon --exec tsx server/index.ts",
     "client": "vite",
     "build": "vite build",

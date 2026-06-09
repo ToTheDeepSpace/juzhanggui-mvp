@@ -19,7 +19,7 @@ type RelationConfig = {
   via?: (row: Record<string, any>) => any;
 };
 
-const pool = new Pool({
+export const tencentPgPool = new Pool({
   connectionString: process.env.DATABASE_URL,
   host: process.env.PGHOST,
   port: process.env.PGPORT ? Number(process.env.PGPORT) : undefined,
@@ -28,6 +28,8 @@ const pool = new Pool({
   password: process.env.PGPASSWORD,
   max: Number(process.env.PGPOOL_MAX || 10),
 });
+
+const pool = tencentPgPool;
 
 const RELATIONS: Record<string, Record<string, RelationConfig>> = {
   schedules: {
