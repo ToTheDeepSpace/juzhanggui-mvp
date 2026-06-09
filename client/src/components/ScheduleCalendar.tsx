@@ -404,11 +404,12 @@ export default function ScheduleCalendar() {
   // ===== 布局 =====
   // ===== 按日期分组 =====
   const todayStr = format(new Date(), 'yyyy-MM-dd');
-  const todaySchedules = schedules.filter(s => s.start_time.startsWith(todayStr) && s.status !== 'cancelled');
-  const otherActiveSchedules = schedules.filter(s => !s.start_time.startsWith(todayStr) && s.status !== 'completed' && s.status !== 'cancelled' && s.status !== 'bombed' && s.status !== 'issue')
+  const terminalStatuses = ['completed', 'cancelled', 'bombed', 'issue'];
+  const todaySchedules = schedules.filter(s => s.start_time.startsWith(todayStr) && !terminalStatuses.includes(s.status));
+  const otherActiveSchedules = schedules.filter(s => !s.start_time.startsWith(todayStr) && !terminalStatuses.includes(s.status))
     .sort((a, b) => a.start_time.localeCompare(b.start_time));
   const endedSchedules = schedules
-    .filter(s => { const d = s.start_time.split('T')[0]; return d >= histStartDate && d <= histEndDate; })
+    .filter(s => { const d = s.start_time.split('T')[0]; return d >= histStartDate && d <= histEndDate && terminalStatuses.includes(s.status); })
     .sort((a, b) => b.start_time.localeCompare(a.start_time));
 
   const stText: Record<string, string> = {
