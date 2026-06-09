@@ -12,20 +12,16 @@ interface PlatformStoreRecord extends StoreRecord {
 }
 
 export default function StoreManager() {
-  const { get, post, put, loading } = useApi();
+  const { get, post, loading } = useApi();
   const { user } = useAuth();
   const isSuperAdmin = user?.role === 'super_admin';
   const [stores, setStores] = useState<PlatformStoreRecord[]>([]);
-  const [form, setForm] = useState({ name: '', city: '', address: '', contact: '', defaultDepositAmount: '50' });
-  const [depositDrafts, setDepositDrafts] = useState<Record<string, string>>({});
+  const [form, setForm] = useState({ name: '', city: '', address: '', contact: '' });
   const [message, setMessage] = useState('');
 
   const loadStores = async () => {
     const result = await get<PlatformStoreRecord[]>(isSuperAdmin ? '/platform/stores' : '/stores');
-    if (result.success && result.data) {
-      setStores(result.data);
-      setDepositDrafts(Object.fromEntries(result.data.map(store => [store.id, String(Math.round(Number(store.default_deposit_amount || 5000) / 100))])));
-    }
+    if (result.success && result.data) setStores(result.data);
   };
 
   useEffect(() => { void loadStores(); }, []);
@@ -38,10 +34,9 @@ export default function StoreManager() {
       city: form.city.trim(),
       address: form.address.trim(),
       contact: form.contact.trim(),
-      defaultDepositAmount: Math.round((Number(form.defaultDepositAmount || 0) || 0) * 100),
     });
     if (result.success) {
-      setForm({ name: '', city: '', address: '', contact: '', defaultDepositAmount: '50' });
+      setForm({ name: '', city: '', address: '', contact: '' });
       setMessage('店家已创建');
       void loadStores();
     } else {
@@ -66,17 +61,6 @@ export default function StoreManager() {
     localStorage.setItem('auth_token', result.data.token);
     localStorage.setItem('admin_user', JSON.stringify(result.data.user));
     window.location.href = '/store/manage/schedule';
-  };
-
-  const saveDepositSetting = async (store: PlatformStoreRecord) => {
-    const amount = Math.max(0, Math.round((Number(depositDrafts[store.id] || 0) || 0) * 100));
-    const result = await put<StoreRecord>(`/stores/${store.id}/settings`, { defaultDepositAmount: amount });
-    if (result.success) {
-      setMessage('默认定金已保存');
-      void loadStores();
-    } else {
-      setMessage(result.error || '保存失败');
-    }
   };
 
   return (
@@ -104,8 +88,6 @@ export default function StoreManager() {
               className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
             <input value={form.contact} onChange={e => setForm({ ...form, contact: e.target.value })} placeholder="联系方式"
               className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
-            <input type="number" min="0" value={form.defaultDepositAmount} onChange={e => setForm({ ...form, defaultDepositAmount: e.target.value })} placeholder="默认定金（元）"
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
             <button disabled={loading} className="md:col-span-4 px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 disabled:opacity-50">
               {loading ? '保存中...' : '新增店家'}
             </button>
@@ -129,27 +111,6 @@ export default function StoreManager() {
               <span className="text-xs px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 font-semibold">{store.status}</span>
             </div>
             {store.contact && <p className="text-sm text-gray-500 mt-3">联系：{store.contact}</p>}
-            <div className="mt-4 rounded-lg border border-amber-100 bg-amber-50 p-3">
-              <label className="block text-xs font-medium text-amber-800 mb-1">锁车默认定金（元/人）</label>
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  min="0"
-                  value={depositDrafts[store.id] ?? String(Math.round(Number(store.default_deposit_amount || 5000) / 100))}
-                  onChange={e => setDepositDrafts(prev => ({ ...prev, [store.id]: e.target.value }))}
-                  className="min-w-0 flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm"
-                />
-                <button
-                  type="button"
-                  onClick={() => saveDepositSetting(store)}
-                  disabled={loading}
-                  className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
-                >
-                  保存
-                </button>
-              </div>
-              <p className="mt-1 text-xs text-amber-700">排期锁车时会按这个金额批量确认本车玩家定金。</p>
-            </div>
             {isSuperAdmin && (
               <>
                 <div className="grid grid-cols-5 gap-2 mt-4 text-center text-xs text-gray-500">

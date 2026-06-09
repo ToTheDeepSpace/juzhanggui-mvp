@@ -20,7 +20,7 @@ type Tab = 'platform' | 'stores' | 'adminUsers' | 'templates' | 'auditLogs' | 'r
 const basePath = '/store/manage';
 const storeTabs = [
   { id: 'schedule' as Tab, label: '📅 排期管理', color: 'bg-blue-500', path: `${basePath}/schedule` },
-  { id: 'stores' as Tab, label: '🏪 多店家', color: 'bg-indigo-500', path: `${basePath}/stores` },
+  { id: 'stores' as Tab, label: '🏪 店铺设置', color: 'bg-indigo-500', path: `${basePath}/stores` },
   { id: 'rooms' as Tab, label: '🚪 房间管理', color: 'bg-green-500', path: `${basePath}/rooms` },
   { id: 'actors' as Tab, label: '🎭 卡司管理', color: 'bg-purple-500', path: `${basePath}/actors` },
   { id: 'scripts' as Tab, label: '📖 剧本管理', color: 'bg-orange-500', path: `${basePath}/scripts` },

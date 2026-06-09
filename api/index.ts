@@ -1922,7 +1922,13 @@ app.put('/api/schedules/:id/confirm', async (req: any, res: any) => {
 app.put('/api/schedules/:id/cancel', async (req: any, res: any) => {
   try {
     const tenantId = currentTenantId(req);
-    await supabase.from('schedules').update({ status: req.body.status || 'cancelled' }).eq('id', req.params.id).eq('tenant_id', tenantId);
+    const nextStatus = req.body.status || 'cancelled';
+    if (nextStatus === 'cancelled') {
+      const { data: checkins } = await supabase.from('checkins').select('id, deposit_status').eq('schedule_id', req.params.id);
+      const unrefunded = (checkins || []).filter((item: any) => item.deposit_status === 'paid');
+      if (unrefunded.length > 0) return res.status(400).json(err(new Error('还有已收定金未确认退款，不能流车')));
+    }
+    await supabase.from('schedules').update({ status: nextStatus }).eq('id', req.params.id).eq('tenant_id', tenantId);
     let lingqiSync: any = { ok: true, skipped: true, reason: 'not_carpool' };
     try {
       lingqiSync = await syncScheduleToLingqiCarpool(req.params.id, tenantId);
@@ -2038,6 +2044,7 @@ app.put('/api/schedules/:id/checkins/:checkinId/finance', async (req: any, res: 
     if (req.body.depositAmount !== undefined) fields.deposit_amount = moneyCents(req.body.depositAmount);
     if (req.body.depositPaymentMethod !== undefined) fields.deposit_payment_method = cleanText(req.body.depositPaymentMethod, 40) || null;
     if (req.body.depositNote !== undefined) fields.deposit_note = cleanText(req.body.depositNote, 300) || null;
+    if (req.body.depositPayerName !== undefined) fields.deposit_payer_name = cleanText(req.body.depositPayerName, 80) || null;
     if (req.body.depositSettlementMode !== undefined) fields.deposit_settlement_mode = depositSettlementMode(req.body.depositSettlementMode);
     if (req.body.customerId !== undefined) fields.customer_id = cleanText(req.body.customerId, 80) || null;
     if (req.body.finalAmount !== undefined) fields.final_amount = moneyCents(req.body.finalAmount);
@@ -2092,20 +2099,11 @@ app.post('/api/schedules/:id/lock', async (req: any, res: any) => {
       .maybeSingle();
     if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
     if (['cancelled', 'bombed', 'completed'].includes(schedule.status)) return res.status(400).json(err(new Error('当前状态不能锁车')));
-    const { data: store } = await supabase.from('jzg_stores').select('default_deposit_amount').eq('id', tenantId).maybeSingle();
-    const defaultDepositAmount = moneyCents(req.body?.depositAmount ?? store?.default_deposit_amount ?? 5000);
-    const depositPaymentMethod = cleanText(req.body?.depositPaymentMethod, 40) || 'other';
-    const { data: checkins } = await supabase.from('checkins').select('id, deposit_status, deposit_amount').eq('schedule_id', schedule.id);
-    for (const item of checkins || []) {
-      if (['paid', 'waived', 'refunded'].includes(item.deposit_status || '')) continue;
-      await supabase.from('checkins').update({
-        deposit_status: 'paid',
-        deposit_amount: Number(item.deposit_amount || 0) > 0 ? item.deposit_amount : defaultDepositAmount,
-        deposit_payment_method: depositPaymentMethod,
-        deposit_paid_at: new Date().toISOString(),
-        deposit_note: '锁车时收定金',
-      }).eq('id', item.id).eq('schedule_id', schedule.id);
-    }
+    const { data: checkins } = await supabase.from('checkins').select('id, deposit_status').eq('schedule_id', schedule.id);
+    if (!checkins?.length) return res.status(400).json(err(new Error('这车还没有玩家，不能锁车')));
+    const depositRequired = checkins.filter((item: any) => !['waived', 'refunded'].includes(item.deposit_status || '')).length;
+    const depositReady = checkins.filter((item: any) => ['paid', 'waived'].includes(item.deposit_status || '')).length;
+    if (depositReady < Math.max(1, depositRequired)) return res.status(400).json(err(new Error('定金未交齐，不能锁车')));
     const { data, error } = await supabase.from('schedules')
       .update({
         status: 'locked',

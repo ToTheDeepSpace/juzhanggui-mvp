@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
-import type { Room, Actor, Script } from '../types';
+import type { Room, Actor, Script, StoreRecord } from '../types';
 import type { ScheduleWithDetails, ScheduleFormData, SelectedActor } from '../types/schedule';
 import { format, addDays, parseISO } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -16,7 +16,10 @@ export default function ScheduleCalendar() {
   const [actors, setActors] = useState<Actor[]>([]);
   const [scripts, setScripts] = useState<Script[]>([]);
   const [schedules, setSchedules] = useState<ScheduleWithDetails[]>([]);
+  const [stores, setStores] = useState<StoreRecord[]>([]);
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [defaultDepositDraft, setDefaultDepositDraft] = useState('100');
+  const [depositSettingMsg, setDepositSettingMsg] = useState('');
 
   // 弹窗状态
   const [showModal, setShowModal] = useState(false);
@@ -76,15 +79,25 @@ export default function ScheduleCalendar() {
   }, []);
 
   const loadData = async () => {
-    const [roomsRes, actorsRes, scriptsRes, schedulesRes] = await Promise.all([
+    const [roomsRes, actorsRes, scriptsRes, schedulesRes, storesRes] = await Promise.all([
       get<Room[]>('/rooms'), get<Actor[]>('/actors'),
       get<Script[]>('/scripts'), get<ScheduleWithDetails[]>('/schedules'),
+      get<StoreRecord[]>('/stores'),
     ]);
     if (roomsRes.success) setRooms(roomsRes.data || []);
     if (actorsRes.success) setActors(actorsRes.data || []);
     if (scriptsRes.success) setScripts(scriptsRes.data || []);
     if (schedulesRes.success) setSchedules(schedulesRes.data || []);
+    if (storesRes.success) {
+      const nextStores = storesRes.data || [];
+      setStores(nextStores);
+      const first = nextStores[0];
+      if (first) setDefaultDepositDraft(String(Math.round(Number(first.default_deposit_amount || 10000) / 100)));
+    }
   };
+
+  const currentStore = stores[0] || null;
+  const defaultDepositAmount = Math.round(Number(currentStore?.default_deposit_amount || 10000) / 100);
 
   // 踢出客人
   const handleKickGuest = async (scheduleId: string, guestName: string, role: string) => {
@@ -150,8 +163,9 @@ export default function ScheduleCalendar() {
       guest_name: item.guest_name || '',
       role: item.role || '',
       deposit_status: item.deposit_status || 'unpaid',
-      deposit_amount: Math.round(Number(item.deposit_amount || 0) / 100),
+      deposit_amount: Math.round(Number(item.deposit_amount || currentStore?.default_deposit_amount || 10000) / 100),
       deposit_payment_method: item.deposit_payment_method || '',
+      deposit_payer_name: item.deposit_payer_name || item.guest_name || '',
       deposit_settlement_mode: item.deposit_settlement_mode || 'deduct_final',
       final_amount: Math.round(Number(item.final_amount || 0) / 100),
       final_payment_method: item.final_payment_method || '',
@@ -166,31 +180,63 @@ export default function ScheduleCalendar() {
     setFinanceSaving(true);
     for (const row of financeRows) {
       const isRefundAfterFull = financeMode === 'settlement' && row.deposit_settlement_mode === 'refund_after_full' && row.settlement_status === 'settled';
-      await put(`/schedules/${financeSchedule.id}/checkins/${row.id}/finance`, {
+      const result = await put(`/schedules/${financeSchedule.id}/checkins/${row.id}/finance`, {
         depositStatus: isRefundAfterFull ? 'refunded' : row.deposit_status,
         depositAmount: Math.round(Number(row.deposit_amount || 0) * 100),
         depositPaymentMethod: row.deposit_payment_method || null,
+        depositPayerName: row.deposit_payer_name || null,
         depositSettlementMode: row.deposit_settlement_mode || 'deduct_final',
         finalAmount: Math.round(Number(row.final_amount || 0) * 100),
         finalPaymentMethod: row.final_payment_method || null,
         settlementStatus: row.settlement_status,
         settlementNote: row.settlement_note || null,
       });
+      if (!result.success) {
+        setFinanceSaving(false);
+        alert(result.error || '保存失败');
+        return false;
+      }
     }
     if (completeAfterSave) {
-      await put(`/schedules/${financeSchedule.id}/settle`, { note: '后台结算确认' });
+      const settled = await put(`/schedules/${financeSchedule.id}/settle`, { note: '后台结算确认' });
+      if (!settled.success) {
+        setFinanceSaving(false);
+        alert(settled.error || '完成结算失败');
+        return false;
+      }
       setShowFinanceModal(false);
     }
     setFinanceSaving(false);
     loadData();
+    return true;
   };
 
-  const lockScheduleWithDeposit = async (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm('确认收定金并锁车？系统会按店家默认定金金额，给本车未收定金的玩家标记为已收。')) return;
+  const lockSchedule = async (schedule: ScheduleWithDetails) => {
     const res = await post(`/schedules/${schedule.id}/lock`, { lockReason: 'deposit_guaranteed' });
     if (!res.success) alert(res.error || '锁车失败');
-    loadData();
+    else {
+      setShowFinanceModal(false);
+      loadData();
+    }
+  };
+
+  const saveDepositAndLock = async () => {
+    if (!financeSchedule) return;
+    const saved = await saveFinanceRows(false);
+    if (saved) await lockSchedule(financeSchedule);
+  };
+
+  const saveDepositSetting = async () => {
+    if (!currentStore) return;
+    setDepositSettingMsg('');
+    const amount = Math.max(0, Math.round((Number(defaultDepositDraft || 0) || 0) * 100));
+    const result = await put<StoreRecord>(`/stores/${currentStore.id}/settings`, { defaultDepositAmount: amount });
+    if (result.success) {
+      setDepositSettingMsg('默认定金已保存');
+      loadData();
+    } else {
+      setDepositSettingMsg(result.error || '保存失败');
+    }
   };
 
   const handleStartConfirm = async () => {
@@ -210,10 +256,20 @@ export default function ScheduleCalendar() {
     if (!endingSchedule) return;
     setEndSubmitting(true);
     if (endType === 'normal') {
-      await put(`/schedules/${endingSchedule.id}/complete`, {});
+      const result = await put(`/schedules/${endingSchedule.id}/complete`, {});
+      if (!result.success) {
+        alert(result.error || '结束登记失败');
+        setEndSubmitting(false);
+        return;
+      }
     } else {
       const cancelStatus = endType === 'bomb' ? 'bombed' : endType === 'flow' ? 'cancelled' : 'issue';
-      await put(`/schedules/${endingSchedule.id}/cancel`, { status: cancelStatus, note: endNote });
+      const result = await put(`/schedules/${endingSchedule.id}/cancel`, { status: cancelStatus, note: endNote });
+      if (!result.success) {
+        alert(result.error || '结束登记失败');
+        setEndSubmitting(false);
+        return;
+      }
     }
     if (showConflict && conflictDesc.trim()) {
       await post('/conflicts', { scheduleId: endingSchedule.id, conflictType, conflictDescription: conflictDesc, conflictDate: new Date().toISOString() });
@@ -423,7 +479,10 @@ export default function ScheduleCalendar() {
                 <button onClick={(e) => openQRModal(s, e)} className="text-xs text-amber-600 hover:underline font-medium">处理申请</button>
               )}
               {s.status === 'scheduled' && (
-                <button onClick={(e) => lockScheduleWithDeposit(s, e)} className="text-xs text-orange-600 hover:underline font-medium">收定金并锁车</button>
+                <button onClick={(e) => openFinanceModal(s, e, 'deposit')} className="text-xs text-orange-600 hover:underline font-medium">定金锁车</button>
+              )}
+              {s.status === 'locked' && (
+                <button onClick={(e) => openFinanceModal(s, e, 'deposit')} className="text-xs text-amber-700 hover:underline">定金记录</button>
               )}
               {s.status === 'locked' && (
                 <button onClick={(e) => openStartModal(s, e)} className="text-xs text-indigo-600 hover:underline font-medium">确认排班</button>
@@ -444,6 +503,17 @@ export default function ScheduleCalendar() {
     );
   }
 
+  const depositRequiredCount = financeRows.filter(r => !['waived', 'refunded'].includes(r.deposit_status || '')).length;
+  const depositReadyCount = financeRows.filter(r => ['paid', 'waived'].includes(r.deposit_status || '')).length;
+  const canLockFinanceSchedule = financeRows.length > 0 && depositReadyCount >= Math.max(1, depositRequiredCount);
+  const financeSlots = financeSchedule
+    ? [
+      ...financeRows.map(row => ({ kind: 'player' as const, row })),
+      ...Array.from({ length: Math.max(0, Number(financeSchedule.progress_summary?.targetCount || financeRows.length || 0) - financeRows.length) }, (_, index) => ({ kind: 'empty' as const, id: `empty-${index}` })),
+    ]
+    : [];
+  const avatarText = (name?: string) => (name || '空').trim().slice(0, 1).toUpperCase();
+
   return (
     <div className="space-y-6">
       {/* 进行中 / 已结束 切换 */}
@@ -457,6 +527,37 @@ export default function ScheduleCalendar() {
           📋 历史记录 ({endedSchedules.length})
         </button>
       </div>
+
+      {!showEnded && currentStore && (
+        <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-amber-900">锁车规则</p>
+              <p className="mt-1 text-xs text-amber-700">定金在锁车前确认。默认定金用于快速填入每个玩家的定金金额，特殊玩家可在弹窗内单独修改。</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-amber-700">默认定金</span>
+              <input
+                type="number"
+                min="0"
+                value={defaultDepositDraft}
+                onChange={e => setDefaultDepositDraft(e.target.value)}
+                className="w-24 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-900"
+              />
+              <span className="text-xs text-amber-700">元/人</span>
+              <button
+                type="button"
+                onClick={saveDepositSetting}
+                disabled={loading}
+                className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+          {depositSettingMsg && <p className="mt-2 text-xs text-amber-700">{depositSettingMsg}</p>}
+        </div>
+      )}
 
       {!showEnded ? (
         <>
@@ -676,7 +777,7 @@ export default function ScheduleCalendar() {
           <div className="bg-white rounded-xl p-6 max-w-3xl w-full mx-4 max-h-[88vh] overflow-y-auto">
             <div className="flex items-start justify-between gap-4 mb-4">
               <div>
-                <h3 className="text-lg font-bold text-gray-900">{financeMode === 'deposit' ? '定金确认' : '完车结算'}</h3>
+                <h3 className="text-lg font-bold text-gray-900">{financeMode === 'deposit' ? '定金锁车' : '完车结算'}</h3>
                 <p className="text-sm text-gray-500 mt-1">
                   {financeSchedule.script_name || scripts.find(s => s.id === financeSchedule.script_id)?.name || '未知剧本'} · {format(parseISO(financeSchedule.start_time), 'M/d HH:mm')}
                 </p>
@@ -710,11 +811,16 @@ export default function ScheduleCalendar() {
                 {financeRows.map((row, index) => (
                   <div key={row.id} className="rounded-lg border border-slate-100 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
+                      <div className="flex items-center gap-3">
+                        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-bold ${row.deposit_status === 'paid' ? 'bg-amber-500 text-white' : row.deposit_status === 'refunded' ? 'bg-slate-200 text-slate-500' : 'bg-indigo-50 text-indigo-600'}`}>
+                          {avatarText(row.guest_name)}
+                        </div>
+                        <div>
                         <p className="font-medium text-slate-900">{row.guest_name || '未命名'} <span className="text-sm font-normal text-slate-400">{row.role || '-'}</span></p>
                         <p className="mt-1 text-xs text-slate-400">
                           定金 {row.deposit_status === 'paid' ? `已收 ¥${row.deposit_amount || 0}` : row.deposit_status === 'waived' ? '免定金' : row.deposit_status === 'refunded' ? '已退' : '未收'} · 结算 {row.settlement_status === 'settled' ? '已结' : '待结'}
                         </p>
+                        </div>
                       </div>
                       {financeMode === 'settlement' && (
                         <button
@@ -728,7 +834,7 @@ export default function ScheduleCalendar() {
                     </div>
 
                     {financeMode === 'deposit' ? (
-                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[1fr_120px]">
+                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[1fr_120px_160px_120px]">
                         <div className="grid grid-cols-4 gap-2">
                           {[
                             ['unpaid', '未收'],
@@ -754,6 +860,25 @@ export default function ScheduleCalendar() {
                           className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
                           placeholder="定金"
                         />
+                        <input
+                          type="text"
+                          value={row.deposit_payer_name || ''}
+                          onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_payer_name: e.target.value } : r))}
+                          className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                          placeholder="付款人/代付人"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setFinanceRows(rows => rows.map(r => ({
+                            ...r,
+                            deposit_status: 'paid',
+                            deposit_amount: Number(r.deposit_amount || defaultDepositAmount),
+                            deposit_payer_name: row.guest_name || row.deposit_payer_name || '车头',
+                          })))}
+                          className="rounded-lg bg-orange-50 px-3 py-2 text-xs font-medium text-orange-700 hover:bg-orange-100"
+                        >
+                          此人代付全车
+                        </button>
                       </div>
                     ) : (
                       <div className="mt-3 space-y-3">
@@ -814,12 +939,26 @@ export default function ScheduleCalendar() {
                     )}
                   </div>
                 ))}
+                {financeMode === 'deposit' && financeSlots.filter(slot => slot.kind === 'empty').map(slot => (
+                  <div key={(slot as any).id} className="rounded-lg border border-dashed border-slate-200 p-4">
+                    <div className="flex items-center gap-3 text-slate-400">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-100 text-sm font-bold">空</div>
+                      <div>
+                        <p className="font-medium">待上车玩家</p>
+                        <p className="mt-1 text-xs">玩家上车后会在这里确认定金。</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
 
             <div className="mt-5 flex flex-wrap justify-end gap-2">
               <button onClick={() => setShowFinanceModal(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">取消</button>
               <button onClick={() => saveFinanceRows(false)} disabled={financeSaving} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900 disabled:opacity-50">{financeMode === 'deposit' ? '保存定金' : '保存结算'}</button>
+              {financeMode === 'deposit' && financeSchedule.status === 'scheduled' && (
+                <button onClick={saveDepositAndLock} disabled={financeSaving || !canLockFinanceSchedule} className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700 disabled:opacity-50">定金交齐，确认锁车</button>
+              )}
               {financeMode === 'settlement' && (
                 <button onClick={() => saveFinanceRows(true)} disabled={financeSaving || financeRows.length === 0} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">完成整车结算</button>
               )}
@@ -881,6 +1020,11 @@ export default function ScheduleCalendar() {
                 </label>
               ))}
             </div>
+            {endType === 'flow' && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                流车前必须先确认所有已收定金都已退款。若还有玩家定金状态为“已收”，系统会拒绝确认流车。
+              </div>
+            )}
             <div className="bg-blue-50 rounded-lg p-4 mb-5 text-center">
               <p className="text-sm font-medium text-blue-900 mb-2">📋 评价二维码</p>
               <p className="text-xs text-blue-600 mb-3">玩家扫码后可对本次剧本进行评价</p>
