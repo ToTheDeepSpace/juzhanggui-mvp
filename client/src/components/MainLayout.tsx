@@ -15,7 +15,7 @@ import StoreManager from './StoreManager';
 import { useApi } from '../hooks/useApi';
 import type { StoreRecord } from '../types';
 
-type Tab = 'platform' | 'stores' | 'adminUsers' | 'templates' | 'auditLogs' | 'rooms' | 'actors' | 'scripts' | 'schedule' | 'evaluations' | 'customers' | 'conflicts';
+type Tab = 'platform' | 'stores' | 'adminUsers' | 'templates' | 'feedbackInbox' | 'auditLogs' | 'rooms' | 'actors' | 'scripts' | 'schedule' | 'evaluations' | 'customers' | 'conflicts' | 'feedback';
 
 const basePath = '/store/manage';
 const storeTabs = [
@@ -25,6 +25,7 @@ const storeTabs = [
   { id: 'actors' as Tab, label: '🎭 卡司管理', color: 'bg-purple-500', path: `${basePath}/actors` },
   { id: 'scripts' as Tab, label: '📖 剧本管理', color: 'bg-orange-500', path: `${basePath}/scripts` },
   { id: 'evaluations' as Tab, label: '⭐ 评价反馈', color: 'bg-amber-500', path: `${basePath}/evaluations` },
+  { id: 'feedback' as Tab, label: '💬 建议反馈', color: 'bg-sky-500', path: `${basePath}/feedback` },
   { id: 'customers' as Tab, label: '⭐ 会员管理', color: 'bg-yellow-500', path: `${basePath}/customers` },
   { id: 'conflicts' as Tab, label: '⚖️ 矛盾调解', color: 'bg-red-500', path: `${basePath}/conflicts` },
 ];
@@ -43,6 +44,7 @@ export default function MainLayout() {
       { id: 'stores' as Tab, label: '🏪 店家管理', color: 'bg-indigo-500', path: `${basePath}/stores` },
       { id: 'adminUsers' as Tab, label: '👤 账号管理', color: 'bg-cyan-600', path: `${basePath}/admin-users` },
       { id: 'templates' as Tab, label: '📚 模板中心', color: 'bg-emerald-600', path: `${basePath}/templates` },
+      { id: 'feedbackInbox' as Tab, label: '💬 站内信', color: 'bg-sky-600', path: `${basePath}/feedback-inbox` },
       { id: 'auditLogs' as Tab, label: '🧾 操作日志', color: 'bg-amber-600', path: `${basePath}/audit-logs` },
     ]
     : storeTabs;
@@ -145,12 +147,14 @@ export default function MainLayout() {
           <Route path="stores" element={<StoreManager />} />
           {isSuperAdmin && <Route path="admin-users" element={<AdminUsersPanel />} />}
           {isSuperAdmin && <Route path="templates" element={<TemplateCenterPanel />} />}
+          {isSuperAdmin && <Route path="feedback-inbox" element={<FeedbackInboxPanel />} />}
           {isSuperAdmin && <Route path="audit-logs" element={<AuditLogsPanel />} />}
           {!isSuperAdmin && <Route path="rooms" element={<RoomManager />} />}
           {!isSuperAdmin && <Route path="actors" element={<ActorManager />} />}
           {!isSuperAdmin && <Route path="scripts" element={<ScriptManager />} />}
           {!isSuperAdmin && <Route path="schedule" element={<ScheduleCalendar />} />}
           {!isSuperAdmin && <Route path="evaluations" element={<EvaluationManager />} />}
+          {!isSuperAdmin && <Route path="feedback" element={<FeedbackPanel />} />}
           {!isSuperAdmin && <Route path="customers" element={<CustomerManager />} />}
           {!isSuperAdmin && <Route path="conflicts" element={<ConflictResolutionPage />} />}
           <Route path="" element={<Navigate to={isSuperAdmin ? `${basePath}/platform` : `${basePath}/schedule`} replace />} />
@@ -227,6 +231,37 @@ interface AuditLogRow {
   ip_address?: string | null;
   created_at?: string | null;
 }
+
+interface FeedbackMessageRow {
+  id: string;
+  tenant_id?: string | null;
+  admin_user_id?: string | null;
+  category: string;
+  title: string;
+  content: string;
+  status: string;
+  priority?: string | null;
+  reply?: string | null;
+  replied_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  store?: { name?: string | null; city?: string | null } | null;
+  admin?: { email?: string | null; display_name?: string | null } | null;
+  replier?: { email?: string | null; display_name?: string | null } | null;
+}
+
+const feedbackCategoryText: Record<string, string> = {
+  suggestion: '建议',
+  bug: '问题',
+  question: '咨询',
+  other: '其他',
+};
+const feedbackStatusText: Record<string, string> = {
+  new: '新反馈',
+  processing: '处理中',
+  resolved: '已处理',
+  closed: '已关闭',
+};
 
 function PlatformOverview() {
   const { get, loading } = useApi();
@@ -769,6 +804,157 @@ function AuditLogsPanel() {
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function FeedbackPanel() {
+  const { get, post, loading } = useApi();
+  const [items, setItems] = useState<FeedbackMessageRow[]>([]);
+  const [form, setForm] = useState({ category: 'suggestion', title: '', content: '' });
+  const [message, setMessage] = useState('');
+
+  const loadFeedback = async () => {
+    const result = await get<FeedbackMessageRow[]>('/feedback');
+    if (result.success && result.data) setItems(result.data);
+    else setMessage(result.error || '反馈记录加载失败');
+  };
+
+  useEffect(() => {
+    void loadFeedback();
+  }, []);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMessage('');
+    const result = await post<FeedbackMessageRow>('/feedback', form);
+    if (!result.success) {
+      setMessage(result.error || '提交失败，请稍后再试');
+      return;
+    }
+    setForm({ category: 'suggestion', title: '', content: '' });
+    setMessage('已提交，平台会在站内信里回复你。');
+    await loadFeedback();
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-xl font-bold text-gray-900">建议反馈</h2>
+        <p className="mt-1 text-sm text-gray-500">遇到问题、想提建议，直接发给平台。处理结果会显示在下面。</p>
+        <form onSubmit={submit} className="mt-5 grid gap-3">
+          <div className="grid gap-3 md:grid-cols-3">
+            <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className="rounded-lg border border-gray-200 px-3 py-2 text-sm">
+              <option value="suggestion">建议</option>
+              <option value="bug">问题</option>
+              <option value="question">咨询</option>
+              <option value="other">其他</option>
+            </select>
+            <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="一句话标题" className="md:col-span-2 rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+          </div>
+          <textarea value={form.content} onChange={e => setForm({ ...form, content: e.target.value })} placeholder="请描述具体建议或问题，越具体越好。" className="h-32 rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+          <div className="flex items-center justify-between gap-3">
+            {message && <p className="text-sm text-sky-700">{message}</p>}
+            <button disabled={loading} className="ml-auto rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">提交反馈</button>
+          </div>
+        </form>
+      </div>
+
+      <div className="bg-white rounded-lg shadow p-6">
+        <h3 className="font-bold text-gray-900">我的反馈记录</h3>
+        <div className="mt-4 space-y-3">
+          {items.length === 0 ? <p className="text-sm text-gray-400">暂无反馈记录</p> : items.map(item => (
+            <div key={item.id} className="rounded-lg border border-gray-100 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">{feedbackCategoryText[item.category] || item.category}</span>
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{feedbackStatusText[item.status] || item.status}</span>
+                <span className="text-xs text-gray-400">{item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : ''}</span>
+              </div>
+              <p className="mt-2 font-semibold text-gray-900">{item.title}</p>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-gray-600">{item.content}</p>
+              {item.reply && <div className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">平台回复：{item.reply}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FeedbackInboxPanel() {
+  const { get, put, loading } = useApi();
+  const [items, setItems] = useState<FeedbackMessageRow[]>([]);
+  const [message, setMessage] = useState('');
+  const [editing, setEditing] = useState<Record<string, { status: string; reply: string }>>({});
+
+  const loadFeedback = async () => {
+    const result = await get<FeedbackMessageRow[]>('/platform/feedback');
+    if (result.success && result.data) {
+      setItems(result.data);
+      setMessage('');
+      const next: Record<string, { status: string; reply: string }> = {};
+      result.data.forEach(item => { next[item.id] = { status: item.status || 'new', reply: item.reply || '' }; });
+      setEditing(next);
+    } else {
+      setMessage(result.error || '站内信加载失败');
+    }
+  };
+
+  useEffect(() => {
+    void loadFeedback();
+  }, []);
+
+  const save = async (item: FeedbackMessageRow) => {
+    const draft = editing[item.id] || { status: item.status, reply: item.reply || '' };
+    const result = await put(`/platform/feedback/${item.id}`, draft);
+    if (!result.success) {
+      setMessage(result.error || '保存失败');
+      return;
+    }
+    await loadFeedback();
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-lg shadow p-6 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">站内信 / 建议反馈</h2>
+          <p className="mt-1 text-sm text-gray-500">查看店家提交的问题和建议，并在这里回复处理结果。</p>
+          {message && <p className="mt-3 text-sm text-red-600">{message}</p>}
+        </div>
+        <button onClick={loadFeedback} disabled={loading} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">刷新</button>
+      </div>
+      <div className="space-y-3">
+        {items.length === 0 ? <div className="bg-white rounded-lg shadow p-10 text-center text-gray-400">暂无站内信</div> : items.map(item => {
+          const draft = editing[item.id] || { status: item.status, reply: item.reply || '' };
+          return (
+            <div key={item.id} className="bg-white rounded-lg shadow p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">{feedbackCategoryText[item.category] || item.category}</span>
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{feedbackStatusText[item.status] || item.status}</span>
+                    <span className="text-xs text-gray-400">{item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : ''}</span>
+                  </div>
+                  <p className="mt-2 text-lg font-semibold text-gray-900">{item.title}</p>
+                  <p className="mt-1 text-sm text-gray-500">{item.store?.name || '未知店家'}{item.store?.city ? ` · ${item.store.city}` : ''} · {item.admin?.display_name || item.admin?.email || '未知账号'}</p>
+                </div>
+                <select value={draft.status} onChange={e => setEditing({ ...editing, [item.id]: { ...draft, status: e.target.value } })} className="rounded-lg border border-gray-200 px-3 py-2 text-sm">
+                  <option value="new">新反馈</option>
+                  <option value="processing">处理中</option>
+                  <option value="resolved">已处理</option>
+                  <option value="closed">已关闭</option>
+                </select>
+              </div>
+              <p className="mt-4 whitespace-pre-wrap text-sm text-gray-700">{item.content}</p>
+              <textarea value={draft.reply} onChange={e => setEditing({ ...editing, [item.id]: { ...draft, reply: e.target.value } })} placeholder="回复店家，店家会在建议反馈页看到。" className="mt-4 h-24 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+              <div className="mt-3 flex justify-end">
+                <button onClick={() => save(item)} disabled={loading} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50">保存处理结果</button>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

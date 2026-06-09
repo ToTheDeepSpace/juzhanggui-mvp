@@ -1527,6 +1527,41 @@ app.get('/api/platform/audit-logs', async (req: any, res: any) => {
   } catch (e) { res.status(500).json(err(e)); }
 });
 
+app.get('/api/platform/feedback', async (req: any, res: any) => {
+  try {
+    if (!requireSuperAdmin(req, res)) return;
+    const { data, error } = await supabase.from('jzg_feedback_messages')
+      .select('*, store:jzg_stores(name, city), admin:jzg_admin_users!jzg_feedback_messages_admin_user_id_fkey(email, display_name), replier:jzg_admin_users!jzg_feedback_messages_replied_by_fkey(email, display_name)')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) throw error;
+    res.json(ok(data || []));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.put('/api/platform/feedback/:id', async (req: any, res: any) => {
+  try {
+    if (!requireSuperAdmin(req, res)) return;
+    const status = cleanText(req.body?.status, 20);
+    const reply = cleanText(req.body?.reply, 2000);
+    if (!['new', 'processing', 'resolved', 'closed'].includes(status)) return res.status(400).json(err(new Error('反馈状态无效')));
+    const fields: any = { status, updated_at: new Date().toISOString() };
+    if (reply) {
+      fields.reply = reply;
+      fields.replied_by = req.user?.adminUserId || null;
+      fields.replied_at = new Date().toISOString();
+    }
+    const { data, error } = await supabase.from('jzg_feedback_messages')
+      .update(fields)
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    await logPlatformAction(req, 'feedback_update', { type: 'feedback', id: data.id, label: data.title }, { status, hasReply: !!reply });
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
 // ===== Stores / 多店家后台 =====
 app.get('/api/stores', async (req: any, res: any) => {
   try {
@@ -1570,6 +1605,38 @@ app.put('/api/stores/:id/settings', async (req: any, res: any) => {
     if (!Object.keys(fields).length) return res.status(400).json(err(new Error('没有可保存的设置')));
     const [data] = await db.update(jzgStores).set(fields).where(eq(jzgStores.id, storeId)).returning();
     if (!data) return res.status(404).json(err(new Error('店家不存在')));
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.get('/api/feedback', async (req: any, res: any) => {
+  try {
+    const { data, error } = await supabase.from('jzg_feedback_messages')
+      .select('*')
+      .eq('tenant_id', currentTenantId(req))
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    res.json(ok(data || []));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/feedback', async (req: any, res: any) => {
+  try {
+    const category = cleanText(req.body?.category, 30) || 'suggestion';
+    const title = cleanText(req.body?.title, 160);
+    const content = cleanText(req.body?.content, 3000);
+    if (!title) return res.status(400).json(err(new Error('请填写反馈标题')));
+    if (!content) return res.status(400).json(err(new Error('请填写反馈内容')));
+    if (!['suggestion', 'bug', 'question', 'other'].includes(category)) return res.status(400).json(err(new Error('反馈类型无效')));
+    const { data, error } = await supabase.from('jzg_feedback_messages').insert({
+      tenant_id: currentTenantId(req),
+      admin_user_id: req.user?.adminUserId || null,
+      category,
+      title,
+      content,
+    }).select('*').single();
+    if (error) throw error;
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
