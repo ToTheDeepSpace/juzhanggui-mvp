@@ -24,6 +24,7 @@ export default function ScheduleCalendar() {
   // 弹窗状态
   const [showModal, setShowModal] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<ScheduleWithDetails | null>(null);
+  const [viewingEndedSchedule, setViewingEndedSchedule] = useState<ScheduleWithDetails | null>(null);
   const [isPendingMode, setIsPendingMode] = useState(false);
 
   const [showQRModal, setShowQRModal] = useState(false);
@@ -334,8 +335,9 @@ export default function ScheduleCalendar() {
         return;
       }
     }
-    if (showConflict && conflictDesc.trim()) {
-      await post('/conflicts', { scheduleId: endingSchedule.id, conflictType, conflictDescription: conflictDesc, conflictDate: new Date().toISOString() });
+    const issueDesc = endType === 'other' ? (conflictDesc.trim() || endNote.trim() || '其他问题待处理') : conflictDesc.trim();
+    if ((showConflict || endType === 'other') && issueDesc) {
+      await post('/conflicts', { scheduleId: endingSchedule.id, conflictType: endType === 'other' ? 'other_conflict' : conflictType, conflictDescription: issueDesc, conflictDate: new Date().toISOString() });
     }
     setShowEndModal(false); setEndSubmitting(false); loadData();
   };
@@ -882,7 +884,7 @@ export default function ScheduleCalendar() {
                   const pendingRequestCount = s.pending_request_count || 0;
                   carCounter++;
                   const cn = `#${String(carCounter).padStart(3, '0')}`;
-                  return (<tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50">
+                  return (<tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer" onClick={() => setViewingEndedSchedule(s)}>
                     <td className="px-4 py-3"><span className="text-xs font-mono font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">{cn}</span></td>
                     <td className="px-4 py-3 text-gray-800">{format(sd, 'M/d')}</td>
                     <td className="px-4 py-3 text-gray-500">{format(sd, 'EEEE', { locale: zhCN })}</td>
@@ -928,6 +930,28 @@ export default function ScheduleCalendar() {
         onKickGuest={(name, role) => editingSchedule && handleKickGuest(editingSchedule.id, name, role)}
         onOpenQRModal={(e) => editingSchedule && openQRModal(editingSchedule, e)}
       />
+
+      {viewingEndedSchedule && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setViewingEndedSchedule(null)}>
+          <div className="w-full max-w-xl rounded-2xl bg-white p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">历史记录详情</h3>
+                <p className="mt-1 text-sm text-slate-500">已归档车次仅支持查看，不能修改核心信息。</p>
+              </div>
+              <button onClick={() => setViewingEndedSchedule(null)} className="rounded-full px-3 py-1 text-sm text-slate-500 hover:bg-slate-100">关闭</button>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+              <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-400">剧本</p><p className="mt-1 font-medium text-slate-900">{viewingEndedSchedule.script_name}</p></div>
+              <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-400">状态</p><p className="mt-1 font-medium text-slate-900">{stText[viewingEndedSchedule.status] || viewingEndedSchedule.status}</p></div>
+              <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-400">时间</p><p className="mt-1 font-medium text-slate-900">{format(parseISO(viewingEndedSchedule.start_time), 'yyyy-MM-dd HH:mm')}</p></div>
+              <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-400">房间</p><p className="mt-1 font-medium text-slate-900">{viewingEndedSchedule.room_name || '未指定'}</p></div>
+              <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-400">人数</p><p className="mt-1 font-medium text-slate-900">{viewingEndedSchedule.checked_in_count || 0}/{viewingEndedSchedule.player_count || 0}</p></div>
+              <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-400">结算</p><p className="mt-1 font-medium text-slate-900">{settlementStatusText[viewingEndedSchedule.settlement_status || 'pending']}</p></div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <QRCodeModal
         schedule={qrSchedule}

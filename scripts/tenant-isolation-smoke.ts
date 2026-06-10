@@ -16,6 +16,8 @@ type StoreBundle = {
   customerId: string;
   scheduleId: string;
   checkinId: string;
+  conflictId: string;
+  feedbackId: string;
 };
 
 type Step = {
@@ -99,6 +101,18 @@ async function createStoreBundle(key: 'a' | 'b'): Promise<StoreBundle> {
     [schedule.id, `${marker}-${key}-guest`, customer.id],
   );
   await tencentPgPool.query(`insert into evaluations (schedule_id, guest_name, rating, comment) values ($1, $2, 5, $3)`, [schedule.id, `${marker}-${key}-guest`, `${marker}-${key}-eval`]);
+  const conflict = await queryOne<{ id: string }>(
+    `insert into conflict_records (tenant_id, schedule_id, customer_id, actor_id, conflict_type, conflict_description, conflict_date, status) values ($1, $2, $3, $4, 'other_conflict', $5, now(), 'pending') returning id`,
+    [store.id, schedule.id, customer.id, actor.id, `${marker}-${key}-conflict`],
+  );
+  const feedback = await queryOne<{ id: string }>(
+    `insert into jzg_feedback_messages (tenant_id, admin_user_id, category, title, content, status, priority) values ($1, $2, 'bug', $3, $4, 'open', 'normal') returning id`,
+    [store.id, user.id, `${marker}-${key}-feedback`, `${marker}-${key}-feedback-content`],
+  );
+  await tencentPgPool.query(
+    `insert into membership_transactions (customer_id, schedule_id, amount, transaction_type, note, balance_delta, payment_method) values ($1, $2, 1000, 'recharge', $3, 1000, 'cash')`,
+    [customer.id, schedule.id, `${marker}-${key}-transaction`],
+  );
   const token = await login(email);
   const bundle = { storeId: store.id, userId: user.id };
   return {
@@ -110,6 +124,8 @@ async function createStoreBundle(key: 'a' | 'b'): Promise<StoreBundle> {
     customerId: customer.id,
     scheduleId: schedule.id,
     checkinId: checkin.id,
+    conflictId: conflict.id,
+    feedbackId: feedback.id,
   };
 }
 
@@ -134,7 +150,7 @@ const steps: Step[] = [
   {
     name: 'A 店列表接口不出现 B 店数据',
     run: async () => {
-      for (const path of ['/stores', '/scripts', '/rooms', '/actors', '/customers', '/schedules', '/operation-logs']) {
+      for (const path of ['/stores', '/scripts', '/rooms', '/actors', '/customers', '/schedules', '/operation-logs', '/feedback', '/conflicts/pending']) {
         const { response, body } = await api(`/api${path}`, a.token);
         expectStatus(path, response.status, [200]);
         const text = JSON.stringify(body);
@@ -144,6 +160,8 @@ const steps: Step[] = [
         assertOk(!text.includes(b.actorId), `${path}: 返回了 B 店 actorId`);
         assertOk(!text.includes(b.customerId), `${path}: 返回了 B 店 customerId`);
         assertOk(!text.includes(b.scheduleId), `${path}: 返回了 B 店 scheduleId`);
+        assertOk(!text.includes(b.conflictId), `${path}: 返回了 B 店 conflictId`);
+        assertOk(!text.includes(b.feedbackId), `${path}: 返回了 B 店 feedbackId`);
       }
     },
   },
@@ -183,6 +201,24 @@ const steps: Step[] = [
       expectStatus('create with B room', withBRoom.response.status, [404]);
       const withBActor = await api('/api/schedules', a.token, { method: 'POST', body: JSON.stringify({ scriptId: a.scriptId, roomId: a.roomId, date: '2030-01-01', timeStart: '10:00', timeEnd: '14:00', actors: [{ actorId: b.actorId, roleName: 'NPC一', startTime: '10:00', endTime: '14:00' }] }) });
       expectStatus('create with B actor', withBActor.response.status, [404]);
+    },
+  },
+  {
+    name: 'A 店不能处理 B 店矛盾记录',
+    run: async () => {
+      const result = await api(`/api/conflicts/${b.conflictId}/resolve`, a.token, { method: 'POST', body: JSON.stringify({ resolution: `${marker}-hack`, resolved_by: 'A', status: 'resolved' }) });
+      expectStatus('resolve B conflict', result.response.status, [404]);
+      const createWithBRefs = await api('/api/conflicts', a.token, { method: 'POST', body: JSON.stringify({ scheduleId: b.scheduleId, customerId: b.customerId, actorId: b.actorId, conflictType: 'other_conflict', conflictDescription: `${marker}-hack`, conflictDate: new Date().toISOString() }) });
+      expectStatus('create conflict with B refs', createWithBRefs.response.status, [404]);
+    },
+  },
+  {
+    name: 'A 店不能给 B 店会员记账或引用 B 店排期记账',
+    run: async () => {
+      const bCustomer = await api(`/api/customers/${b.customerId}/transactions`, a.token, { method: 'POST', body: JSON.stringify({ transactionType: 'recharge', amount: 1, paymentMethod: 'cash' }) });
+      expectStatus('transaction on B customer', bCustomer.response.status, [404]);
+      const bSchedule = await api(`/api/customers/${a.customerId}/transactions`, a.token, { method: 'POST', body: JSON.stringify({ transactionType: 'recharge', amount: 1, paymentMethod: 'cash', scheduleId: b.scheduleId }) });
+      expectStatus('transaction with B schedule', bSchedule.response.status, [404]);
     },
   },
   {

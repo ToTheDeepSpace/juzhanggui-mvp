@@ -27,6 +27,7 @@ export interface Script {
   player_roles?: string[];
   actor_roles?: string[];
   player_count?: number;
+  role_count?: number;
   actor_count?: number;
 }
 

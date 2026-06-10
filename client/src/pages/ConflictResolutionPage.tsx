@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useApi } from '../hooks/useApi';
 
 interface ConflictRecord {
   id: string;
@@ -12,10 +13,13 @@ interface ConflictRecord {
   resolved_by: string | null;
   resolved_at: string | null;
   status: 'pending' | 'resolved' | 'escalated';
-  customer_name: string;
-  actor_name: string;
-  script_name: string;
-  start_time: string;
+  customer_name?: string;
+  actor_name?: string;
+  script_name?: string;
+  start_time?: string;
+  customers?: { name?: string } | null;
+  actors?: { name?: string } | null;
+  schedules?: { scheduled_date?: string; start_time?: string; scripts?: { name?: string } | null } | null;
 }
 
 const conflictTypeLabels: Record<string, string> = {
@@ -38,6 +42,7 @@ const statusColors: Record<string, string> = {
 };
 
 const ConflictResolutionPage: React.FC = () => {
+  const { get, post } = useApi();
   const [pendingConflicts, setPendingConflicts] = useState<ConflictRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [openDialog, setOpenDialog] = useState(false);
@@ -53,16 +58,9 @@ const ConflictResolutionPage: React.FC = () => {
 
   const fetchConflicts = async () => {
     try {
-      const [pendingRes] = await Promise.all([
-        fetch('/api/conflicts/pending'),
-      ]);
-      if (pendingRes.ok) {
-        const data = await pendingRes.json();
-        setPendingConflicts(data.data || []);
-      }
-      setLoading(false);
-    } catch (error) {
-      console.error('加载矛盾记录失败:', error);
+      const result = await get<ConflictRecord[]>('/conflicts/pending');
+      setPendingConflicts(result.success && result.data ? result.data : []);
+    } finally {
       setLoading(false);
     }
   };
@@ -85,12 +83,8 @@ const ConflictResolutionPage: React.FC = () => {
   const handleSaveResolution = async () => {
     if (!selectedConflict) return;
     try {
-      const res = await fetch(`/api/conflicts/${selectedConflict.id}/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resolution, resolved_by: resolvedBy, status }),
-      });
-      if (res.ok) {
+      const res = await post(`/conflicts/${selectedConflict.id}/resolve`, { resolution, resolved_by: resolvedBy, status });
+      if (res.success) {
         await fetchConflicts();
         handleCloseDialog();
       } else {
@@ -102,10 +96,16 @@ const ConflictResolutionPage: React.FC = () => {
     }
   };
 
-  const formatDate = (dateStr: string) => {
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return '-';
     const date = new Date(dateStr);
     return date.toLocaleDateString('zh-CN') + ' ' + date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
   };
+
+  const customerName = (conflict: ConflictRecord) => conflict.customer_name || conflict.customers?.name || '未关联客户';
+  const actorName = (conflict: ConflictRecord) => conflict.actor_name || conflict.actors?.name || '未关联卡司';
+  const scriptName = (conflict: ConflictRecord) => conflict.script_name || conflict.schedules?.scripts?.name || '未关联剧本';
+  const scheduleTime = (conflict: ConflictRecord) => conflict.start_time || conflict.schedules?.scheduled_date || conflict.conflict_date;
 
   if (loading) {
     return <div className="p-6">加载中...</div>;
@@ -134,10 +134,10 @@ const ConflictResolutionPage: React.FC = () => {
             <tbody className="bg-white divide-y divide-gray-200">
               {pendingConflicts.map(conflict => (
                 <tr key={conflict.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{conflict.customer_name}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{conflict.actor_name}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{conflict.script_name}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{formatDate(conflict.start_time)}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{customerName(conflict)}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{actorName(conflict)}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{scriptName(conflict)}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{formatDate(scheduleTime(conflict))}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{conflictTypeLabels[conflict.conflict_type] || conflict.conflict_type}</td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${statusColors[conflict.status]}`}>
@@ -168,15 +168,15 @@ const ConflictResolutionPage: React.FC = () => {
             <div className="px-6 py-4 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700">客户</label>
-                <div className="mt-1 text-sm">{selectedConflict.customer_name}</div>
+                <div className="mt-1 text-sm">{customerName(selectedConflict)}</div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">卡司</label>
-                <div className="mt-1 text-sm">{selectedConflict.actor_name}</div>
+                <div className="mt-1 text-sm">{actorName(selectedConflict)}</div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">剧本</label>
-                <div className="mt-1 text-sm">{selectedConflict.script_name}</div>
+                <div className="mt-1 text-sm">{scriptName(selectedConflict)}</div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">矛盾描述</label>

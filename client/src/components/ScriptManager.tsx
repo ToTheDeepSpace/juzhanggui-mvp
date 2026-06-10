@@ -16,7 +16,7 @@ export default function ScriptManager() {
     name: '',
     minDuration: '',
     maxDuration: '',
-    dmGender: '未指定',
+    playerCount: '',
     playerRoles: [] as Role[],
     actorRoles: [] as Role[],
   });
@@ -132,6 +132,10 @@ const handleSubmit = async (e: React.FormEvent) => {
       alert('最短时长不能大于最长时长');
       return;
     }
+    if (!formData.playerCount || parseInt(formData.playerCount) <= 0) {
+      alert('请输入开本人数');
+      return;
+    }
     if (formData.playerRoles.length === 0 && formData.actorRoles.length === 0) {
       alert('请至少添加一个角色（玩家或卡司）');
       return;
@@ -141,9 +145,9 @@ const handleSubmit = async (e: React.FormEvent) => {
       name: formData.name.trim(),
       minDuration: Math.round(parseFloat(formData.minDuration) * 60), // 小时转分钟
       maxDuration: Math.round(parseFloat(formData.maxDuration) * 60), // 小时转分钟
-      dmGender: formData.dmGender,
+      playerCount: parseInt(formData.playerCount),
       playerRoles: formData.playerRoles.map(r => r.gender && r.gender !== '未指定' ? `${r.name}(${r.gender})` : r.name),
-      actorRoles: formData.actorRoles.map(r => r.gender && r.gender !== '未指定' ? `${r.name}(${r.gender})` : r.name),
+      actorRoles: formData.actorRoles.map(r => r.name),
     };
 
     let result;
@@ -154,7 +158,7 @@ const handleSubmit = async (e: React.FormEvent) => {
     }
 
     if (result.success) {
-      setFormData({ name: '', minDuration: '', maxDuration: '', dmGender: '未指定', playerRoles: [], actorRoles: [] });
+      setFormData({ name: '', minDuration: '', maxDuration: '', playerCount: '', playerRoles: [], actorRoles: [] });
       setEditingScript(null);
       setShowForm(false);
       loadScripts();
@@ -225,7 +229,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       name: script.name,
       minDuration: String(script.min_duration / 60), // 分钟转小时（最短时长）
       maxDuration: String(script.max_duration / 60), // 分钟转小时（最长时长）
-      dmGender: script.dm_gender ?? '未指定',
+      playerCount: String(script.player_count || script.player_roles?.length || ''),
       playerRoles: parseRoles(script.player_roles || []),
       actorRoles: parseRoles(script.actor_roles || []),
     });
@@ -246,7 +250,8 @@ const handleSubmit = async (e: React.FormEvent) => {
 
   const scriptMissingItems = (script: Script) => [
     !script.min_duration && !script.max_duration ? '时长' : '',
-    !(script.player_count || script.player_roles?.length) ? '玩家角色' : '',
+    !script.player_count ? '开本人数' : '',
+    !(script.role_count || script.player_roles?.length) ? '玩家角色库' : '',
     !(script.actor_count || script.actor_roles?.length) ? '卡司角色' : '',
   ].filter(Boolean);
 
@@ -257,7 +262,7 @@ const handleSubmit = async (e: React.FormEvent) => {
         <button
           onClick={() => {
             setEditingScript(null);
-            setFormData({ name: '', minDuration: '', maxDuration: '', dmGender: '未指定', playerRoles: [], actorRoles: [] });
+            setFormData({ name: '', minDuration: '', maxDuration: '', playerCount: '', playerRoles: [], actorRoles: [] });
             setShowForm(true);
           }}
           className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors"
@@ -303,7 +308,7 @@ const handleSubmit = async (e: React.FormEvent) => {
                   <div>
                     <h4 className="font-semibold text-gray-800">{template.name}</h4>
                     <p className="text-xs text-gray-500 mt-1">
-                      {template.min_duration_hours}~{template.max_duration_hours}小时 · 玩家{template.player_roles?.length || 0} · 卡司{template.actor_roles?.length || 0} · 已导入{template.usage_count || 0}次
+                      {template.min_duration_hours}~{template.max_duration_hours}小时 · 角色库{template.player_roles?.length || 0} · 卡司{template.actor_roles?.length || 0} · 已导入{template.usage_count || 0}次
                     </p>
                   </div>
                   <button
@@ -360,17 +365,17 @@ const handleSubmit = async (e: React.FormEvent) => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">DM性别</label>
-                <select
-                  value={formData.dmGender}
-                  onChange={(e) => setFormData({ ...formData, dmGender: e.target.value })}
+                <label className="block text-sm font-medium text-gray-700 mb-1">开本人数</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={formData.playerCount}
+                  onChange={(e) => setFormData({ ...formData, playerCount: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                >
-                  <option value="未指定">未指定</option>
-                  <option value="男">男</option>
-                  <option value="女">女</option>
-                  <option value="其他">其他</option>
-                </select>
+                  placeholder="例如：6"
+                  required
+                />
+                <p className="mt-1 text-xs text-gray-500">角色库可以多于开本人数，例如 8 个可选角色里开 6 人。</p>
               </div>
             </div>
 
@@ -474,20 +479,6 @@ const handleSubmit = async (e: React.FormEvent) => {
                   formData.actorRoles.map((role, index) => (
                     <div key={index} className="flex items-center gap-2 p-2 bg-purple-50 rounded">
                       <span className="flex-1 font-medium">{role.name}</span>
-                      <select
-                        value={role.gender || '未指定'}
-                        onChange={(e) => {
-                          const newRoles = [...formData.actorRoles];
-                          newRoles[index] = { ...role, gender: e.target.value };
-                          setFormData({ ...formData, actorRoles: newRoles });
-                        }}
-                        className="px-2 py-1 border border-gray-300 rounded text-sm"
-                      >
-                        <option value="未指定">未指定</option>
-                        <option value="男">男</option>
-                        <option value="女">女</option>
-                        <option value="其他">其他</option>
-                      </select>
                       <button
                         type="button"
                         onClick={() => {
@@ -587,7 +578,7 @@ const handleSubmit = async (e: React.FormEvent) => {
               <div>
                 <h3 className="text-lg font-bold">{selectedScript.name}</h3>
                 <p className="text-sm text-gray-500">
-                  ⏱️ {formatDuration(selectedScript.min_duration, selectedScript.max_duration)} · 👤 玩家{selectedScript.player_count || 0}人 · 🎭 卡司{selectedScript.actor_count || 0}人
+                  ⏱️ {formatDuration(selectedScript.min_duration, selectedScript.max_duration)} · 👤 开本{selectedScript.player_count || 0}人 · 🎲 角色库{selectedScript.role_count || selectedScript.player_roles?.length || 0}个 · 🎭 卡司{selectedScript.actor_count || 0}人
                 </p>
               </div>
               <button

@@ -349,7 +349,7 @@ function signedMoneyCents(input: unknown): number {
 }
 
 function buildScheduleProgress(schedule: any, checkins: any[], playerRoles: any[], evaluations: any[] = []) {
-  const targetCount = playerRoles.length || Number(schedule?.player_count || 0) || 0;
+  const targetCount = Number(schedule?.player_count || 0) || playerRoles.length || 0;
   const boardedCount = checkins.length;
   const depositRequired = checkins.filter((item: any) => item.deposit_status !== 'waived' && item.deposit_status !== 'refunded').length;
   const depositReady = checkins.filter((item: any) => ['paid', 'waived'].includes(item.deposit_status || '')).length;
@@ -608,7 +608,7 @@ async function syncScheduleToLingqiCarpool(scheduleId: string, tenantId = TENANT
     subsidy_amount: 0,
     subsidy_discount: null,
     subsidy_note: null,
-    needed_count: Math.min(20, Math.max(1, neededRoles.length || Number(schedule.player_count || 0) || 1)),
+    needed_count: Math.min(20, Math.max(1, Number(schedule.player_count || 0) || neededRoles.length || 1)),
     joined_count: seatedRoles.length || (checkins || []).length,
     leader_contact: cleanText(schedule.customer_phone, 120) || null,
     contact_note: '联系方式来自剧司辰排期，实际公开范围以后台设置为准。',
@@ -1876,7 +1876,8 @@ app.get('/api/scripts', async (req: any, res: any) => {
     for (const s of scripts || []) {
       s.player_roles = (s.script_player_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
       s.actor_roles = (s.script_actor_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
-      s.player_count = s.script_player_roles?.length || 0;
+      s.role_count = s.script_player_roles?.length || 0;
+      s.player_count = Number(s.player_count || s.role_count || 0);
       s.actor_count = s.script_actor_roles?.length || 0;
       s.duration = s.duration_minutes || 0;
       s.min_duration = s.min_duration_hours ? Math.round(s.min_duration_hours * 60) : 0;
@@ -1895,7 +1896,8 @@ app.get('/api/scripts/:id', async (req: any, res: any) => {
     s.player_roles = (s.script_player_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
     s.actor_roles = (s.script_actor_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
     s.skilled_actors = skills || [];
-    s.player_count = s.script_player_roles?.length || 0;
+    s.role_count = s.script_player_roles?.length || 0;
+    s.player_count = Number(s.player_count || s.role_count || 0);
     s.actor_count = s.script_actor_roles?.length || 0;
     s.duration = s.duration_minutes || 0;
     s.min_duration = s.min_duration_hours ? Math.round(s.min_duration_hours * 60) : 0;
@@ -1909,8 +1911,9 @@ app.post('/api/scripts', async (req: any, res: any) => {
   try {
     const { name, minDuration, maxDuration, playerRoles, actorRoles } = req.body;
     if (!name) return res.status(400).json(err(new Error('请填写名称')));
+    const playerCount = Math.max(1, Number(req.body.playerCount || (playerRoles || []).length || 1));
     const { data } = await supabase.from('scripts').insert({
-      name, duration_minutes: minDuration, min_duration_hours: (minDuration || 0) / 60, max_duration_hours: (maxDuration || 0) / 60, tenant_id: currentTenantId(req)
+      name, duration_minutes: minDuration, min_duration_hours: (minDuration || 0) / 60, max_duration_hours: (maxDuration || 0) / 60, player_count: playerCount, tenant_id: currentTenantId(req)
     }).select().single();
     for (const r of playerRoles || []) {
       await supabase.from('script_player_roles').insert({ script_id: data!.id, ...parseRole(r) });
@@ -1930,10 +1933,11 @@ app.post('/api/scripts', async (req: any, res: any) => {
 app.put('/api/scripts/:id', async (req: any, res: any) => {
   try {
     const { name, minDuration, maxDuration, playerRoles, actorRoles } = req.body;
+    const playerCount = Math.max(1, Number(req.body.playerCount || (playerRoles || []).length || 1));
     const tenantId = currentTenantId(req);
     const { data: owned } = await supabase.from('scripts').select('id').eq('id', req.params.id).eq('tenant_id', tenantId).maybeSingle();
     if (!owned) return res.status(404).json(err(new Error('剧本不存在')));
-    await supabase.from('scripts').update({ name, duration_minutes: minDuration, min_duration_hours: (minDuration || 0) / 60, max_duration_hours: (maxDuration || 0) / 60 }).eq('id', req.params.id).eq('tenant_id', tenantId);
+    await supabase.from('scripts').update({ name, duration_minutes: minDuration, min_duration_hours: (minDuration || 0) / 60, max_duration_hours: (maxDuration || 0) / 60, player_count: playerCount }).eq('id', req.params.id).eq('tenant_id', tenantId);
     await supabase.from('script_player_roles').delete().eq('script_id', req.params.id);
     await supabase.from('script_actor_roles').delete().eq('script_id', req.params.id);
     for (const r of playerRoles || []) {
@@ -2058,7 +2062,7 @@ app.post('/api/schedules', async (req: any, res: any) => {
     const dateStr = d.date || (d.startTime ? d.startTime.split('T')[0] : new Date().toISOString().split('T')[0]);
     const startTimeStr = d.timeStart || (d.startTime ? d.startTime.split('T')[1]?.substring(0, 5) : '14:00');
     const endTimeStr = d.timeEnd || (d.endTime ? d.endTime.split('T')[1]?.substring(0, 5) : '17:00');
-    const { data: script } = await supabase.from('scripts').select('id,name').eq('id', d.scriptId).eq('tenant_id', tenantId).maybeSingle();
+    const { data: script } = await supabase.from('scripts').select('id,name,player_count').eq('id', d.scriptId).eq('tenant_id', tenantId).maybeSingle();
     if (!script) return res.status(404).json(err(new Error('剧本不存在')));
     if (d.roomId) {
       const { data: room } = await supabase.from('rooms').select('id').eq('id', d.roomId).eq('tenant_id', tenantId).maybeSingle();
@@ -2071,7 +2075,7 @@ app.post('/api/schedules', async (req: any, res: any) => {
     const { data } = await supabase.from('schedules').insert({
       script_id: d.scriptId, room_id: d.roomId || null,
       scheduled_date: dateStr, start_time: startTimeStr, end_time: endTimeStr,
-      status: d.status || 'pending', player_count: d.playerCount || 0,
+      status: d.status || 'pending', player_count: Number(d.playerCount || script.player_count || 0),
       customer_name: d.customerName || null,
       customer_phone: d.customerPhone || null,
       note: d.note || null,
@@ -2390,7 +2394,7 @@ app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
     const avatar = cleanText(req.body?.avatar, 500);
     if (!name) return res.status(400).json(err(new Error('请填写姓名')));
     const { data: sched } = await supabase.from('schedules')
-      .select('id,tenant_id,script_id,status')
+      .select('id,tenant_id,script_id,status,player_count')
       .eq('id', req.params.id)
       .maybeSingle();
     if (!sched) return res.status(404).json(err(new Error('排期不存在')));
@@ -2418,7 +2422,8 @@ app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
     let full = false;
     if (sched && data) {
       const { count } = await supabase.from('checkins').select('*', { count: 'exact', head: true }).eq('schedule_id', req.params.id);
-      if (validRoles.length && count !== null && count >= validRoles.length) {
+      const targetCount = Number(sched.player_count || validRoles.length || 0);
+      if (targetCount && count !== null && count >= targetCount) {
         await supabase.from('schedules')
           .update({ status: 'scheduled' })
           .eq('id', req.params.id)
@@ -2652,7 +2657,7 @@ app.post('/api/schedules/:id/staff-checkin', async (req: any, res: any) => {
     if (!roleName) return res.status(400).json(err(new Error('请选择角色')));
 
     const { data: schedule, error: scheduleErr } = await supabase.from('schedules')
-      .select('id, tenant_id, script_id')
+      .select('id, tenant_id, script_id, player_count')
       .eq('id', req.params.id)
       .eq('tenant_id', tenantId)
       .maybeSingle();
@@ -2685,7 +2690,8 @@ app.post('/api/schedules/:id/staff-checkin', async (req: any, res: any) => {
     const { data: allRoles } = await supabase.from('script_player_roles').select('id').eq('script_id', schedule.script_id);
     const { count } = await supabase.from('checkins').select('*', { count: 'exact', head: true }).eq('schedule_id', schedule.id);
     let full = false;
-    if (allRoles && count !== null && count >= allRoles.length) {
+    const targetCount = Number(schedule.player_count || allRoles?.length || 0);
+    if (targetCount && count !== null && count >= targetCount) {
       await supabase.from('schedules').update({ status: 'scheduled' }).eq('id', schedule.id).eq('tenant_id', tenantId);
       full = true;
     }
@@ -2792,7 +2798,7 @@ app.post('/api/player/join-schedules/:id/requests', async (req: any, res: any) =
     if (!player) return res.status(401).json(err(new Error('玩家账号不存在，请重新登录')));
 
     const { data: schedule, error: scheduleErr } = await supabase.from('schedules')
-      .select('id, tenant_id, script_id')
+      .select('id, tenant_id, script_id, player_count')
       .eq('id', req.params.id)
       .maybeSingle();
     if (scheduleErr) throw scheduleErr;
@@ -3305,10 +3311,15 @@ app.post('/api/customers/:id/transactions', async (req: any, res: any) => {
       return res.status(400).json(err(new Error('交易类型无效')));
     }
 
+    const scheduleId = cleanText(req.body?.scheduleId, 80) || null;
+    if (scheduleId) {
+      const { data: schedule } = await supabase.from('schedules').select('id').eq('id', scheduleId).eq('tenant_id', tenantId).maybeSingle();
+      if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
+    }
     await supabase.from('customers').update(updates).eq('id', customer.id).eq('tenant_id', tenantId);
     const { data, error } = await supabase.from('membership_transactions').insert({
       customer_id: customer.id,
-      schedule_id: cleanText(req.body?.scheduleId, 80) || null,
+      schedule_id: scheduleId,
       amount,
       transaction_type: transactionType,
       note: cleanText(req.body?.note, 300) || null,
@@ -3355,7 +3366,7 @@ app.get('/api/conflicts/pending', async (req: any, res: any) => {
   try {
     const tenantId = currentTenantId(req);
     const { data } = await supabase.from('conflict_records')
-      .select('*, customers!inner(name), actors!inner(name)')
+      .select('*, customers(name), actors(name), schedules(script_id, scheduled_date, start_time, scripts(name))')
       .eq('tenant_id', tenantId)
       .eq('status', 'pending')
       .order('conflict_date', { ascending: false });
@@ -3366,16 +3377,46 @@ app.get('/api/conflicts/pending', async (req: any, res: any) => {
 app.post('/api/conflicts', async (req: any, res: any) => {
   try {
     const tenantId = currentTenantId(req);
+    const scheduleId = cleanText(req.body.scheduleId, 80) || null;
+    const customerId = cleanText(req.body.customerId, 80) || null;
+    const actorId = cleanText(req.body.actorId, 80) || null;
+    if (scheduleId) {
+      const { data: schedule } = await supabase.from('schedules').select('id').eq('id', scheduleId).eq('tenant_id', tenantId).maybeSingle();
+      if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
+    }
+    if (customerId) {
+      const { data: customer } = await supabase.from('customers').select('id').eq('id', customerId).eq('tenant_id', tenantId).maybeSingle();
+      if (!customer) return res.status(404).json(err(new Error('客户不存在')));
+    }
+    if (actorId) {
+      const { data: actor } = await supabase.from('actors').select('id').eq('id', actorId).eq('tenant_id', tenantId).maybeSingle();
+      if (!actor) return res.status(404).json(err(new Error('卡司不存在')));
+    }
     const { data } = await supabase.from('conflict_records').insert({
       tenant_id: tenantId,
-      schedule_id: req.body.scheduleId,
-      customer_id: req.body.customerId,
-      actor_id: req.body.actorId,
+      schedule_id: scheduleId,
+      customer_id: customerId,
+      actor_id: actorId,
       conflict_type: cleanText(req.body.conflictType, 40),
       conflict_description: cleanText(req.body.conflictDescription, 1000),
-      conflict_date: req.body.conflictDate,
+      conflict_date: req.body.conflictDate || new Date().toISOString(),
       status: 'pending'
     }).select().single();
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+app.post('/api/conflicts/:id/resolve', async (req: any, res: any) => {
+  try {
+    const tenantId = currentTenantId(req);
+    const { data, error } = await supabase.from('conflict_records').update({
+      resolution: cleanText(req.body.resolution, 1000) || null,
+      resolved_by: cleanText(req.body.resolved_by, 80) || null,
+      resolved_at: new Date().toISOString(),
+      status: cleanText(req.body.status, 30) || 'resolved',
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id).eq('tenant_id', tenantId).select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json(err(new Error('矛盾记录不存在')));
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
