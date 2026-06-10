@@ -656,7 +656,7 @@ function TemplateCenterPanel() {
         <div>
           <h2 className="text-xl font-bold text-gray-900">公共剧本模板中心</h2>
           <p className="text-sm text-gray-500 mt-1">店家新建剧本后会自动生成主库候选；超管审核通过后，其他店家才可从公共模板库一键导入。</p>
-          {message && <p className="mt-3 text-sm text-red-600">{message}</p>}
+          {message && <p className={`mt-3 text-sm ${message.includes('失败') ? 'text-red-600' : 'text-emerald-600'}`}>{message}</p>}
         </div>
         <div className="flex shrink-0 gap-2">
           <button onClick={syncExistingScripts} disabled={loading} className="px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-sm hover:bg-emerald-100 disabled:opacity-50">
@@ -1029,6 +1029,7 @@ function FeedbackInboxPanel() {
   const { get, put, loading } = useApi();
   const [items, setItems] = useState<FeedbackMessageRow[]>([]);
   const [message, setMessage] = useState('');
+  const [savedId, setSavedId] = useState('');
   const [editing, setEditing] = useState<Record<string, { status: string; reply: string }>>({});
 
   const loadFeedback = async () => {
@@ -1055,6 +1056,8 @@ function FeedbackInboxPanel() {
       setMessage(result.error || '保存失败');
       return;
     }
+    setSavedId(item.id);
+    setMessage(draft.reply.trim() ? '已回复店家，店家可在建议反馈页查看。' : '处理状态已保存。');
     await loadFeedback();
   };
 
@@ -1064,7 +1067,7 @@ function FeedbackInboxPanel() {
         <div>
           <h2 className="text-xl font-bold text-gray-900">站内信 / 建议反馈</h2>
           <p className="mt-1 text-sm text-gray-500">查看店家提交的问题和建议，并在这里回复处理结果。</p>
-          {message && <p className="mt-3 text-sm text-red-600">{message}</p>}
+          {message && <p className={`mt-3 text-sm ${message.includes('失败') ? 'text-red-600' : 'text-emerald-600'}`}>{message}</p>}
         </div>
         <button onClick={loadFeedback} disabled={loading} className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">刷新</button>
       </div>
@@ -1091,9 +1094,17 @@ function FeedbackInboxPanel() {
                 </select>
               </div>
               <p className="mt-4 whitespace-pre-wrap text-sm text-gray-700">{item.content}</p>
-              <textarea value={draft.reply} onChange={e => setEditing({ ...editing, [item.id]: { ...draft, reply: e.target.value } })} placeholder="回复店家，店家会在建议反馈页看到。" className="mt-4 h-24 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
-              <div className="mt-3 flex justify-end">
-                <button onClick={() => save(item)} disabled={loading} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50">保存处理结果</button>
+              {item.reply && (
+                <div className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  <p className="font-medium">已回复店家</p>
+                  <p className="mt-1 whitespace-pre-wrap">{item.reply}</p>
+                  {item.replied_at && <p className="mt-1 text-xs text-emerald-600">回复时间：{new Date(item.replied_at).toLocaleString('zh-CN')}</p>}
+                </div>
+              )}
+              <textarea value={draft.reply} onChange={e => setEditing({ ...editing, [item.id]: { ...draft, reply: e.target.value } })} placeholder="输入给店家的回复，保存后店家会在建议反馈页看到。" className="mt-3 h-20 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="text-xs text-gray-400">{savedId === item.id ? '刚刚已保存' : draft.reply.trim() ? '将作为平台回复展示给店家' : '未填写回复时仅保存处理状态'}</span>
+                <button onClick={() => save(item)} disabled={loading} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50">{draft.reply.trim() ? '回复并保存' : '保存状态'}</button>
               </div>
             </div>
           );
