@@ -951,44 +951,30 @@ export default function ScheduleCalendar() {
             ) : (
               <div className="space-y-2">
                 {financeRows.map((row, index) => (
-                  <div key={row.id} className="rounded-lg border border-slate-100 p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${row.deposit_status === 'paid' ? 'bg-amber-500 text-white' : row.deposit_status === 'refunded' ? 'bg-slate-200 text-slate-500' : 'bg-indigo-50 text-indigo-600'}`}>
-                          {avatarText(row.guest_name)}
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium text-slate-900">{row.guest_name || '未命名'} <span className="text-xs font-normal text-slate-400">{row.role || '-'}</span></p>
-                          <p className="mt-0.5 text-[11px] text-slate-400">
-                            定金 {row.deposit_status === 'paid' ? `已收 ¥${row.deposit_amount || 0}` : row.deposit_status === 'waived' ? '免定金' : row.deposit_status === 'refunded' ? '已退' : '未收'} · 结算 {row.settlement_status === 'settled' ? '已结' : '待结'}
-                          </p>
-                        </div>
-                      </div>
-                      {financeMode === 'settlement' && (
-                        <button
-                          type="button"
-                          onClick={() => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, settlement_status: r.settlement_status === 'settled' ? 'unsettled' : 'settled' } : r))}
-                          className={`rounded-full px-3 py-1 text-xs font-medium ${row.settlement_status === 'settled' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}
-                        >
-                          {row.settlement_status === 'settled' ? '已结清' : '标记结清'}
-                        </button>
-                      )}
-                    </div>
-
+                  <div key={row.id} className={financeMode === 'deposit' ? 'rounded-lg border border-slate-100 px-2.5 py-2' : 'rounded-lg border border-slate-100 p-3'}>
                     {financeMode === 'deposit' ? (
-                      <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[192px_92px_132px_96px] md:items-center">
-                        <div className="grid grid-cols-4 gap-1.5">
+                      <div className="grid grid-cols-1 gap-2 md:grid-cols-[120px_176px_86px_126px_82px] md:items-center">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${row.deposit_status === 'paid' ? 'bg-amber-500 text-white' : row.deposit_status === 'refunded' ? 'bg-slate-200 text-slate-500' : 'bg-indigo-50 text-indigo-600'}`}>
+                            {avatarText(row.guest_name)}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-slate-900">{row.guest_name || '未命名'}</p>
+                            <p className="truncate text-[11px] text-slate-400">{row.role || '-'}</p>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-4 gap-1">
                           {[
                             ['unpaid', '未收'],
                             ['paid', '已收'],
-                            ['waived', '免定金'],
-                            ['refunded', '已退'],
+                            ['waived', '免'],
+                            ['refunded', '退'],
                           ].map(([value, label]) => (
                             <button
                               key={value}
                               type="button"
                               onClick={() => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_status: value } : r))}
-                              className={`rounded-lg px-1.5 py-1.5 text-xs font-medium ${row.deposit_status === value ? 'bg-amber-500 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                              className={`rounded-md px-1 py-1 text-[11px] font-medium ${row.deposit_status === value ? 'bg-amber-500 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
                             >
                               {label}
                             </button>
@@ -999,14 +985,14 @@ export default function ScheduleCalendar() {
                           min="0"
                           value={row.deposit_amount}
                           onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_amount: e.target.value } : r))}
-                          className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm"
+                          className="h-8 rounded-md border border-slate-200 px-2 text-sm"
                           placeholder="金额"
                         />
                         <input
                           type="text"
                           value={row.deposit_payer_name || ''}
                           onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_payer_name: e.target.value } : r))}
-                          className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm"
+                          className="h-8 rounded-md border border-slate-200 px-2 text-sm"
                           placeholder="付款人"
                         />
                         <button
@@ -1017,66 +1003,73 @@ export default function ScheduleCalendar() {
                             deposit_amount: Number(r.deposit_amount || defaultDepositAmount),
                             deposit_payer_name: row.guest_name || row.deposit_payer_name || '车头',
                           })))}
-                          className="rounded-lg bg-orange-50 px-2.5 py-1.5 text-xs font-medium text-orange-700 hover:bg-orange-100"
+                          className="h-8 rounded-md bg-orange-50 px-2 text-xs font-medium text-orange-700 hover:bg-orange-100"
                         >
-                          代付全车
+                          代付
                         </button>
                       </div>
                     ) : (
-                      <div className="mt-3 space-y-3">
-                        <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 gap-2 md:grid-cols-[120px_128px_86px_1fr_76px] md:items-center">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${row.settlement_status === 'settled' ? 'bg-emerald-500 text-white' : 'bg-indigo-50 text-indigo-600'}`}>
+                            {avatarText(row.guest_name)}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-slate-900">{row.guest_name || '未命名'}</p>
+                            <p className="truncate text-[11px] text-slate-400">{row.role || '-'}</p>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-1">
                           {[
-                            ['deduct_final', '定金抵尾款'],
-                            ['refund_after_full', '全款后退定金'],
+                            ['deduct_final', '抵尾款'],
+                            ['refund_after_full', '退定金'],
                           ].map(([value, label]) => (
                             <button
                               key={value}
                               type="button"
                               onClick={() => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_settlement_mode: value } : r))}
-                              className={`rounded-lg px-3 py-2 text-xs font-medium ${row.deposit_settlement_mode === value ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'}`}
+                              className={`rounded-md px-1 py-1 text-[11px] font-medium ${row.deposit_settlement_mode === value ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'}`}
                             >
                               {label}
                             </button>
                           ))}
                         </div>
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-[140px_1fr]">
-                          <div>
-                            <label className="mb-1 block text-xs text-slate-500">{row.deposit_settlement_mode === 'refund_after_full' ? '全款实收' : '补齐尾款'}</label>
-                            <input
-                              type="number"
-                              min="0"
-                              value={row.final_amount}
-                              onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, final_amount: e.target.value } : r))}
-                              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                              placeholder={row.deposit_settlement_mode === 'refund_after_full' ? '全款' : '尾款'}
-                            />
-                          </div>
-                          <div className="grid grid-cols-4 gap-2 md:grid-cols-7">
+                        <input
+                          type="number"
+                          min="0"
+                          value={row.final_amount}
+                          onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, final_amount: e.target.value } : r))}
+                          className="h-8 rounded-md border border-slate-200 px-2 text-sm"
+                          placeholder={row.deposit_settlement_mode === 'refund_after_full' ? '全款' : '尾款'}
+                        />
+                        <div className="grid grid-cols-7 gap-1">
                           {[
-                            ['card', '扣卡'],
-                            ['cash', '现金'],
-                            ['wechat', '微信'],
-                            ['alipay', '支付宝'],
+                            ['card', '卡'],
+                            ['cash', '现'],
+                            ['wechat', '微'],
+                            ['alipay', '支'],
                             ['coupon', '券'],
-                            ['free', '免单'],
-                            ['other', '其他'],
+                            ['free', '免'],
+                            ['other', '其'],
                           ].map(([value, label]) => (
                             <button
                               key={value}
                               type="button"
+                              title={paymentMethodText[value] || label}
                               onClick={() => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, final_payment_method: value, settlement_status: value === 'free' ? 'settled' : r.settlement_status } : r))}
-                              className={`rounded-lg px-2 py-2 text-xs font-medium ${row.final_payment_method === value ? 'bg-emerald-600 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                              className={`rounded-md px-1 py-1 text-[11px] font-medium ${row.final_payment_method === value ? 'bg-emerald-600 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
                             >
                               {label}
                             </button>
                           ))}
-                          </div>
                         </div>
-                        <p className="text-xs text-slate-400">
-                          {row.deposit_settlement_mode === 'refund_after_full'
-                            ? '先按全款完成结算，标记结清后这笔定金会记录为已退。'
-                            : '默认用已收定金抵扣总价，这里只填补齐的尾款。'}
-                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, settlement_status: r.settlement_status === 'settled' ? 'unsettled' : 'settled' } : r))}
+                          className={`h-8 rounded-md px-2 text-xs font-medium ${row.settlement_status === 'settled' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}
+                        >
+                          {row.settlement_status === 'settled' ? '已结' : '待结'}
+                        </button>
                       </div>
                     )}
                   </div>
