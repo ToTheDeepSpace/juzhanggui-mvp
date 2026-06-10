@@ -1030,6 +1030,7 @@ function FeedbackInboxPanel() {
   const [items, setItems] = useState<FeedbackMessageRow[]>([]);
   const [message, setMessage] = useState('');
   const [savedId, setSavedId] = useState('');
+  const [savingId, setSavingId] = useState('');
   const [editing, setEditing] = useState<Record<string, { status: string; reply: string }>>({});
 
   const loadFeedback = async () => {
@@ -1051,14 +1052,21 @@ function FeedbackInboxPanel() {
 
   const save = async (item: FeedbackMessageRow) => {
     const draft = editing[item.id] || { status: item.status, reply: item.reply || '' };
-    const result = await put(`/platform/feedback/${item.id}`, draft);
+    const hasReply = !!draft.reply.trim();
+    const status = hasReply && ['new', 'processing'].includes(draft.status) ? 'resolved' : draft.status;
+    setSavingId(item.id);
+    const result = await put<FeedbackMessageRow>(`/platform/feedback/${item.id}`, { ...draft, status });
+    setSavingId('');
     if (!result.success) {
       setMessage(result.error || '保存失败');
       return;
     }
+    const now = new Date().toISOString();
+    const updatedItem = result.data || { ...item, status, reply: draft.reply, replied_at: hasReply ? now : item.replied_at };
+    setItems(current => current.map(row => row.id === item.id ? { ...row, ...updatedItem, store: row.store, admin: row.admin } : row));
+    setEditing(current => ({ ...current, [item.id]: { status: updatedItem.status || status, reply: updatedItem.reply || draft.reply } }));
     setSavedId(item.id);
-    setMessage(draft.reply.trim() ? '已回复店家，店家可在建议反馈页查看。' : '处理状态已保存。');
-    await loadFeedback();
+    setMessage(hasReply ? '已回复店家，店家可在建议反馈页查看。' : '处理状态已保存。');
   };
 
   return (
@@ -1104,7 +1112,7 @@ function FeedbackInboxPanel() {
               <textarea value={draft.reply} onChange={e => setEditing({ ...editing, [item.id]: { ...draft, reply: e.target.value } })} placeholder="输入给店家的回复，保存后店家会在建议反馈页看到。" className="mt-3 h-20 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
               <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="text-xs text-gray-400">{savedId === item.id ? '刚刚已保存' : draft.reply.trim() ? '将作为平台回复展示给店家' : '未填写回复时仅保存处理状态'}</span>
-                <button onClick={() => save(item)} disabled={loading} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50">{draft.reply.trim() ? '回复并保存' : '保存状态'}</button>
+                <button onClick={() => save(item)} disabled={loading || savingId === item.id} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50">{savingId === item.id ? '保存中...' : draft.reply.trim() ? '回复并保存' : '保存状态'}</button>
               </div>
             </div>
           );
