@@ -153,7 +153,7 @@ export default function ScheduleCalendar() {
   };
 
   const openEndModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
-    e.stopPropagation(); setEndingSchedule(schedule); setEndType('normal'); setEndNote(''); setShowEndModal(true);
+    e.stopPropagation(); setEndingSchedule(schedule); setEndType('normal'); setEndNote(''); setConflictDesc(''); setConflictType('other_conflict'); setShowConflict(false); setShowEndModal(true);
   };
 
   const openStartModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
@@ -327,7 +327,7 @@ export default function ScheduleCalendar() {
         return;
       }
     } else {
-      const cancelStatus = endType === 'bomb' ? 'bombed' : endType === 'flow' ? 'cancelled' : 'issue';
+      const cancelStatus = endType === 'bomb' ? 'bombed' : 'cancelled';
       const result = await put(`/schedules/${endingSchedule.id}/cancel`, { status: cancelStatus, note: endNote });
       if (!result.success) {
         alert(result.error || '收尾确认失败');
@@ -335,9 +335,9 @@ export default function ScheduleCalendar() {
         return;
       }
     }
-    const issueDesc = endType === 'other' ? (conflictDesc.trim() || endNote.trim() || '其他问题待处理') : conflictDesc.trim();
-    if ((showConflict || endType === 'other') && issueDesc) {
-      await post('/conflicts', { scheduleId: endingSchedule.id, conflictType: endType === 'other' ? 'other_conflict' : conflictType, conflictDescription: issueDesc, conflictDate: new Date().toISOString() });
+    const issueDesc = conflictDesc.trim();
+    if (showConflict && issueDesc) {
+      await post('/conflicts', { scheduleId: endingSchedule.id, conflictType, conflictDescription: issueDesc, conflictDate: new Date().toISOString() });
     }
     setShowEndModal(false); setEndSubmitting(false); loadData();
   };
@@ -1258,67 +1258,69 @@ export default function ScheduleCalendar() {
         </div>
       )}
 
-      {/* 收尾确认弹窗 */}
       {showEndModal && endingSchedule && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-2xl w-full mx-4 max-h-[85vh] overflow-y-auto">
-            <h3 className="text-lg font-bold text-gray-900">本车收尾确认</h3>
-            <p className="mt-1 text-sm text-gray-500">记录本车开本结果、玩家评价和补充说明。结算收款仍在下一步单独处理。</p>
-            <section className="mt-5 rounded-xl border border-gray-100 p-4">
-              <h4 className="text-sm font-semibold text-gray-900">1. 选择本车结果</h4>
-              <label className={`mt-3 flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 ${endType === 'normal' ? 'border-green-400 bg-green-50' : 'border-gray-200'}`}>
-                <input type="radio" name="endType" value="normal" checked={endType === 'normal'} onChange={e => setEndType(e.target.value)} className="mt-0.5" />
-                <div><span className="text-sm font-medium text-gray-900">✅ 正常开完</span><p className="text-xs text-gray-400">剧本顺利开完，准备收评价和结算</p></div>
-              </label>
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                {[
-                  { value: 'bomb', label: '💥 炸车', desc: '开本中途终止' },
-                  { value: 'flow', label: '🚫 流车', desc: '未成功开本' },
-                  { value: 'other', label: '❓ 其他问题', desc: '设备/客诉等' },
-                ].map(opt => (
-                  <label key={opt.value} className={`flex flex-col items-center gap-1 p-3 border rounded-lg cursor-pointer hover:bg-gray-50 text-center ${endType === opt.value ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200'}`}>
-                    <input type="radio" name="endType" value={opt.value} checked={endType === opt.value} onChange={e => setEndType(e.target.value)} className="sr-only" />
-                    <span className="text-lg">{opt.label.split(' ')[0]}</span>
-                    <span className="text-xs font-medium text-gray-900">{opt.label.replace(/^\S+\s*/, '')}</span>
-                    <span className="text-[10px] text-gray-400">{opt.desc}</span>
-                  </label>
-                ))}
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-3">
+          <div className="bg-white rounded-xl p-4 max-w-3xl w-full mx-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">本车收尾确认</h3>
+                <p className="mt-0.5 text-xs text-gray-500">确认开本结果、评价二维码和异常记录。结算收款在下一步处理。</p>
               </div>
-              {endType === 'flow' && (
-                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                  流车前必须先确认所有已收定金都已退款。若还有玩家定金状态为“已收”，系统会拒绝确认流车。
+              <button onClick={() => setShowEndModal(false)} className="rounded-full px-2 py-1 text-xs text-gray-400 hover:bg-gray-100">关闭</button>
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-[1.15fr_0.85fr]">
+              <section className="rounded-xl border border-gray-100 p-3">
+                <h4 className="text-sm font-semibold text-gray-900">开本结果</h4>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  {[
+                    { value: 'normal', label: '✅ 正常', desc: '进入结算' },
+                    { value: 'bomb', label: '💥 炸车', desc: '中途终止' },
+                    { value: 'flow', label: '🚫 流车', desc: '未开成' },
+                  ].map(opt => (
+                    <label key={opt.value} className={`flex cursor-pointer flex-col items-center gap-0.5 rounded-lg border p-2 text-center hover:bg-gray-50 ${endType === opt.value ? 'border-indigo-400 bg-indigo-50' : 'border-gray-200'}`}>
+                      <input type="radio" name="endType" value={opt.value} checked={endType === opt.value} onChange={e => setEndType(e.target.value)} className="sr-only" />
+                      <span className="text-xs font-medium text-gray-900">{opt.label}</span>
+                      <span className="text-[10px] text-gray-400">{opt.desc}</span>
+                    </label>
+                  ))}
                 </div>
-              )}
-            </section>
-            <section className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-4 text-center">
-              <h4 className="text-sm font-semibold text-blue-900">2. 玩家评价</h4>
-              <p className="mt-1 text-xs text-blue-600">让玩家扫码评价本次体验，也可以复制链接发到群里。</p>
-              <div className="mt-3 inline-block rounded-lg bg-white p-3">
-                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(window.location.origin + '/evaluate/' + endingSchedule.id)}`} alt="评价二维码" className="w-36 h-36" />
-              </div>
-              <button onClick={() => navigator.clipboard.writeText(window.location.origin + '/evaluate/' + endingSchedule.id)} className="mt-2 block w-full text-xs text-blue-600 hover:underline">复制评价链接</button>
-            </section>
-            <section className="mt-4 rounded-xl border border-gray-100 p-4">
-              <h4 className="text-sm font-semibold text-gray-900">3. 补充记录</h4>
-              <textarea value={endNote} onChange={e => setEndNote(e.target.value)} placeholder="备注说明（可选）" className="mt-3 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm h-16 resize-none focus:outline-none focus:border-indigo-400" />
-              {!showConflict ? (
-                <button onClick={() => setShowConflict(true)} className="mt-3 w-full py-2 border border-dashed border-red-300 text-red-500 rounded-lg text-sm hover:bg-red-50 transition-colors">有异常或矛盾需要记录</button>
-              ) : (
-                <div className="mt-3 bg-red-50 rounded-lg p-4 space-y-3">
-                  <div className="flex items-center justify-between"><span className="text-sm font-medium text-red-800">异常 / 矛盾记录</span><button onClick={() => setShowConflict(false)} className="text-xs text-gray-400 hover:text-gray-600">收起</button></div>
-                  <select value={conflictType} onChange={e => setConflictType(e.target.value)} className="w-full px-3 py-2 border border-red-200 rounded-lg text-sm">
-                    <option value="service_attitude">服务态度</option>
-                    <option value="performance">演绎效果</option>
-                    <option value="communication">沟通问题</option>
-                    <option value="other_conflict">其他</option>
-                  </select>
-                  <textarea value={conflictDesc} onChange={e => setConflictDesc(e.target.value)} placeholder="描述异常或矛盾情况..." className="w-full px-3 py-2 border border-red-200 rounded-lg text-sm h-16 resize-none focus:outline-none" />
+                {endType === 'flow' && (
+                  <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">流车前必须确认已收定金都已退款。</div>
+                )}
+                <div className="mt-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-semibold text-gray-900">补充记录</h4>
+                    <label className="flex items-center gap-1.5 text-xs text-red-600">
+                      <input type="checkbox" checked={showConflict} onChange={e => setShowConflict(e.target.checked)} />
+                      异常/矛盾
+                    </label>
+                  </div>
+                  <textarea value={endNote} onChange={e => setEndNote(e.target.value)} placeholder="备注说明（可选）" className="mt-2 h-14 w-full resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none" />
+                  {showConflict && (
+                    <div className="mt-2 grid gap-2 rounded-lg bg-red-50 p-2 md:grid-cols-[132px_1fr]">
+                      <select value={conflictType} onChange={e => setConflictType(e.target.value)} className="rounded-lg border border-red-200 px-2 py-1.5 text-sm">
+                        <option value="other_conflict">其他问题</option>
+                        <option value="service_attitude">服务态度</option>
+                        <option value="performance">演绎效果</option>
+                        <option value="communication">沟通问题</option>
+                      </select>
+                      <textarea value={conflictDesc} onChange={e => setConflictDesc(e.target.value)} placeholder="描述异常或矛盾情况..." className="h-16 resize-none rounded-lg border border-red-200 px-2 py-1.5 text-sm focus:outline-none" />
+                    </div>
+                  )}
                 </div>
-              )}
-            </section>
-            <div className="mt-5 flex gap-2">
-              <button onClick={() => setShowEndModal(false)} className="flex-1 py-2.5 border border-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-50">取消</button>
-              <button onClick={handleEndSubmit} disabled={endSubmitting} className="flex-1 py-2.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50">{endSubmitting ? '处理中...' : '确认收尾'}</button>
+              </section>
+              <section className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-center">
+                <h4 className="text-sm font-semibold text-blue-900">玩家评价</h4>
+                <p className="mt-0.5 text-xs text-blue-600">扫码评价或复制链接发群。</p>
+                <div className="mt-2 inline-block rounded-lg bg-white p-2">
+                  <img src={`https://api.qrserver.com/v1/create-qr-code/?size=128x128&data=${encodeURIComponent(window.location.origin + '/evaluate/' + endingSchedule.id)}`} alt="评价二维码" className="h-32 w-32" />
+                </div>
+                <button onClick={() => navigator.clipboard.writeText(window.location.origin + '/evaluate/' + endingSchedule.id)} className="mt-2 block w-full text-xs text-blue-600 hover:underline">复制评价链接</button>
+              </section>
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button onClick={() => setShowEndModal(false)} className="flex-1 rounded-lg border border-gray-200 py-2 text-sm text-gray-600 hover:bg-gray-50">取消</button>
+              <button onClick={handleEndSubmit} disabled={endSubmitting} className="flex-1 rounded-lg bg-gray-900 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50">{endSubmitting ? '处理中...' : '确认收尾'}</button>
             </div>
           </div>
         </div>
