@@ -100,12 +100,11 @@ const PUBLIC_PATHS = [
   '/api/dm/login',
   '/api/dm/send-code',
 ];
-const PUBLIC_SUFFIXES = ['/public', '/checkin', '/evaluate', '/evaluation-stats'];
+const PUBLIC_SUFFIXES = ['/public', '/checkin', '/evaluate'];
 
 function isPublicPath(path: string): boolean {
   if (PUBLIC_PATHS.includes(path)) return true;
   for (const s of PUBLIC_SUFFIXES) if (path.endsWith(s)) return true;
-  if (path.includes('/scripts/') && (path.endsWith('/evaluations') || path.endsWith('/evaluation-stats'))) return true;
   return false;
 }
 
@@ -147,6 +146,26 @@ function cleanText(input: unknown, max = 120): string {
 }
 function currentTenantId(req: any): string {
   return cleanText(req?.user?.tenantId, 80) || TENANT_ID;
+}
+async function requireTenantSchedule(req: any, res: any, scheduleId: string, select = 'id, tenant_id') {
+  const { data, error } = await supabase.from('schedules').select(select).eq('id', scheduleId).eq('tenant_id', currentTenantId(req)).maybeSingle();
+  if (error) throw error;
+  if (!data) {
+    res.status(404).json(err(new Error('排期不存在')));
+    return null;
+  }
+  return data;
+}
+async function validateTenantActors(req: any, res: any, actorIds: string[]) {
+  const ids = Array.from(new Set(actorIds.map(id => cleanText(id, 80)).filter(Boolean)));
+  if (!ids.length) return true;
+  const { data, error } = await supabase.from('actors').select('id').in('id', ids).eq('tenant_id', currentTenantId(req));
+  if (error) throw error;
+  if ((data || []).length !== ids.length) {
+    res.status(404).json(err(new Error('存在不属于当前店家的卡司')));
+    return false;
+  }
+  return true;
 }
 async function tenantIdFromRequest(req: any): Promise<string> {
   const direct = cleanText(req?.body?.tenantId || req?.query?.tenantId, 80);
@@ -910,6 +929,26 @@ async function logPlatformAction(req: any, action: string, target?: { type?: str
     console.warn('[platform-audit-log-failed]', err(logErr).error);
   }
 }
+async function logStoreAction(req: any, action: string, target?: { type?: string; id?: unknown; label?: unknown }, detail?: Record<string, any>) {
+  try {
+    const actor = await getAdminUserById(req.user?.adminUserId);
+    await supabase.from('jzg_store_operation_logs').insert({
+      tenant_id: currentTenantId(req),
+      actor_admin_user_id: actor?.id || null,
+      actor_email: actor?.email || req.user?.email || null,
+      actor_role: actor?.role || req.user?.adminRole || null,
+      action,
+      target_type: target?.type || null,
+      target_id: target?.id ? String(target.id) : null,
+      target_label: target?.label ? String(target.label) : null,
+      detail: detail || {},
+      ip_address: getClientIp(req),
+      user_agent: getUserAgent(req),
+    });
+  } catch (logErr) {
+    console.warn('[store-operation-log-failed]', err(logErr).error);
+  }
+}
 async function getStoreMapByIds(ids: unknown[]) {
   const uniqueIds = Array.from(new Set(ids.map(id => cleanText(id, 80)).filter(Boolean)));
   if (uniqueIds.length === 0) return new Map<string, any>();
@@ -1527,6 +1566,19 @@ app.get('/api/platform/audit-logs', async (req: any, res: any) => {
   } catch (e) { res.status(500).json(err(e)); }
 });
 
+app.get('/api/operation-logs', async (req: any, res: any) => {
+  try {
+    const { data, error } = await supabase.from('jzg_store_operation_logs')
+      .select('*')
+      .eq('tenant_id', currentTenantId(req))
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error && String(error.message || '').includes('jzg_store_operation_logs')) return res.json(ok([]));
+    if (error) throw error;
+    res.json(ok(data || []));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
 app.get('/api/platform/feedback', async (req: any, res: any) => {
   try {
     if (!requireSuperAdmin(req, res)) return;
@@ -2006,6 +2058,16 @@ app.post('/api/schedules', async (req: any, res: any) => {
     const dateStr = d.date || (d.startTime ? d.startTime.split('T')[0] : new Date().toISOString().split('T')[0]);
     const startTimeStr = d.timeStart || (d.startTime ? d.startTime.split('T')[1]?.substring(0, 5) : '14:00');
     const endTimeStr = d.timeEnd || (d.endTime ? d.endTime.split('T')[1]?.substring(0, 5) : '17:00');
+    const { data: script } = await supabase.from('scripts').select('id,name').eq('id', d.scriptId).eq('tenant_id', tenantId).maybeSingle();
+    if (!script) return res.status(404).json(err(new Error('剧本不存在')));
+    if (d.roomId) {
+      const { data: room } = await supabase.from('rooms').select('id').eq('id', d.roomId).eq('tenant_id', tenantId).maybeSingle();
+      if (!room) return res.status(404).json(err(new Error('房间不存在')));
+    }
+    if (d.actors?.length) {
+      const actorsValid = await validateTenantActors(req, res, d.actors.map((a: any) => a.actorId));
+      if (!actorsValid) return;
+    }
     const { data } = await supabase.from('schedules').insert({
       script_id: d.scriptId, room_id: d.roomId || null,
       scheduled_date: dateStr, start_time: startTimeStr, end_time: endTimeStr,
@@ -2022,6 +2084,7 @@ app.post('/api/schedules', async (req: any, res: any) => {
     } catch (syncErr) {
       lingqiSync = { ok: false, skipped: false, reason: err(syncErr).error };
     }
+    await logStoreAction(req, 'schedule_created', { type: 'schedule', id: data?.id, label: script.name }, { date: dateStr, startTime: startTimeStr, endTime: endTimeStr });
     res.json(ok({ ...data, lingqi_sync: lingqiSync }));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -2033,8 +2096,18 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
     if (!owned) return res.status(404).json(err(new Error('排期不存在')));
     if (['completed', 'cancelled', 'bombed', 'issue'].includes(owned.status)) return res.status(400).json(err(new Error('历史记录已归档，不能修改车次核心信息')));
     const fields: any = {};
-    if (d.scriptId !== undefined) fields.script_id = d.scriptId;
-    if (d.roomId !== undefined) fields.room_id = d.roomId;
+    if (d.scriptId !== undefined) {
+      const { data: script } = await supabase.from('scripts').select('id').eq('id', d.scriptId).eq('tenant_id', tenantId).maybeSingle();
+      if (!script) return res.status(404).json(err(new Error('剧本不存在')));
+      fields.script_id = d.scriptId;
+    }
+    if (d.roomId !== undefined) {
+      if (d.roomId) {
+        const { data: room } = await supabase.from('rooms').select('id').eq('id', d.roomId).eq('tenant_id', tenantId).maybeSingle();
+        if (!room) return res.status(404).json(err(new Error('房间不存在')));
+      }
+      fields.room_id = d.roomId;
+    }
     if (d.startTime) {
       fields.scheduled_date = d.date || d.startTime.split('T')[0];
       fields.start_time = d.timeStart || d.startTime.split('T')[1]?.substring(0, 5);
@@ -2052,6 +2125,8 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
     if (d.note !== undefined) fields.note = d.note;
     await supabase.from('schedules').update(fields).eq('id', req.params.id).eq('tenant_id', tenantId);
     if (d.actors) {
+      const actorsValid = await validateTenantActors(req, res, d.actors.map((a: any) => a.actorId));
+      if (!actorsValid) return;
       await supabase.from('schedule_actors').delete().eq('schedule_id', req.params.id);
       if (d.actors.length) await supabase.from('schedule_actors').insert(d.actors.map((a: any) => ({ schedule_id: req.params.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime })));
     }
@@ -2061,6 +2136,7 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
     } catch (syncErr) {
       lingqiSync = { ok: false, skipped: false, reason: err(syncErr).error };
     }
+    await logStoreAction(req, 'schedule_updated', { type: 'schedule', id: req.params.id }, { fields: Object.keys(fields), lingqiSync });
     res.json(ok({ lingqi_sync: lingqiSync }));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -2071,6 +2147,7 @@ app.delete('/api/schedules/:id', async (req: any, res: any) => {
     if (!owned) return res.status(404).json(err(new Error('排期不存在')));
     if (['completed', 'cancelled', 'bombed', 'issue'].includes(owned.status)) return res.status(400).json(err(new Error('历史记录已归档，不能删除')));
     await supabase.from('schedules').delete().eq('id', req.params.id).eq('tenant_id', tenantId);
+    await logStoreAction(req, 'schedule_deleted', { type: 'schedule', id: req.params.id });
     res.json(ok());
   }
   catch (e) { res.status(500).json(err(e)); }
@@ -2079,6 +2156,10 @@ app.put('/api/schedules/:id/confirm', async (req: any, res: any) => {
   try {
     if (!req.body.roomId) return res.status(400).json(err(new Error('请选择房间')));
     const tenantId = currentTenantId(req);
+    const schedule = await requireTenantSchedule(req, res, req.params.id);
+    if (!schedule) return;
+    const { data: room } = await supabase.from('rooms').select('id').eq('id', req.body.roomId).eq('tenant_id', tenantId).maybeSingle();
+    if (!room) return res.status(404).json(err(new Error('房间不存在')));
     await supabase.from('schedules').update({ room_id: req.body.roomId, status: 'scheduled' }).eq('id', req.params.id).eq('tenant_id', tenantId);
     let lingqiSync: any = { ok: true, skipped: true, reason: 'not_carpool' };
     try {
@@ -2086,12 +2167,15 @@ app.put('/api/schedules/:id/confirm', async (req: any, res: any) => {
     } catch (syncErr) {
       lingqiSync = { ok: false, skipped: false, reason: err(syncErr).error };
     }
+    await logStoreAction(req, 'schedule_room_confirmed', { type: 'schedule', id: req.params.id }, { roomId: req.body.roomId, lingqiSync });
     res.json(ok({ lingqi_sync: lingqiSync }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/schedules/:id/cancel', async (req: any, res: any) => {
   try {
     const tenantId = currentTenantId(req);
+    const schedule = await requireTenantSchedule(req, res, req.params.id);
+    if (!schedule) return;
     const nextStatus = req.body.status || 'cancelled';
     if (nextStatus === 'cancelled') {
       const { data: checkins } = await supabase.from('checkins').select('id, deposit_status').eq('schedule_id', req.params.id);
@@ -2105,29 +2189,36 @@ app.put('/api/schedules/:id/cancel', async (req: any, res: any) => {
     } catch (syncErr) {
       lingqiSync = { ok: false, skipped: false, reason: err(syncErr).error };
     }
+    await logStoreAction(req, 'schedule_status_changed', { type: 'schedule', id: req.params.id }, { status: nextStatus, lingqiSync });
     res.json(ok({ lingqi_sync: lingqiSync }));
   }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/schedules/:id/complete', async (req: any, res: any) => {
   try {
+    const schedule = await requireTenantSchedule(req, res, req.params.id);
+    if (!schedule) return;
     await supabase.from('schedules').update({
       status: 'settling',
       actual_ended_at: new Date().toISOString(),
       settlement_status: 'pending',
     }).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
+    await logStoreAction(req, 'schedule_wrapup_confirmed', { type: 'schedule', id: req.params.id });
     res.json(ok());
   }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/schedules/:id/settle', async (req: any, res: any) => {
   try {
+    const schedule = await requireTenantSchedule(req, res, req.params.id);
+    if (!schedule) return;
     await supabase.from('schedules').update({
       status: 'completed',
       settlement_status: 'settled',
       settlement_completed_at: new Date().toISOString(),
       settlement_note: cleanText(req.body?.note, 500) || null,
     }).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
+    await logStoreAction(req, 'schedule_settled', { type: 'schedule', id: req.params.id });
     res.json(ok());
   }
   catch (e) { res.status(500).json(err(e)); }
@@ -2181,6 +2272,7 @@ app.post('/api/schedules/:id/dm-start', async (req: any, res: any) => {
       actual_started_at: actualStartedAt.toISOString(),
     }).eq('id', schedule.id).eq('tenant_id', tenantId).select().single();
     if (error) throw error;
+    await logStoreAction(req, 'schedule_started', { type: 'schedule', id: schedule.id }, { actualStartedAt: actualStartedAt.toISOString(), actors: assignments.map(row => row.role_name) });
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -2242,7 +2334,12 @@ app.get('/api/schedules/conflicts/check', async (req: any, res: any) => {
 
 // ===== Checkins =====
 app.get('/api/schedules/:id/checkins', async (req: any, res: any) => {
-  try { const { data } = await supabase.from('checkins').select('*').eq('schedule_id', req.params.id).order('checked_at', { ascending: false }); res.json(ok(data)); }
+  try {
+    const schedule = await requireTenantSchedule(req, res, req.params.id);
+    if (!schedule) return;
+    const { data } = await supabase.from('checkins').select('*').eq('schedule_id', req.params.id).order('checked_at', { ascending: false });
+    res.json(ok(data));
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 
@@ -2258,7 +2355,14 @@ app.put('/api/schedules/:id/checkins/:checkinId/finance', async (req: any, res: 
     if (req.body.depositNote !== undefined) fields.deposit_note = cleanText(req.body.depositNote, 300) || null;
     if (req.body.depositPayerName !== undefined) fields.deposit_payer_name = cleanText(req.body.depositPayerName, 80) || null;
     if (req.body.depositSettlementMode !== undefined) fields.deposit_settlement_mode = depositSettlementMode(req.body.depositSettlementMode);
-    if (req.body.customerId !== undefined) fields.customer_id = cleanText(req.body.customerId, 80) || null;
+    if (req.body.customerId !== undefined) {
+      const customerId = cleanText(req.body.customerId, 80) || null;
+      if (customerId) {
+        const { data: customer } = await supabase.from('customers').select('id').eq('id', customerId).eq('tenant_id', tenantId).maybeSingle();
+        if (!customer) return res.status(404).json(err(new Error('客户不存在')));
+      }
+      fields.customer_id = customerId;
+    }
     if (req.body.finalAmount !== undefined) fields.final_amount = moneyCents(req.body.finalAmount);
     if (req.body.finalPaymentMethod !== undefined) fields.final_payment_method = cleanText(req.body.finalPaymentMethod, 40) || null;
     if (req.body.settlementStatus !== undefined) fields.settlement_status = cleanText(req.body.settlementStatus, 30) || 'unsettled';
@@ -2273,6 +2377,7 @@ app.put('/api/schedules/:id/checkins/:checkinId/finance', async (req: any, res: 
       .select()
       .single();
     if (error) throw error;
+    await logStoreAction(req, 'checkin_finance_updated', { type: 'checkin', id: req.params.checkinId, label: data?.guest_name }, { scheduleId: req.params.id, fields: Object.keys(fields) });
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -2354,6 +2459,7 @@ app.post('/api/schedules/:id/lock', async (req: any, res: any) => {
       .select()
       .single();
     if (error) throw error;
+    await logStoreAction(req, 'schedule_locked', { type: 'schedule', id: schedule.id }, { lockReason });
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -2413,6 +2519,7 @@ app.put('/api/schedules/:id/dm-assignment', async (req: any, res: any) => {
         dm_lock_credit_transaction_id: null,
       }).eq('id', schedule.id).eq('tenant_id', tenantId).select().single();
       if (error) throw error;
+      await logStoreAction(req, mode === 'not_needed' ? 'dm_assignment_not_needed' : 'dm_assignment_cleared', { type: 'schedule', id: schedule.id });
       return res.json(ok(data));
     }
 
@@ -2476,6 +2583,7 @@ app.put('/api/schedules/:id/dm-assignment', async (req: any, res: any) => {
       dm_lock_credit_transaction_id: txId,
     }).eq('id', schedule.id).eq('tenant_id', tenantId).select().single();
     if (error) throw error;
+    await logStoreAction(req, 'dm_assignment_confirmed', { type: 'schedule', id: schedule.id }, { roleName, actorId, customerId });
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -2529,6 +2637,7 @@ app.post('/api/schedules/:id/dm-lock', async (req: any, res: any) => {
       dm_lock_credit_transaction_id: tx?.id || null,
     }).eq('id', schedule.id).eq('tenant_id', tenantId).select().single();
     if (error) throw error;
+    await logStoreAction(req, 'dm_lock_used', { type: 'schedule', id: schedule.id }, { actorId, customerId: customer.id });
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -2879,7 +2988,12 @@ app.get('/api/player/wechat/callback', async (req: any, res: any) => {
 
 // ===== Evaluation =====
 app.get('/api/schedules/:id/evaluation', async (req: any, res: any) => {
-  try { const { data } = await supabase.from('evaluations').select('*').eq('schedule_id', req.params.id).order('created_at', { ascending: false }); res.json(ok(data)); }
+  try {
+    const schedule = await requireTenantSchedule(req, res, req.params.id);
+    if (!schedule) return;
+    const { data } = await supabase.from('evaluations').select('*').eq('schedule_id', req.params.id).order('created_at', { ascending: false });
+    res.json(ok(data));
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.post('/api/schedules/:id/evaluate', async (req: any, res: any) => {
@@ -2921,13 +3035,26 @@ app.post('/api/schedules/:id/evaluate', async (req: any, res: any) => {
 });
 app.get('/api/scripts/:id/evaluations', async (req: any, res: any) => {
   try {
-    const { data } = await supabase.from('evaluations').select('*, schedules!inner(script_id, start_time), scripts!inner(name)').eq('schedules.script_id', req.params.id).order('created_at', { ascending: false });
+    const tenantId = currentTenantId(req);
+    const { data: script } = await supabase.from('scripts').select('id').eq('id', req.params.id).eq('tenant_id', tenantId).maybeSingle();
+    if (!script) return res.status(404).json(err(new Error('剧本不存在')));
+    const { data } = await supabase.from('evaluations')
+      .select('*, schedules!inner(script_id, tenant_id, start_time)')
+      .eq('schedules.script_id', req.params.id)
+      .eq('schedules.tenant_id', tenantId)
+      .order('created_at', { ascending: false });
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.get('/api/scripts/:id/evaluation-stats', async (req: any, res: any) => {
   try {
-    const { data } = await supabase.from('evaluations').select('rating, schedules!inner(script_id)').eq('schedules.script_id', req.params.id);
+    const tenantId = currentTenantId(req);
+    const { data: script } = await supabase.from('scripts').select('id').eq('id', req.params.id).eq('tenant_id', tenantId).maybeSingle();
+    if (!script) return res.status(404).json(err(new Error('剧本不存在')));
+    const { data } = await supabase.from('evaluations')
+      .select('rating, schedules!inner(script_id, tenant_id)')
+      .eq('schedules.script_id', req.params.id)
+      .eq('schedules.tenant_id', tenantId);
     const ratings = (data || []).map((r: any) => r.rating);
     if (!ratings.length) return res.json(ok({ total: 0, avgRating: null, minRating: null, maxRating: null }));
     res.json(ok({ total: ratings.length, avgRating: Math.round((ratings.reduce((a: number, b: number) => a + b, 0) / ratings.length) * 10) / 10, minRating: Math.min(...ratings), maxRating: Math.max(...ratings) }));

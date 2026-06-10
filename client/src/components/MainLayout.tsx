@@ -15,7 +15,7 @@ import StoreManager from './StoreManager';
 import { useApi } from '../hooks/useApi';
 import type { StoreRecord } from '../types';
 
-type Tab = 'platform' | 'stores' | 'adminUsers' | 'templates' | 'feedbackInbox' | 'auditLogs' | 'rooms' | 'actors' | 'scripts' | 'schedule' | 'evaluations' | 'customers' | 'conflicts' | 'feedback';
+type Tab = 'platform' | 'stores' | 'adminUsers' | 'templates' | 'feedbackInbox' | 'auditLogs' | 'rooms' | 'actors' | 'scripts' | 'schedule' | 'evaluations' | 'customers' | 'conflicts' | 'feedback' | 'operationLogs';
 
 const basePath = '/store/manage';
 const storeTabs = [
@@ -27,6 +27,7 @@ const storeTabs = [
   { id: 'evaluations' as Tab, label: '⭐ 评价反馈', color: 'bg-amber-500', path: `${basePath}/evaluations` },
   { id: 'customers' as Tab, label: '⭐ 会员管理', color: 'bg-yellow-500', path: `${basePath}/customers` },
   { id: 'conflicts' as Tab, label: '⚖️ 矛盾调解', color: 'bg-red-500', path: `${basePath}/conflicts` },
+  { id: 'operationLogs' as Tab, label: '🧾 操作日志', color: 'bg-slate-700', path: `${basePath}/operation-logs` },
 ];
 
 export default function MainLayout() {
@@ -141,6 +142,14 @@ export default function MainLayout() {
 
       {/* 主内容区 */}
       <main className="max-w-7xl mx-auto px-4 py-6">
+        {!isSuperAdmin && (
+          <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+            <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+              <p className="font-semibold">内测试用说明</p>
+              <p className="text-xs md:text-sm">当前版本建议由老板/店长使用；遇到数据异常或流程建议，请通过右侧“建议反馈”提交，关键操作会记录到店内操作日志。</p>
+            </div>
+          </div>
+        )}
         <Routes>
           {isSuperAdmin && <Route path="platform" element={<PlatformOverview />} />}
           <Route path="stores" element={<StoreManager />} />
@@ -156,6 +165,7 @@ export default function MainLayout() {
           {!isSuperAdmin && <Route path="feedback" element={<FeedbackPanel />} />}
           {!isSuperAdmin && <Route path="customers" element={<CustomerManager />} />}
           {!isSuperAdmin && <Route path="conflicts" element={<ConflictResolutionPage />} />}
+          {!isSuperAdmin && <Route path="operation-logs" element={<StoreOperationLogsPanel />} />}
           <Route path="" element={<Navigate to={isSuperAdmin ? `${basePath}/platform` : `${basePath}/schedule`} replace />} />
           <Route path="*" element={<Navigate to={isSuperAdmin ? `${basePath}/platform` : `${basePath}/schedule`} replace />} />
         </Routes>
@@ -776,6 +786,74 @@ function AuditLogsPanel() {
         <div>
           <h2 className="text-xl font-bold text-gray-900">平台操作日志</h2>
           <p className="text-sm text-gray-500 mt-1">记录超管进入店家视角、启停账号、生成临时登录密码、新建店家等关键动作。</p>
+          {message && <p className="mt-3 text-sm text-red-600">{message}</p>}
+        </div>
+        <button onClick={loadLogs} disabled={loading} className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm disabled:opacity-50">
+          {loading ? '刷新中' : '刷新'}
+        </button>
+      </div>
+
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-100 text-sm">
+            <thead className="bg-gray-50 text-left text-xs font-semibold text-gray-500">
+              <tr>
+                <th className="px-4 py-3">时间</th>
+                <th className="px-4 py-3">操作者</th>
+                <th className="px-4 py-3">动作</th>
+                <th className="px-4 py-3">对象</th>
+                <th className="px-4 py-3">IP</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {logs.map(log => (
+                <tr key={log.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3 text-gray-500">{log.created_at ? new Date(log.created_at).toLocaleString('zh-CN') : ''}</td>
+                  <td className="px-4 py-3">
+                    <p className="font-semibold text-gray-800">{log.actor_email || '系统'}</p>
+                    <p className="text-xs text-gray-400">{log.actor_role || ''}</p>
+                  </td>
+                  <td className="px-4 py-3 font-semibold text-gray-800">{log.action}</td>
+                  <td className="px-4 py-3 text-gray-600">{log.target_label || log.target_id || log.target_type || '-'}</td>
+                  <td className="px-4 py-3 text-gray-500">{log.ip_address || '-'}</td>
+                </tr>
+              ))}
+              {logs.length === 0 && (
+                <tr><td colSpan={5} className="px-4 py-10 text-center text-gray-400">暂无操作日志</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StoreOperationLogsPanel() {
+  const { get, loading } = useApi();
+  const [logs, setLogs] = useState<AuditLogRow[]>([]);
+  const [message, setMessage] = useState('');
+
+  const loadLogs = async () => {
+    const result = await get<AuditLogRow[]>('/operation-logs');
+    if (result.success && result.data) {
+      setLogs(result.data);
+      setMessage('');
+    } else {
+      setMessage(result.error || '日志加载失败');
+    }
+  };
+
+  useEffect(() => {
+    void loadLogs();
+  }, []);
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-lg shadow p-6 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">店内操作日志</h2>
+          <p className="text-sm text-gray-500 mt-1">记录排期、定金、结算、开本、收尾、指定卡司等关键操作，便于试用期追溯问题。</p>
           {message && <p className="mt-3 text-sm text-red-600">{message}</p>}
         </div>
         <button onClick={loadLogs} disabled={loading} className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm disabled:opacity-50">
