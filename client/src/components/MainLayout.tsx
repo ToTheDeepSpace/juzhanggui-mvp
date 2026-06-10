@@ -187,12 +187,29 @@ export default function MainLayout() {
   );
 }
 
-interface PlatformSummary {
+type PlatformTodoItem = {
+  id: string;
+  title: string;
+  store?: string;
+  created_at?: string;
+};
+
+type PlatformTodoGroup = {
+  key: string;
+  title: string;
+  count: number;
+  tone: 'high' | 'medium' | 'normal';
+  path: string;
+  items: PlatformTodoItem[];
+};
+
+type PlatformSummary = {
   storeCount: number;
   activeStoreCount: number;
   adminUserCount: number;
   scriptCount: number;
   scheduleCount: number;
+  todoItems?: PlatformTodoGroup[];
   recentStores: StoreRecord[];
   recentAdminUsers: PlatformAdminUser[];
   recentSchedules: PlatformSchedule[];
@@ -284,6 +301,7 @@ const feedbackStatusText: Record<string, string> = {
 };
 
 function PlatformOverview() {
+  const navigate = useNavigate();
   const { get, loading } = useApi();
   const [summary, setSummary] = useState<PlatformSummary | null>(null);
   const [message, setMessage] = useState('');
@@ -338,6 +356,43 @@ function PlatformOverview() {
           </article>
         ))}
       </div>
+
+      <section className="bg-white rounded-lg shadow p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-gray-900">超管待办事项</h3>
+            <p className="mt-1 text-xs text-gray-500">按运营优先级聚合需要超管关注的事项。</p>
+          </div>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+            {(summary?.todoItems || []).reduce((sum, item) => sum + item.count, 0)} 项
+          </span>
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {(summary?.todoItems || []).map(group => (
+            <article key={group.key} className={`rounded-xl border p-3 ${group.tone === 'high' ? 'border-red-100 bg-red-50' : group.tone === 'medium' ? 'border-amber-100 bg-amber-50' : 'border-gray-100 bg-gray-50'}`}>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">{group.title}</p>
+                  <p className="mt-0.5 text-xs text-gray-500">{group.count > 0 ? `当前 ${group.count} 项待处理` : '暂无待处理'}</p>
+                </div>
+                <button type="button" onClick={() => navigate(group.path)} className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50">去处理</button>
+              </div>
+              <div className="mt-3 space-y-2">
+                {group.items.slice(0, 3).map(item => (
+                  <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg bg-white/80 px-3 py-2 text-xs">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-gray-800">{item.title || '未命名事项'}</p>
+                      <p className="mt-0.5 truncate text-gray-400">{item.store || '未知来源'}</p>
+                    </div>
+                    <span className="shrink-0 text-gray-400">{item.created_at ? new Date(item.created_at).toLocaleDateString('zh-CN') : ''}</span>
+                  </div>
+                ))}
+                {group.items.length === 0 && <p className="rounded-lg bg-white/70 px-3 py-4 text-center text-xs text-gray-400">暂时没有需要处理的事项</p>}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
 
       <div className="bg-white rounded-lg shadow p-6">
         <h3 className="font-bold text-gray-900 mb-4">最近注册店家</h3>

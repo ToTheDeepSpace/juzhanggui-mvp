@@ -1357,6 +1357,10 @@ app.get('/api/platform/summary', async (req: any, res: any) => {
       recentStores,
       recentAdminUsers,
       recentSchedules,
+      pendingFeedback,
+      pendingTemplates,
+      pendingConflicts,
+      storesWithoutAdmins,
     ] = await Promise.all([
       supabase.from('jzg_stores').select('*', { count: 'exact', head: true }),
       supabase.from('jzg_stores').select('*', { count: 'exact', head: true }).eq('status', 'active'),
@@ -1366,10 +1370,25 @@ app.get('/api/platform/summary', async (req: any, res: any) => {
       supabase.from('jzg_stores').select('*').order('created_at', { ascending: false }).limit(8),
       supabase.from('jzg_admin_users').select('id,email,phone,display_name,role,status,tenant_id,store_id,last_login_at,created_at').order('created_at', { ascending: false }).limit(8),
       supabase.from('schedules').select('id,tenant_id,script_id,scheduled_date,start_time,status,created_at').order('created_at', { ascending: false }).limit(8),
+      supabase.from('jzg_feedback_messages').select('id,tenant_id,title,status,priority,created_at', { count: 'exact' }).in('status', ['new', 'processing']).order('created_at', { ascending: false }).limit(5),
+      supabase.from('jzg_script_templates').select('id,source_tenant_id,name,review_status,created_at', { count: 'exact' }).eq('review_status', 'pending').order('created_at', { ascending: false }).limit(5),
+      supabase.from('conflict_records').select('id,tenant_id,conflict_type,conflict_description,conflict_date,status,created_at', { count: 'exact' }).eq('status', 'pending').order('created_at', { ascending: false }).limit(5),
+      supabase.from('jzg_stores').select('id,name,city,status,created_at').order('created_at', { ascending: false }).limit(50),
     ]);
-    for (const result of [storesCount, activeStoresCount, adminUsersCount, scriptsCount, schedulesCount, recentStores, recentAdminUsers, recentSchedules]) {
-      if (result.error) throw result.error;
+    for (const result of [storesCount, activeStoresCount, adminUsersCount, scriptsCount, schedulesCount, recentStores, recentAdminUsers, recentSchedules, pendingFeedback, pendingTemplates, pendingConflicts, storesWithoutAdmins]) {
+      if (result.error && !String(result.error.message || '').includes('jzg_script_templates')) throw result.error;
     }
+    const { data: allAdminStores, error: adminStoreErr } = await supabase.from('jzg_admin_users').select('store_id,tenant_id').neq('role', 'super_admin');
+    if (adminStoreErr) throw adminStoreErr;
+    const adminStoreIds = new Set((allAdminStores || []).map((user: any) => user.store_id || user.tenant_id).filter(Boolean));
+    const noAdminStores = (storesWithoutAdmins.data || []).filter((store: any) => !adminStoreIds.has(store.id)).slice(0, 5);
+    const todoStoreIds = [
+      ...(pendingFeedback.data || []).map((item: any) => item.tenant_id),
+      ...(pendingTemplates.data || []).map((item: any) => item.source_tenant_id),
+      ...(pendingConflicts.data || []).map((item: any) => item.tenant_id),
+      ...noAdminStores.map((store: any) => store.id),
+    ];
+    const todoStoreMap = await getStoreMapByIds(todoStoreIds);
     const adminStoreMap = await getStoreMapByIds((recentAdminUsers.data || []).map((user: any) => user.store_id || user.tenant_id));
     const scheduleStoreMap = await getStoreMapByIds((recentSchedules.data || []).map((schedule: any) => schedule.tenant_id));
     const scriptIds = Array.from(new Set((recentSchedules.data || []).map((schedule: any) => cleanText(schedule.script_id, 80)).filter(Boolean)));
@@ -1379,12 +1398,47 @@ app.get('/api/platform/summary', async (req: any, res: any) => {
       if (scriptsErr) throw scriptsErr;
       (scripts || []).forEach((script: any) => scriptsById.set(script.id, script));
     }
+    const todoItems = [
+      {
+        key: 'feedback',
+        title: '待处理站内信',
+        count: pendingFeedback.count || 0,
+        tone: (pendingFeedback.count || 0) > 0 ? 'high' : 'normal',
+        path: `/store/manage/feedback-inbox`,
+        items: (pendingFeedback.data || []).map((item: any) => ({ id: item.id, title: item.title, store: todoStoreMap.get(item.tenant_id)?.name || '未知店家', created_at: item.created_at })),
+      },
+      {
+        key: 'templates',
+        title: '待审核剧本模板',
+        count: pendingTemplates.count || 0,
+        tone: (pendingTemplates.count || 0) > 0 ? 'medium' : 'normal',
+        path: `/store/manage/templates`,
+        items: (pendingTemplates.data || []).map((item: any) => ({ id: item.id, title: item.name, store: todoStoreMap.get(item.source_tenant_id)?.name || '未知店家', created_at: item.created_at })),
+      },
+      {
+        key: 'conflicts',
+        title: '店家待处理异常',
+        count: pendingConflicts.count || 0,
+        tone: (pendingConflicts.count || 0) > 0 ? 'high' : 'normal',
+        path: `/store/manage/stores`,
+        items: (pendingConflicts.data || []).map((item: any) => ({ id: item.id, title: item.conflict_description || item.conflict_type, store: todoStoreMap.get(item.tenant_id)?.name || '未知店家', created_at: item.created_at || item.conflict_date })),
+      },
+      {
+        key: 'stores_without_admins',
+        title: '未绑定管理员店家',
+        count: noAdminStores.length,
+        tone: noAdminStores.length > 0 ? 'medium' : 'normal',
+        path: `/store/manage/stores`,
+        items: noAdminStores.map((store: any) => ({ id: store.id, title: store.name, store: store.city || '未设置城市', created_at: store.created_at })),
+      },
+    ];
     res.json(ok({
       storeCount: storesCount.count || 0,
       activeStoreCount: activeStoresCount.count || 0,
       adminUserCount: adminUsersCount.count || 0,
       scriptCount: scriptsCount.count || 0,
       scheduleCount: schedulesCount.count || 0,
+      todoItems,
       recentStores: recentStores.data || [],
       recentAdminUsers: (recentAdminUsers.data || []).map((user: any) => ({
         ...user,
