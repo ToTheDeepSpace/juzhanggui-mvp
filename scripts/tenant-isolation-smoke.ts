@@ -91,8 +91,8 @@ async function createStoreBundle(key: 'a' | 'b'): Promise<StoreBundle> {
     [store.id, `${marker}-${key}-customer`, `199${Math.floor(Math.random() * 90000000 + 10000000)}`],
   );
   const schedule = await queryOne<{ id: string }>(
-    `insert into schedules (tenant_id, script_id, room_id, scheduled_date, start_time, end_time, status, customer_name, player_count) values ($1, $2, $3, current_date, '10:00', '14:00', 'scheduled', $4, 6) returning id`,
-    [store.id, script.id, room.id, `${marker}-${key}-schedule`],
+    `insert into schedules (tenant_id, script_id, room_id, script_name, room_name, scheduled_date, start_time, end_time, status, player_count) values ($1, $2, $3, $4, $5, current_date, '10:00', '14:00', 'scheduled', 6) returning id`,
+    [store.id, script.id, room.id, `${marker}-${key}-script`, `${marker}-${key}-room`],
   );
   const checkin = await queryOne<{ id: string }>(
     `insert into checkins (schedule_id, guest_name, role, deposit_status, customer_id) values ($1, $2, '角色一', 'paid', $3) returning id`,
@@ -134,7 +134,7 @@ const steps: Step[] = [
   {
     name: 'A 店列表接口不出现 B 店数据',
     run: async () => {
-      for (const path of ['/stores/current', '/scripts', '/rooms', '/actors', '/customers', '/schedules', '/operation-logs']) {
+      for (const path of ['/stores', '/scripts', '/rooms', '/actors', '/customers', '/schedules', '/operation-logs']) {
         const { response, body } = await api(`/api${path}`, a.token);
         expectStatus(path, response.status, [200]);
         const text = JSON.stringify(body);
