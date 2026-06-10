@@ -1,10 +1,10 @@
 import { randomUUID } from 'crypto';
-import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { tencentPgPool } from '../api/tencentPgSupabase';
 
 const marker = `tenant-isolation-${Date.now()}-${randomUUID().slice(0, 8)}`;
 const apiBaseUrl = (process.env.API_BASE_URL || process.env.JUZHANGGUI_SITE_URL || 'https://jusichen.com').replace(/\/$/, '');
-const jwtSecret = process.env.JWT_SECRET || '';
+const testPassword = `Pwd-${marker}-12345`;
 
 type StoreBundle = {
   storeId: string;
@@ -50,15 +50,15 @@ function expectStatus(label: string, actual: number, allowed: number[]) {
   assertOk(allowed.includes(actual), `${label}: 期望状态 ${allowed.join('/')}，实际 ${actual}`);
 }
 
-function tokenFor(bundle: Pick<StoreBundle, 'storeId' | 'userId'>, email: string) {
-  return jwt.sign({
-    role: 'admin',
-    adminRole: 'store_admin',
-    adminUserId: bundle.userId,
-    email,
-    tenantId: bundle.storeId,
-    storeId: bundle.storeId,
-  }, jwtSecret, { expiresIn: '2h' });
+async function login(email: string) {
+  const result = await fetch(`${apiBaseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password: testPassword }),
+  });
+  const body: any = await result.json().catch(() => null);
+  assertOk(result.status === 200 && body?.success && body?.data?.token, `登录失败：${email}`);
+  return body.data.token as string;
 }
 
 async function createStoreBundle(key: 'a' | 'b'): Promise<StoreBundle> {
@@ -67,9 +67,10 @@ async function createStoreBundle(key: 'a' | 'b'): Promise<StoreBundle> {
     [`${marker}-${key}-store`, '隔离测试'],
   );
   const email = `${marker}-${key}@example.com`;
+  const passwordHash = await bcrypt.hash(testPassword, 10);
   const user = await queryOne<{ id: string }>(
-    `insert into jzg_admin_users (tenant_id, store_id, email, display_name, role, status, email_verified_at) values ($1, $1, $2, $3, 'store_admin', 'active', now()) returning id`,
-    [store.id, email, `${marker}-${key}-admin`],
+    `insert into jzg_admin_users (tenant_id, store_id, email, display_name, password_hash, role, status, email_verified_at) values ($1, $1, $2, $3, $4, 'store_admin', 'active', now()) returning id`,
+    [store.id, email, `${marker}-${key}-admin`, passwordHash],
   );
   const script = await queryOne<{ id: string }>(
     `insert into scripts (tenant_id, name, duration_minutes, min_duration_hours, max_duration_hours) values ($1, $2, 240, 4, 4) returning id`,
@@ -98,10 +99,11 @@ async function createStoreBundle(key: 'a' | 'b'): Promise<StoreBundle> {
     [schedule.id, `${marker}-${key}-guest`, customer.id],
   );
   await tencentPgPool.query(`insert into evaluations (schedule_id, guest_name, rating, comment) values ($1, $2, 5, $3)`, [schedule.id, `${marker}-${key}-guest`, `${marker}-${key}-eval`]);
+  const token = await login(email);
   const bundle = { storeId: store.id, userId: user.id };
   return {
     ...bundle,
-    token: tokenFor(bundle, email),
+    token,
     scriptId: script.id,
     roomId: room.id,
     actorId: actor.id,
@@ -217,7 +219,6 @@ const steps: Step[] = [
 
 async function main() {
   if (!process.env.DATABASE_URL && !process.env.PGHOST) throw new Error('缺少 DATABASE_URL 或 PGHOST');
-  if (!jwtSecret) throw new Error('缺少 JWT_SECRET');
   await cleanup();
   try {
     a = await createStoreBundle('a');
