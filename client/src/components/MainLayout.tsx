@@ -25,7 +25,6 @@ const storeTabs = [
   { id: 'actors' as Tab, label: '🎭 卡司管理', color: 'bg-purple-500', path: `${basePath}/actors` },
   { id: 'scripts' as Tab, label: '📖 剧本管理', color: 'bg-orange-500', path: `${basePath}/scripts` },
   { id: 'evaluations' as Tab, label: '⭐ 评价反馈', color: 'bg-amber-500', path: `${basePath}/evaluations` },
-  { id: 'feedback' as Tab, label: '💬 建议反馈', color: 'bg-sky-500', path: `${basePath}/feedback` },
   { id: 'customers' as Tab, label: '⭐ 会员管理', color: 'bg-yellow-500', path: `${basePath}/customers` },
   { id: 'conflicts' as Tab, label: '⚖️ 矛盾调解', color: 'bg-red-500', path: `${basePath}/conflicts` },
 ];
@@ -161,6 +160,17 @@ export default function MainLayout() {
           <Route path="*" element={<Navigate to={isSuperAdmin ? `${basePath}/platform` : `${basePath}/schedule`} replace />} />
         </Routes>
       </main>
+
+      {!isSuperAdmin && currentPath !== `${basePath}/feedback` && (
+        <button
+          type="button"
+          onClick={() => navigate(`${basePath}/feedback`)}
+          className="fixed right-4 top-1/2 z-40 -translate-y-1/2 rounded-l-2xl rounded-r-md bg-sky-600 px-3 py-4 text-sm font-medium text-white shadow-lg transition hover:bg-sky-700 sm:right-6"
+        >
+          <span className="block leading-tight">建议</span>
+          <span className="block leading-tight">反馈</span>
+        </button>
+      )}
 
       <ComplianceFooter />
     </div>
