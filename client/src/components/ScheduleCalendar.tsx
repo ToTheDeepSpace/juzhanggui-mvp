@@ -155,9 +155,17 @@ export default function ScheduleCalendar() {
   };
 
   const openStartModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
-    e.stopPropagation(); setStartingSchedule(schedule);
+    e.stopPropagation();
+    setStartingSchedule(schedule);
     setActualStartTime(schedule.start_time ? schedule.start_time.split('T')[1]?.substring(0, 5) : '');
-    setStartActors([]); setShowStartModal(true);
+    const existingByRole = new Map((schedule.actors || []).map(a => [a.role_name, a.actor_id]));
+    setStartActors((schedule.actor_roles || []).map(role => ({
+      actorId: schedule.requested_dm_role_name === role.name ? (schedule.requested_dm_actor_id || existingByRole.get(role.name) || '') : (existingByRole.get(role.name) || ''),
+      roleName: role.name,
+      startOffset: 0,
+      duration: 240,
+    })));
+    setShowStartModal(true);
   };
 
   const openFinanceModal = (schedule: ScheduleWithDetails, e: React.MouseEvent, mode: 'deposit' | 'settlement') => {
@@ -287,15 +295,23 @@ export default function ScheduleCalendar() {
 
   const handleStartConfirm = async () => {
     if (!startingSchedule) return;
-    const now = new Date();
-    const [h, m] = (actualStartTime || '14:00').split(':').map(Number);
-    now.setHours(h, m, 0, 0);
-    const end = new Date(now.getTime() + 240 * 60000);
-    await put(`/schedules/${startingSchedule.id}`, {
-      status: 'ongoing', timeStart: actualStartTime || '14:00', timeEnd: '18:00',
-      date: format(now, 'yyyy-MM-dd'), startTime: now.toISOString(), endTime: end.toISOString()
+    const missingActorRole = startActors.find(row => !row.actorId);
+    if (missingActorRole) {
+      alert(`请确认卡司角色“${missingActorRole.roleName}”由谁扮演`);
+      return;
+    }
+    const scheduleDate = startingSchedule.start_time.split('T')[0];
+    const actualStart = new Date(`${scheduleDate}T${actualStartTime || '14:00'}`);
+    const result = await post(`/schedules/${startingSchedule.id}/dm-start`, {
+      actualStartTime: actualStart.toISOString(),
+      actors: startActors.map(row => ({ actorId: row.actorId, roleName: row.roleName })),
     });
-    setShowStartModal(false); loadData();
+    if (!result.success) {
+      alert(result.error || '确认开本失败');
+      return;
+    }
+    setShowStartModal(false);
+    loadData();
   };
 
   const handleEndSubmit = async () => {
@@ -1096,28 +1112,50 @@ export default function ScheduleCalendar() {
       {/* 确认开始弹窗 */}
       {showStartModal && startingSchedule && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-sm w-full mx-4">
-            <h3 className="text-lg font-bold text-gray-900 mb-4">确认开本</h3>
-            <div className="space-y-4 mb-5">
+          <div className="bg-white rounded-xl p-6 max-w-3xl w-full mx-4 max-h-[85vh] overflow-y-auto">
+            <h3 className="text-lg font-bold text-gray-900">开本前确认</h3>
+            <p className="mt-1 text-sm text-gray-500">确认玩家角色、卡司角色分配和实际开本时间后，再进入进行中。</p>
+            <div className="mt-5 space-y-5">
               <div>
-                <label className="text-sm text-gray-600 mb-1 block">实际开本时间</label>
-                <input type="time" value={actualStartTime} onChange={e => setActualStartTime(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+                <label className="text-sm font-medium text-gray-700 mb-2 block">1. 核对玩家选择的角色</label>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {(startingSchedule.checkins || []).length === 0 ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">这车还没有玩家上车记录，请先处理上车角色。</div>
+                  ) : (startingSchedule.checkins || []).map(item => (
+                    <div key={item.id || `${item.guest_name}-${item.role}`} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm">
+                      <span className="font-medium text-gray-900">{item.guest_name || item.customer?.name || '未命名玩家'}</span>
+                      <span className="ml-2 text-gray-500">选择角色：{item.role || '未填写'}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
               <div>
-                <label className="text-sm text-gray-600 mb-1 block">选择卡司/DM</label>
-                <select className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" value="" onChange={e => { if (e.target.value) setStartActors([...startActors, { actorId: e.target.value, roleName: 'DM', startOffset: 0, duration: 240 }]); }}>
-                  <option value="">选择卡司...</option>
-                  {actors.map(a => <option key={a.id} value={a.id}>{a.name}{actorGenderText(a)}</option>)}
-                </select>
-                {startActors.map((sa, i) => {
-                  const actor = actors.find(a => a.id === sa.actorId);
-                  return <div key={i} className="flex items-center justify-between mt-2 p-2 bg-gray-50 rounded-lg text-sm"><span>{actor?.name || '未知'}</span><button onClick={() => setStartActors(startActors.filter((_, j) => j !== i))} className="text-red-400 text-xs">移除</button></div>;
-                })}
+                <label className="text-sm font-medium text-gray-700 mb-2 block">2. 确认 DM/卡司扮演的卡司角色</label>
+                <div className="space-y-2">
+                  {startActors.length === 0 ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">这个剧本还没有配置卡司角色。</div>
+                  ) : startActors.map((row, index) => (
+                    <div key={row.roleName || index} className="grid gap-2 rounded-lg border border-gray-100 bg-white p-3 md:grid-cols-[1fr,2fr] md:items-center">
+                      <div>
+                        <div className="text-sm font-medium text-gray-900">{row.roleName}</div>
+                        {startingSchedule.requested_dm_role_name === row.roleName && <div className="mt-1 text-xs text-indigo-600">已指定卡司角色</div>}
+                      </div>
+                      <select value={row.actorId} onChange={e => setStartActors(startActors.map((item, i) => i === index ? { ...item, actorId: e.target.value } : item))} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
+                        <option value="">请选择扮演卡司/DM</option>
+                        {actors.map(actor => <option key={actor.id} value={actor.id}>{actor.name}{actorGenderText(actor)}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-1 block">3. 实际开本时间</label>
+                <input type="time" value={actualStartTime} onChange={e => setActualStartTime(e.target.value)} className="w-full max-w-xs px-3 py-2 border border-gray-200 rounded-lg text-sm" />
               </div>
             </div>
-            <div className="flex gap-2">
-              <button onClick={() => setShowStartModal(false)} className="flex-1 py-2.5 border border-gray-200 text-gray-600 rounded-lg text-sm">取消</button>
-              <button onClick={handleStartConfirm} className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">确认开本</button>
+            <div className="mt-6 flex gap-2 justify-end">
+              <button onClick={() => setShowStartModal(false)} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">取消</button>
+              <button onClick={handleStartConfirm} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">确认开本</button>
             </div>
           </div>
         </div>

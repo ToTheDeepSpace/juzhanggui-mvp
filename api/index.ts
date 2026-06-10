@@ -2126,12 +2126,54 @@ app.put('/api/schedules/:id/settle', async (req: any, res: any) => {
 });
 app.post('/api/schedules/:id/dm-start', async (req: any, res: any) => {
   try {
-    const { actorId } = req.body;
-    await supabase.from('schedules').update({ status: 'ongoing', actual_started_at: new Date().toISOString(), scheduled_date: new Date().toISOString().split('T')[0], start_time: new Date().toISOString().split('T')[1]?.substring(0, 5) }).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
-    if (actorId) {
-      await supabase.from('schedule_actors').insert({ schedule_id: req.params.id, actor_id: actorId, role_name: 'DM', start_time: new Date().toISOString(), end_time: new Date(Date.now() + 240 * 60000).toISOString() });
+    const tenantId = currentTenantId(req);
+    const actualStartedAt = req.body?.actualStartTime ? new Date(req.body.actualStartTime) : new Date();
+    if (Number.isNaN(actualStartedAt.getTime())) return res.status(400).json(err(new Error('开本时间无效')));
+    const actorRows = Array.isArray(req.body?.actors) ? req.body.actors : [];
+    const { data: schedule } = await supabase.from('schedules')
+      .select('id, tenant_id, script_id, status, scripts(duration_minutes)')
+      .eq('id', req.params.id)
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
+    if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
+    if (!['locked', 'confirmed', 'ongoing'].includes(schedule.status)) return res.status(400).json(err(new Error('当前状态不能确认开本')));
+    const { data: actorRoles } = await supabase.from('script_actor_roles').select('role_name').eq('script_id', schedule.script_id);
+    const validRoleNames = new Set((actorRoles || []).map((role: any) => cleanText(role.role_name, 120)).filter(Boolean));
+    if (validRoleNames.size > 0) {
+      for (const roleName of validRoleNames) {
+        if (!actorRows.some((row: any) => cleanText(row?.roleName, 120) === roleName && cleanText(row?.actorId, 80))) {
+          return res.status(400).json(err(new Error(`请确认卡司角色“${roleName}”由谁扮演`)));
+        }
+      }
     }
-    res.json(ok());
+    const assignments = [];
+    for (const row of actorRows) {
+      const actorId = cleanText(row?.actorId, 80);
+      const roleName = cleanText(row?.roleName, 120);
+      if (!actorId || !roleName) continue;
+      if (validRoleNames.size > 0 && !validRoleNames.has(roleName)) return res.status(400).json(err(new Error(`卡司角色“${roleName}”不属于当前剧本`)));
+      const { data: actor } = await supabase.from('actors').select('id').eq('id', actorId).eq('tenant_id', tenantId).maybeSingle();
+      if (!actor) return res.status(404).json(err(new Error(`卡司不存在：${roleName}`)));
+      assignments.push({ actor_id: actorId, role_name: roleName });
+    }
+    const durationMinutes = Number((Array.isArray(schedule.scripts) ? schedule.scripts[0]?.duration_minutes : schedule.scripts?.duration_minutes) || 240);
+    const actorEndAt = new Date(actualStartedAt.getTime() + Math.max(1, durationMinutes) * 60000);
+    await supabase.from('schedule_actors').delete().eq('schedule_id', schedule.id);
+    if (assignments.length) {
+      await supabase.from('schedule_actors').insert(assignments.map(row => ({
+        schedule_id: schedule.id,
+        actor_id: row.actor_id,
+        role_name: row.role_name,
+        start_time: actualStartedAt.toISOString(),
+        end_time: actorEndAt.toISOString(),
+      })));
+    }
+    const { data, error } = await supabase.from('schedules').update({
+      status: 'ongoing',
+      actual_started_at: actualStartedAt.toISOString(),
+    }).eq('id', schedule.id).eq('tenant_id', tenantId).select().single();
+    if (error) throw error;
+    res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
 
