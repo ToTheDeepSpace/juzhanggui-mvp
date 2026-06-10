@@ -244,6 +244,12 @@ const handleSubmit = async (e: React.FormEvent) => {
     return result;
   };
 
+  const scriptMissingItems = (script: Script) => [
+    !script.min_duration && !script.max_duration ? '时长' : '',
+    !(script.player_count || script.player_roles?.length) ? '玩家角色' : '',
+    !(script.actor_count || script.actor_roles?.length) ? '卡司角色' : '',
+  ].filter(Boolean);
+
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <div className="flex justify-between items-center mb-6">
@@ -521,10 +527,12 @@ const handleSubmit = async (e: React.FormEvent) => {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {scripts.map((script) => (
+        {scripts.map((script) => {
+          const missingItems = scriptMissingItems(script);
+          return (
           <div
             key={script.id}
-            className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
+            className={`border rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer ${missingItems.length ? 'border-orange-200 bg-orange-50/40' : 'border-gray-200'}`}
             onClick={() => openDetail(script)}
           >
             <div className="flex justify-between items-start">
@@ -533,6 +541,11 @@ const handleSubmit = async (e: React.FormEvent) => {
                 <p className="text-sm text-gray-500 mt-1">
                   ⏱️ {formatDuration(script.min_duration, script.max_duration)} · 👤 玩家{script.player_count || 0}人 · 🎭 卡司{script.actor_count || 0}人
                 </p>
+                {missingItems.length > 0 ? (
+                  <p className="mt-2 inline-flex rounded-full bg-orange-100 px-2 py-1 text-xs font-medium text-orange-700">待补：{missingItems.join('、')}</p>
+                ) : (
+                  <p className="mt-2 inline-flex rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">资料完整，可排期</p>
+                )}
               </div>
               <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
                 <button
@@ -556,7 +569,8 @@ const handleSubmit = async (e: React.FormEvent) => {
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {scripts.length === 0 && !loading && (

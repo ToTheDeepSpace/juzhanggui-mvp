@@ -428,6 +428,27 @@ export default function ScheduleCalendar() {
   const endedSchedules = schedules
     .filter(s => { const d = s.start_time.split('T')[0]; return d >= histStartDate && d <= histEndDate && terminalStatuses.includes(s.status); })
     .sort((a, b) => b.start_time.localeCompare(a.start_time));
+  const scriptReady = (script: Script) => Boolean((script.player_roles?.length || script.player_count || 0) > 0 && (script.actor_roles?.length || script.actor_count || 0) > 0 && Number(script.duration || script.max_duration || script.min_duration || 0) > 0);
+  const readyScripts = scripts.filter(scriptReady);
+  const riskyScripts = scripts.filter(script => !scriptReady(script));
+  const onboardingSteps = [
+    { label: '店铺信息', done: Boolean(currentStore?.name) },
+    { label: '房间', done: rooms.length > 0 },
+    { label: '卡司/DM', done: actors.length > 0 },
+    { label: '剧本', done: scripts.length > 0 },
+    { label: '角色配置', done: readyScripts.length > 0 },
+    { label: '第一场排期', done: schedules.length > 0 },
+  ];
+  const onboardingDoneCount = onboardingSteps.filter(step => step.done).length;
+  const actionSchedules = schedules.filter(s => !terminalStatuses.includes(s.status) && s.start_time.split('T')[0] <= todayStr);
+  const overdueUnfinishedCount = actionSchedules.filter(s => parseISO(s.end_time).getTime() < Date.now()).length;
+  const todayActionItems = [
+    { label: '待收定金', count: actionSchedules.filter(s => s.status === 'scheduled').length, tone: 'amber' },
+    { label: '待开本确认', count: actionSchedules.filter(s => ['locked', 'confirmed'].includes(s.status)).length, tone: 'indigo' },
+    { label: '待收尾', count: actionSchedules.filter(s => s.status === 'ongoing').length, tone: 'green' },
+    { label: '待结算', count: actionSchedules.filter(s => s.status === 'settling').length, tone: 'emerald' },
+    { label: '过期待补', count: overdueUnfinishedCount, tone: 'red' },
+  ].filter(item => item.count > 0);
 
   const stText: Record<string, string> = {
     scheduled: '待锁车', pending: '待排期', locked: '已锁车', confirmed: '已排班', ongoing: '进行中', settling: '待结算', completed: '已完成', cancelled: '流车', bombed: '炸车', issue: '其他问题',
@@ -608,6 +629,13 @@ export default function ScheduleCalendar() {
     ]
     : [];
   const avatarText = (name?: string) => (name || '空').trim().slice(0, 1).toUpperCase();
+  const actionToneClass = (tone: string) => {
+    if (tone === 'amber') return 'border-amber-100 bg-amber-50 text-amber-700';
+    if (tone === 'indigo') return 'border-indigo-100 bg-indigo-50 text-indigo-700';
+    if (tone === 'green') return 'border-green-100 bg-green-50 text-green-700';
+    if (tone === 'emerald') return 'border-emerald-100 bg-emerald-50 text-emerald-700';
+    return 'border-red-100 bg-red-50 text-red-700';
+  };
 
   return (
     <div className="space-y-6">
@@ -622,6 +650,58 @@ export default function ScheduleCalendar() {
           📋 历史记录 ({endedSchedules.length})
         </button>
       </div>
+
+      {!showEnded && (
+        <div className="grid gap-4 lg:grid-cols-[1.1fr,1fr]">
+          <div className="rounded-2xl border border-indigo-100 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">新店开通进度</p>
+                <p className="mt-1 text-xs text-slate-500">先补齐基础资料，再开放真实排期会更稳。</p>
+              </div>
+              <span className="rounded-full bg-indigo-50 px-3 py-1 text-sm font-semibold text-indigo-700">{onboardingDoneCount}/{onboardingSteps.length}</span>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
+              {onboardingSteps.map(step => (
+                <div key={step.label} className={`rounded-lg border px-3 py-2 text-xs ${step.done ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-slate-100 bg-slate-50 text-slate-500'}`}>
+                  <span className="mr-1">{step.done ? '✓' : '·'}</span>{step.label}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">今日待办提醒</p>
+                <p className="mt-1 text-xs text-slate-500">每天先处理这里，避免车次漏收尾或漏结算。</p>
+              </div>
+              {todayActionItems.length === 0 && <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">暂无待办</span>}
+            </div>
+            {todayActionItems.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {todayActionItems.map(item => (
+                  <span key={item.label} className={`rounded-full border px-3 py-1 text-xs font-medium ${actionToneClass(item.tone)}`}>{item.label} {item.count}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!showEnded && riskyScripts.length > 0 && (
+        <div className="rounded-xl border border-orange-100 bg-orange-50 px-4 py-3">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-orange-900">剧本资料待补齐</p>
+              <p className="mt-1 text-xs text-orange-700">有 {riskyScripts.length} 个剧本缺玩家角色、卡司角色或时长，可能影响排期、指定卡司和开本确认。</p>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {riskyScripts.slice(0, 3).map(script => <span key={script.id} className="rounded-full bg-white px-2 py-1 text-xs text-orange-700">{script.name}</span>)}
+              {riskyScripts.length > 3 && <span className="rounded-full bg-white px-2 py-1 text-xs text-orange-700">+{riskyScripts.length - 3}</span>}
+            </div>
+          </div>
+        </div>
+      )}
 
       {!showEnded && currentStore && (
         <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
