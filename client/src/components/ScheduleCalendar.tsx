@@ -461,28 +461,28 @@ export default function ScheduleCalendar() {
     const summary = schedule.progress_summary;
     if (!summary?.steps?.length) return null;
     return (
-      <div className="mt-2 min-w-[300px] max-w-[520px]">
-        <div className="grid grid-cols-3 gap-1.5 lg:grid-cols-6">
+      <div className="mt-2 max-w-[500px]">
+        <div className="flex flex-wrap gap-1.5">
           {summary.steps.map(step => (
             <div
               key={step.key}
               title={step.done ? `${step.label}已完成` : step.optional ? `${step.label}可选，未处理` : `${step.label}未完成`}
-              className={`rounded-lg border px-1.5 py-1 text-center text-[11px] leading-tight ${step.done
+              className={`flex h-10 w-[58px] flex-col items-center justify-center rounded-lg border text-center leading-tight ${step.done
                 ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
                 : step.optional
                   ? 'border-slate-100 bg-slate-50 text-slate-400'
                   : 'border-slate-200 bg-white text-slate-500'}`}
             >
-              <span className="block font-medium">{step.label}</span>
-              <span className="mt-0.5 block text-[10px]">{step.done ? '已完成' : step.optional ? '可选' : '未完成'}</span>
+              <span className="text-[11px] font-medium">{step.label}</span>
+              <span className="text-[10px]">{step.done ? '已完成' : step.optional ? '可选' : '未完成'}</span>
             </div>
           ))}
         </div>
-        <div className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-slate-500">
-          <span>人数 {summary.boardedCount}/{summary.targetCount || '-'}</span>
-          <span>定金 {summary.depositReady}/{summary.depositRequired}</span>
-          <span>结算收款 {formatMoney(summary.finalTotal)}</span>
-          {summary.avgRating !== null && <span>评分 {summary.avgRating}</span>}
+        <div className="mt-1.5 flex flex-wrap gap-1 text-[11px] text-slate-500">
+          <span className="rounded bg-slate-50 px-1.5 py-0.5">人数 {summary.boardedCount}/{summary.targetCount || '-'}</span>
+          <span className="rounded bg-slate-50 px-1.5 py-0.5">定金 {summary.depositReady}/{summary.depositRequired}</span>
+          <span className="rounded bg-slate-50 px-1.5 py-0.5">结算 {formatMoney(summary.finalTotal)}</span>
+          {summary.avgRating !== null && <span className="rounded bg-slate-50 px-1.5 py-0.5">评分 {summary.avgRating}</span>}
         </div>
       </div>
     );
@@ -545,9 +545,8 @@ export default function ScheduleCalendar() {
             <div className="mt-1 text-[11px] text-orange-600">{lockReasonText[s.lock_reason] || s.lock_reason}</div>
           )}
           {isOverdueUnfinished && (
-            <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] leading-snug text-red-700">
-              这车按排期时间已经开完了，但没有补齐应有记录。
-              {missingSteps.length > 0 && <span className="block">待补：{missingSteps.join('、')}</span>}
+            <div className="mt-1.5 inline-flex max-w-[220px] items-center rounded-full border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-700" title={missingSteps.length > 0 ? `待补：${missingSteps.join('、')}` : '这车按时间已开完，但记录未补齐'}>
+              已过时 · 待补记录
             </div>
           )}
           {!['cancelled', 'bombed', 'completed'].includes(s.status) && (
@@ -916,8 +915,8 @@ export default function ScheduleCalendar() {
 
       {showFinanceModal && financeSchedule && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-3xl w-full mx-4 max-h-[88vh] overflow-y-auto">
-            <div className="flex items-start justify-between gap-4 mb-4">
+          <div className="bg-white rounded-xl p-5 max-w-2xl w-full mx-4 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-4 mb-3">
               <div>
                 <h3 className="text-lg font-bold text-gray-900">{financeMode === 'deposit' ? '定金锁车' : '完车结算'}</h3>
                 <p className="text-sm text-gray-500 mt-1">
@@ -927,41 +926,41 @@ export default function ScheduleCalendar() {
               <button onClick={() => setShowFinanceModal(false)} className="text-sm text-gray-400 hover:text-gray-600">关闭</button>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                <p className="text-xs text-slate-500">上车人数</p>
-                <p className="mt-1 text-xl font-semibold text-slate-900">{financeSchedule.progress_summary?.boardedCount || 0}/{financeSchedule.progress_summary?.targetCount || '-'}</p>
+            <div className="mb-3 grid grid-cols-4 gap-2 text-center">
+              <div className="rounded-lg border border-slate-100 bg-slate-50 px-2 py-1.5">
+                <p className="text-[11px] text-slate-500">人数</p>
+                <p className="text-sm font-semibold text-slate-900">{financeSchedule.progress_summary?.boardedCount || 0}/{financeSchedule.progress_summary?.targetCount || '-'}</p>
               </div>
-              <div className="rounded-lg border border-amber-100 bg-amber-50 p-3">
-                <p className="text-xs text-amber-700">定金</p>
-                <p className="mt-1 text-xl font-semibold text-amber-900">{financeSchedule.progress_summary?.depositReady || 0}/{financeSchedule.progress_summary?.depositRequired || 0}</p>
+              <div className="rounded-lg border border-amber-100 bg-amber-50 px-2 py-1.5">
+                <p className="text-[11px] text-amber-700">定金</p>
+                <p className="text-sm font-semibold text-amber-900">{financeSchedule.progress_summary?.depositReady || 0}/{financeSchedule.progress_summary?.depositRequired || 0}</p>
               </div>
-              <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-3">
-                <p className="text-xs text-indigo-700">结算收款</p>
-                <p className="mt-1 text-xl font-semibold text-indigo-900">¥{financeRows.reduce((sum, r) => sum + Number(r.final_amount || 0), 0)}</p>
+              <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-2 py-1.5">
+                <p className="text-[11px] text-indigo-700">收款</p>
+                <p className="text-sm font-semibold text-indigo-900">¥{financeRows.reduce((sum, r) => sum + Number(r.final_amount || 0), 0)}</p>
               </div>
-              <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3">
-                <p className="text-xs text-emerald-700">已结算</p>
-                <p className="mt-1 text-xl font-semibold text-emerald-900">{financeRows.filter(r => r.settlement_status === 'settled').length}/{financeRows.length}</p>
+              <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-2 py-1.5">
+                <p className="text-[11px] text-emerald-700">结算</p>
+                <p className="text-sm font-semibold text-emerald-900">{financeRows.filter(r => r.settlement_status === 'settled').length}/{financeRows.length}</p>
               </div>
             </div>
 
             {financeRows.length === 0 ? (
               <div className="rounded-lg bg-slate-50 p-8 text-center text-sm text-slate-500">这车还没有上车玩家，先通过拼车加入或客服代填上车。</div>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {financeRows.map((row, index) => (
-                  <div key={row.id} className="rounded-lg border border-slate-100 p-4">
+                  <div key={row.id} className="rounded-lg border border-slate-100 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-3">
-                        <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-sm font-bold ${row.deposit_status === 'paid' ? 'bg-amber-500 text-white' : row.deposit_status === 'refunded' ? 'bg-slate-200 text-slate-500' : 'bg-indigo-50 text-indigo-600'}`}>
+                      <div className="flex items-center gap-2">
+                        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${row.deposit_status === 'paid' ? 'bg-amber-500 text-white' : row.deposit_status === 'refunded' ? 'bg-slate-200 text-slate-500' : 'bg-indigo-50 text-indigo-600'}`}>
                           {avatarText(row.guest_name)}
                         </div>
                         <div>
-                        <p className="font-medium text-slate-900">{row.guest_name || '未命名'} <span className="text-sm font-normal text-slate-400">{row.role || '-'}</span></p>
-                        <p className="mt-1 text-xs text-slate-400">
-                          定金 {row.deposit_status === 'paid' ? `已收 ¥${row.deposit_amount || 0}` : row.deposit_status === 'waived' ? '免定金' : row.deposit_status === 'refunded' ? '已退' : '未收'} · 结算 {row.settlement_status === 'settled' ? '已结' : '待结'}
-                        </p>
+                          <p className="text-sm font-medium text-slate-900">{row.guest_name || '未命名'} <span className="text-xs font-normal text-slate-400">{row.role || '-'}</span></p>
+                          <p className="mt-0.5 text-[11px] text-slate-400">
+                            定金 {row.deposit_status === 'paid' ? `已收 ¥${row.deposit_amount || 0}` : row.deposit_status === 'waived' ? '免定金' : row.deposit_status === 'refunded' ? '已退' : '未收'} · 结算 {row.settlement_status === 'settled' ? '已结' : '待结'}
+                          </p>
                         </div>
                       </div>
                       {financeMode === 'settlement' && (
@@ -976,8 +975,8 @@ export default function ScheduleCalendar() {
                     </div>
 
                     {financeMode === 'deposit' ? (
-                      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[1fr_120px_160px_120px]">
-                        <div className="grid grid-cols-4 gap-2">
+                      <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[192px_92px_132px_96px] md:items-center">
+                        <div className="grid grid-cols-4 gap-1.5">
                           {[
                             ['unpaid', '未收'],
                             ['paid', '已收'],
@@ -988,7 +987,7 @@ export default function ScheduleCalendar() {
                               key={value}
                               type="button"
                               onClick={() => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_status: value } : r))}
-                              className={`rounded-lg px-2 py-2 text-xs font-medium ${row.deposit_status === value ? 'bg-amber-500 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                              className={`rounded-lg px-1.5 py-1.5 text-xs font-medium ${row.deposit_status === value ? 'bg-amber-500 text-white' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
                             >
                               {label}
                             </button>
@@ -999,15 +998,15 @@ export default function ScheduleCalendar() {
                           min="0"
                           value={row.deposit_amount}
                           onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_amount: e.target.value } : r))}
-                          className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                          placeholder="定金"
+                          className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm"
+                          placeholder="金额"
                         />
                         <input
                           type="text"
                           value={row.deposit_payer_name || ''}
                           onChange={e => setFinanceRows(rows => rows.map((r, i) => i === index ? { ...r, deposit_payer_name: e.target.value } : r))}
-                          className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                          placeholder="付款人/代付人"
+                          className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm"
+                          placeholder="付款人"
                         />
                         <button
                           type="button"
@@ -1017,9 +1016,9 @@ export default function ScheduleCalendar() {
                             deposit_amount: Number(r.deposit_amount || defaultDepositAmount),
                             deposit_payer_name: row.guest_name || row.deposit_payer_name || '车头',
                           })))}
-                          className="rounded-lg bg-orange-50 px-3 py-2 text-xs font-medium text-orange-700 hover:bg-orange-100"
+                          className="rounded-lg bg-orange-50 px-2.5 py-1.5 text-xs font-medium text-orange-700 hover:bg-orange-100"
                         >
-                          此人代付全车
+                          代付全车
                         </button>
                       </div>
                     ) : (
