@@ -132,6 +132,7 @@ export default function ScheduleCalendar() {
   };
 
   const openEditModal = (schedule: ScheduleWithDetails) => {
+    if (['completed', 'cancelled', 'bombed', 'issue'].includes(schedule.status)) return;
     setEditingSchedule(schedule); setIsPendingMode(!schedule.room_id);
     const startDateTime = parseISO(schedule.start_time);
     setFormData({
@@ -801,7 +802,7 @@ export default function ScheduleCalendar() {
                   const pendingRequestCount = s.pending_request_count || 0;
                   carCounter++;
                   const cn = `#${String(carCounter).padStart(3, '0')}`;
-                  return (<tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer" onClick={() => openEditModal(s)}>
+                  return (<tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50">
                     <td className="px-4 py-3"><span className="text-xs font-mono font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">{cn}</span></td>
                     <td className="px-4 py-3 text-gray-800">{format(sd, 'M/d')}</td>
                     <td className="px-4 py-3 text-gray-500">{format(sd, 'EEEE', { locale: zhCN })}</td>

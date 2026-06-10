@@ -2029,8 +2029,9 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
   try {
     const d = req.body;
     const tenantId = currentTenantId(req);
-    const { data: owned } = await supabase.from('schedules').select('id').eq('id', req.params.id).eq('tenant_id', tenantId).maybeSingle();
+    const { data: owned } = await supabase.from('schedules').select('id, status').eq('id', req.params.id).eq('tenant_id', tenantId).maybeSingle();
     if (!owned) return res.status(404).json(err(new Error('排期不存在')));
+    if (['completed', 'cancelled', 'bombed', 'issue'].includes(owned.status)) return res.status(400).json(err(new Error('历史记录已归档，不能修改车次核心信息')));
     const fields: any = {};
     if (d.scriptId !== undefined) fields.script_id = d.scriptId;
     if (d.roomId !== undefined) fields.room_id = d.roomId;
@@ -2064,7 +2065,14 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.delete('/api/schedules/:id', async (req: any, res: any) => {
-  try { await supabase.from('schedules').delete().eq('id', req.params.id).eq('tenant_id', currentTenantId(req)); res.json(ok()); }
+  try {
+    const tenantId = currentTenantId(req);
+    const { data: owned } = await supabase.from('schedules').select('id, status').eq('id', req.params.id).eq('tenant_id', tenantId).maybeSingle();
+    if (!owned) return res.status(404).json(err(new Error('排期不存在')));
+    if (['completed', 'cancelled', 'bombed', 'issue'].includes(owned.status)) return res.status(400).json(err(new Error('历史记录已归档，不能删除')));
+    await supabase.from('schedules').delete().eq('id', req.params.id).eq('tenant_id', tenantId);
+    res.json(ok());
+  }
   catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/schedules/:id/confirm', async (req: any, res: any) => {
