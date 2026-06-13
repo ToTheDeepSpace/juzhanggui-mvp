@@ -148,6 +148,16 @@ function sha256(input: string): string { return crypto.createHash('sha256').upda
 function cleanText(input: unknown, max = 120): string {
   return typeof input === 'string' ? input.trim().slice(0, max) : '';
 }
+const FEEDBACK_CATEGORIES = ['suggestion', 'bug', 'question', 'complaint', 'report', 'illegal_content', 'security', 'privacy', 'other'];
+function feedbackCategoryValue(input: unknown) {
+  const value = cleanText(input, 40) || 'suggestion';
+  return FEEDBACK_CATEGORIES.includes(value) ? value : null;
+}
+function feedbackPriorityFor(category: string) {
+  if (['illegal_content', 'security', 'privacy'].includes(category)) return 'urgent';
+  if (['complaint', 'report', 'bug'].includes(category)) return 'high';
+  return 'normal';
+}
 function scriptTypeValue(input: unknown) {
   const value = cleanText(input, 40);
   return ['emotional', 'comedy', 'horror', 'mechanism', 'faction'].includes(value) ? value : null;
@@ -1772,20 +1782,23 @@ app.get('/api/feedback', async (req: any, res: any) => {
 
 app.post('/api/feedback', async (req: any, res: any) => {
   try {
-    const category = cleanText(req.body?.category, 30) || 'suggestion';
+    const category = feedbackCategoryValue(req.body?.category);
     const title = cleanText(req.body?.title, 160);
     const content = cleanText(req.body?.content, 3000);
+    if (!category) return res.status(400).json(err(new Error('反馈类型无效')));
     if (!title) return res.status(400).json(err(new Error('请填写反馈标题')));
     if (!content) return res.status(400).json(err(new Error('请填写反馈内容')));
-    if (!['suggestion', 'bug', 'question', 'other'].includes(category)) return res.status(400).json(err(new Error('反馈类型无效')));
+    const priority = feedbackPriorityFor(category);
     const { data, error } = await supabase.from('jzg_feedback_messages').insert({
       tenant_id: currentTenantId(req),
       admin_user_id: req.user?.adminUserId || null,
       category,
       title,
       content,
+      priority,
     }).select('*').single();
     if (error) throw error;
+    await logStoreAction(req, 'feedback_submitted', { type: 'feedback', id: data.id, label: title }, { category, priority });
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });

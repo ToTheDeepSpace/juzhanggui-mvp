@@ -23,6 +23,7 @@ export default function ComplianceFooter({ variant = 'light' }: ComplianceFooter
         <div className="flex flex-wrap justify-center gap-x-4 gap-y-2">
           <Link to="/terms" className={`${link} transition-colors`}>用户协议</Link>
           <Link to="/privacy" className={`${link} transition-colors`}>隐私政策</Link>
+          <Link to="/security-compliance" className={`${link} transition-colors`}>安全合规说明</Link>
           <Link to="/contact" className={`${link} transition-colors`}>联系我们</Link>
           <Link to="/business-license" className={`${link} transition-colors`}>经营主体信息</Link>
           <a href="https://lingqi.jusichen.com" target="_blank" rel="noopener noreferrer" className={`${link} transition-colors`}>灵契用户端</a>
