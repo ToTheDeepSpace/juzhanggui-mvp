@@ -341,6 +341,10 @@ function moneyCents(input: unknown): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.round(value));
 }
+function clockTime(input: unknown, fallback: string): string {
+  const value = cleanText(input, 5);
+  return /^\d{2}:\d{2}$/.test(value) ? value : fallback;
+}
 
 function signedMoneyCents(input: unknown): number {
   const value = Number(input || 0);
@@ -1681,6 +1685,14 @@ app.post('/api/stores', async (req: any, res: any) => {
       address: address ? String(address).trim() : null,
       contact: contact ? String(contact).trim() : null,
       default_deposit_amount: moneyCents(req.body?.defaultDepositAmount ?? 5000),
+      early_fee_enabled: true,
+      early_fee_start_time: '00:00',
+      early_fee_end_time: '12:00',
+      early_fee_amount_per_hour: 1000,
+      night_fee_enabled: true,
+      night_fee_start_time: '00:30',
+      night_fee_end_time: '06:00',
+      night_fee_amount_per_hour: 1000,
       status: 'active',
     }).returning();
     if (!data) throw new Error('创建店家失败');
@@ -1697,6 +1709,14 @@ app.put('/api/stores/:id/settings', async (req: any, res: any) => {
     if (!isSuperAdminReq(req) && storeId !== tenantId) return res.status(403).json(err(new Error('不能修改其他店家的设置')));
     const fields: any = {};
     if (req.body.defaultDepositAmount !== undefined) fields.default_deposit_amount = moneyCents(req.body.defaultDepositAmount);
+    if (req.body.earlyFeeEnabled !== undefined) fields.early_fee_enabled = Boolean(req.body.earlyFeeEnabled);
+    if (req.body.earlyFeeStartTime !== undefined) fields.early_fee_start_time = clockTime(req.body.earlyFeeStartTime, '00:00');
+    if (req.body.earlyFeeEndTime !== undefined) fields.early_fee_end_time = clockTime(req.body.earlyFeeEndTime, '12:00');
+    if (req.body.earlyFeeAmountPerHour !== undefined) fields.early_fee_amount_per_hour = moneyCents(req.body.earlyFeeAmountPerHour);
+    if (req.body.nightFeeEnabled !== undefined) fields.night_fee_enabled = Boolean(req.body.nightFeeEnabled);
+    if (req.body.nightFeeStartTime !== undefined) fields.night_fee_start_time = clockTime(req.body.nightFeeStartTime, '00:30');
+    if (req.body.nightFeeEndTime !== undefined) fields.night_fee_end_time = clockTime(req.body.nightFeeEndTime, '06:00');
+    if (req.body.nightFeeAmountPerHour !== undefined) fields.night_fee_amount_per_hour = moneyCents(req.body.nightFeeAmountPerHour);
     if (!Object.keys(fields).length) return res.status(400).json(err(new Error('没有可保存的设置')));
     const [data] = await db.update(jzgStores).set(fields).where(eq(jzgStores.id, storeId)).returning();
     if (!data) return res.status(404).json(err(new Error('店家不存在')));

@@ -10,6 +10,96 @@ import ScheduleCalendarModal from './ScheduleCalendarModal';
 import QRCodeModal from './QRCodeModal';
 import ConfirmScheduleModal from './ConfirmScheduleModal';
 
+type ExtraFeeDraft = {
+  earlyFeeEnabled: boolean;
+  earlyFeeStartTime: string;
+  earlyFeeEndTime: string;
+  earlyFeeAmountPerHour: string;
+  nightFeeEnabled: boolean;
+  nightFeeStartTime: string;
+  nightFeeEndTime: string;
+  nightFeeAmountPerHour: string;
+};
+
+const defaultExtraFeeDraft: ExtraFeeDraft = {
+  earlyFeeEnabled: true,
+  earlyFeeStartTime: '00:00',
+  earlyFeeEndTime: '12:00',
+  earlyFeeAmountPerHour: '10',
+  nightFeeEnabled: true,
+  nightFeeStartTime: '00:30',
+  nightFeeEndTime: '06:00',
+  nightFeeAmountPerHour: '10',
+};
+
+const centsToYuan = (cents?: number, fallback = 0) => Math.round(Number(cents ?? fallback) / 100);
+
+function draftFromStore(store?: StoreRecord | null): ExtraFeeDraft {
+  if (!store) return defaultExtraFeeDraft;
+  return {
+    earlyFeeEnabled: store.early_fee_enabled !== false,
+    earlyFeeStartTime: store.early_fee_start_time || '00:00',
+    earlyFeeEndTime: store.early_fee_end_time || '12:00',
+    earlyFeeAmountPerHour: String(centsToYuan(store.early_fee_amount_per_hour, 1000)),
+    nightFeeEnabled: store.night_fee_enabled !== false,
+    nightFeeStartTime: store.night_fee_start_time || '00:30',
+    nightFeeEndTime: store.night_fee_end_time || '06:00',
+    nightFeeAmountPerHour: String(centsToYuan(store.night_fee_amount_per_hour, 1000)),
+  };
+}
+
+function timeToMinutes(time: string) {
+  const match = /^(\d{2}):(\d{2})$/.exec(time || '');
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function dayStart(date: Date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function rangeOverlapMinutes(start: Date, end: Date, windowStartTime: string, windowEndTime: string) {
+  const startMinute = timeToMinutes(windowStartTime);
+  const endMinute = timeToMinutes(windowEndTime);
+  if (startMinute === null || endMinute === null || end <= start) return 0;
+  let total = 0;
+  const base = dayStart(start).getTime();
+  for (let offset = -1; offset <= 2; offset += 1) {
+    const winStart = new Date(base + offset * 86400000 + startMinute * 60000);
+    const winEnd = new Date(base + offset * 86400000 + endMinute * 60000);
+    if (winEnd <= winStart) winEnd.setDate(winEnd.getDate() + 1);
+    const overlap = Math.min(end.getTime(), winEnd.getTime()) - Math.max(start.getTime(), winStart.getTime());
+    if (overlap > 0) total += Math.ceil(overlap / 60000);
+  }
+  return total;
+}
+
+function scheduleRange(schedule: ScheduleWithDetails) {
+  const start = schedule.actual_started_at ? new Date(schedule.actual_started_at) : parseISO(schedule.start_time);
+  const end = schedule.actual_ended_at ? new Date(schedule.actual_ended_at) : parseISO(schedule.end_time);
+  if (end <= start) end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+
+function calcExtraFee(schedule: ScheduleWithDetails | null, draft: ExtraFeeDraft) {
+  if (!schedule) return { earlyHours: 0, nightHours: 0, perPlayer: 0, total: 0 };
+  const { start, end } = scheduleRange(schedule);
+  const earlyMinutes = draft.earlyFeeEnabled ? rangeOverlapMinutes(start, end, draft.earlyFeeStartTime, draft.earlyFeeEndTime) : 0;
+  const nightMinutes = draft.nightFeeEnabled ? rangeOverlapMinutes(start, end, draft.nightFeeStartTime, draft.nightFeeEndTime) : 0;
+  const earlyHours = Math.ceil(earlyMinutes / 60);
+  const nightHours = Math.ceil(nightMinutes / 60);
+  const earlyRate = Math.max(0, Number(draft.earlyFeeAmountPerHour || 0) || 0);
+  const nightRate = Math.max(0, Number(draft.nightFeeAmountPerHour || 0) || 0);
+  const perPlayer = earlyHours * earlyRate + nightHours * nightRate;
+  const playerCount = Number(schedule.progress_summary?.boardedCount || schedule.checkins?.length || 0);
+  return { earlyHours, nightHours, perPlayer, total: perPlayer * playerCount };
+}
+
 export default function ScheduleCalendar() {
   const { get, post, put, del, loading } = useApi();
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -20,6 +110,9 @@ export default function ScheduleCalendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [defaultDepositDraft, setDefaultDepositDraft] = useState('100');
   const [depositSettingMsg, setDepositSettingMsg] = useState('');
+  const [showFeeSettings, setShowFeeSettings] = useState(false);
+  const [extraFeeDraft, setExtraFeeDraft] = useState<ExtraFeeDraft>(defaultExtraFeeDraft);
+  const [extraFeeMsg, setExtraFeeMsg] = useState('');
 
   // 弹窗状态
   const [showModal, setShowModal] = useState(false);
@@ -99,7 +192,10 @@ export default function ScheduleCalendar() {
       const nextStores = storesRes.data || [];
       setStores(nextStores);
       const first = nextStores[0];
-      if (first) setDefaultDepositDraft(String(Math.round(Number(first.default_deposit_amount || 10000) / 100)));
+      if (first) {
+        setDefaultDepositDraft(String(Math.round(Number(first.default_deposit_amount || 10000) / 100)));
+        setExtraFeeDraft(draftFromStore(first));
+      }
     }
   };
 
@@ -174,6 +270,8 @@ export default function ScheduleCalendar() {
     e.stopPropagation();
     setFinanceSchedule(schedule);
     setFinanceMode(mode);
+    setShowFeeSettings(false);
+    setExtraFeeMsg('');
     setFinanceRows((schedule.checkins || []).map((item: any) => ({
       id: item.id,
       guest_name: item.guest_name || '',
@@ -187,6 +285,7 @@ export default function ScheduleCalendar() {
       final_payment_method: item.final_payment_method || '',
       settlement_status: item.settlement_status || 'unsettled',
       settlement_note: item.settlement_note || '',
+      extra_fee_applied: false,
     })));
     setShowFinanceModal(true);
   };
@@ -293,6 +392,41 @@ export default function ScheduleCalendar() {
     } else {
       setDepositSettingMsg(result.error || '保存失败');
     }
+  };
+
+  const saveExtraFeeSetting = async () => {
+    if (!currentStore) return;
+    setExtraFeeMsg('');
+    const result = await put<StoreRecord>(`/stores/${currentStore.id}/settings`, {
+      earlyFeeEnabled: extraFeeDraft.earlyFeeEnabled,
+      earlyFeeStartTime: extraFeeDraft.earlyFeeStartTime,
+      earlyFeeEndTime: extraFeeDraft.earlyFeeEndTime,
+      earlyFeeAmountPerHour: Math.round((Number(extraFeeDraft.earlyFeeAmountPerHour || 0) || 0) * 100),
+      nightFeeEnabled: extraFeeDraft.nightFeeEnabled,
+      nightFeeStartTime: extraFeeDraft.nightFeeStartTime,
+      nightFeeEndTime: extraFeeDraft.nightFeeEndTime,
+      nightFeeAmountPerHour: Math.round((Number(extraFeeDraft.nightFeeAmountPerHour || 0) || 0) * 100),
+    });
+    if (result.success) {
+      setExtraFeeMsg('计费规则已保存');
+      loadData();
+    } else {
+      setExtraFeeMsg(result.error || '保存失败');
+    }
+  };
+
+  const applyExtraFeeToRows = () => {
+    const fee = calcExtraFee(financeSchedule, extraFeeDraft);
+    if (fee.perPlayer <= 0) return;
+    setFinanceRows(rows => rows.map(row => row.extra_fee_applied ? row : {
+      ...row,
+      final_amount: Number(row.final_amount || 0) + fee.perPlayer,
+      extra_fee_applied: true,
+      settlement_note: row.settlement_note || [
+        fee.earlyHours > 0 ? `早起费${fee.earlyHours}小时` : '',
+        fee.nightHours > 0 ? `修仙费${fee.nightHours}小时` : '',
+      ].filter(Boolean).join('，'),
+    }));
   };
 
   const handleStartConfirm = async () => {
@@ -624,6 +758,7 @@ export default function ScheduleCalendar() {
   const depositRequiredCount = financeRows.filter(r => !['waived', 'refunded'].includes(r.deposit_status || '')).length;
   const depositReadyCount = financeRows.filter(r => ['paid', 'waived'].includes(r.deposit_status || '')).length;
   const canLockFinanceSchedule = financeRows.length > 0 && depositReadyCount >= Math.max(1, depositRequiredCount);
+  const extraFeeSuggestion = calcExtraFee(financeSchedule, extraFeeDraft);
   const financeSlots = financeSchedule
     ? [
       ...financeRows.map(row => ({ kind: 'player' as const, row })),
@@ -1028,10 +1163,21 @@ export default function ScheduleCalendar() {
                   {financeSchedule.script_name || scripts.find(s => s.id === financeSchedule.script_id)?.name || '未知剧本'} · {format(parseISO(financeSchedule.start_time), 'M/d HH:mm')}
                 </p>
               </div>
-              <button onClick={() => setShowFinanceModal(false)} className="text-sm text-gray-400 hover:text-gray-600">关闭</button>
+              <div className="flex items-center gap-2">
+                {financeMode === 'settlement' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowFeeSettings(value => !value)}
+                    className="rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                  >
+                    计费规则
+                  </button>
+                )}
+                <button onClick={() => setShowFinanceModal(false)} className="text-sm text-gray-400 hover:text-gray-600">关闭</button>
+              </div>
             </div>
 
-            <div className="mb-3 grid grid-cols-4 gap-2 text-center">
+            <div className="mb-3 grid grid-cols-2 gap-2 text-center md:grid-cols-5">
               <div className="rounded-lg border border-slate-100 bg-slate-50 px-2 py-1.5">
                 <p className="text-[11px] text-slate-500">人数</p>
                 <p className="text-sm font-semibold text-slate-900">{financeSchedule.progress_summary?.boardedCount || 0}/{financeSchedule.progress_summary?.targetCount || '-'}</p>
@@ -1048,7 +1194,60 @@ export default function ScheduleCalendar() {
                 <p className="text-[11px] text-emerald-700">结算</p>
                 <p className="text-sm font-semibold text-emerald-900">{financeRows.filter(r => r.settlement_status === 'settled').length}/{financeRows.length}</p>
               </div>
+              <div className="rounded-lg border border-violet-100 bg-violet-50 px-2 py-1.5">
+                <p className="text-[11px] text-violet-700">附加费</p>
+                <p className="text-sm font-semibold text-violet-900">¥{extraFeeSuggestion.perPlayer}/人</p>
+              </div>
             </div>
+
+            {financeMode === 'settlement' && showFeeSettings && (
+              <div className="mb-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+                <div className="grid gap-2 md:grid-cols-2">
+                  <div className="rounded-lg bg-white p-3">
+                    <label className="flex items-center justify-between gap-2 text-sm font-semibold text-slate-900">
+                      <span>早起费</span>
+                      <input type="checkbox" checked={extraFeeDraft.earlyFeeEnabled} onChange={e => setExtraFeeDraft(d => ({ ...d, earlyFeeEnabled: e.target.checked }))} />
+                    </label>
+                    <div className="mt-2 grid grid-cols-[1fr_1fr_72px] gap-2">
+                      <input type="time" value={extraFeeDraft.earlyFeeStartTime} onChange={e => setExtraFeeDraft(d => ({ ...d, earlyFeeStartTime: e.target.value }))} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
+                      <input type="time" value={extraFeeDraft.earlyFeeEndTime} onChange={e => setExtraFeeDraft(d => ({ ...d, earlyFeeEndTime: e.target.value }))} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
+                      <input type="number" min="0" value={extraFeeDraft.earlyFeeAmountPerHour} onChange={e => setExtraFeeDraft(d => ({ ...d, earlyFeeAmountPerHour: e.target.value }))} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">默认 12 点前，每小时每人加收；可设 0。</p>
+                  </div>
+                  <div className="rounded-lg bg-white p-3">
+                    <label className="flex items-center justify-between gap-2 text-sm font-semibold text-slate-900">
+                      <span>修仙费</span>
+                      <input type="checkbox" checked={extraFeeDraft.nightFeeEnabled} onChange={e => setExtraFeeDraft(d => ({ ...d, nightFeeEnabled: e.target.checked }))} />
+                    </label>
+                    <div className="mt-2 grid grid-cols-[1fr_1fr_72px] gap-2">
+                      <input type="time" value={extraFeeDraft.nightFeeStartTime} onChange={e => setExtraFeeDraft(d => ({ ...d, nightFeeStartTime: e.target.value }))} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
+                      <input type="time" value={extraFeeDraft.nightFeeEndTime} onChange={e => setExtraFeeDraft(d => ({ ...d, nightFeeEndTime: e.target.value }))} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
+                      <input type="number" min="0" value={extraFeeDraft.nightFeeAmountPerHour} onChange={e => setExtraFeeDraft(d => ({ ...d, nightFeeAmountPerHour: e.target.value }))} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">默认 00:30 后，每小时每人加收。</p>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <p className="text-xs text-indigo-700">当前车建议：早起 {extraFeeSuggestion.earlyHours} 小时，修仙 {extraFeeSuggestion.nightHours} 小时，合计 ¥{extraFeeSuggestion.total}。</p>
+                  <button type="button" onClick={saveExtraFeeSetting} disabled={loading} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50">保存默认</button>
+                </div>
+                {extraFeeMsg && <p className="mt-2 text-xs text-indigo-700">{extraFeeMsg}</p>}
+              </div>
+            )}
+
+            {financeMode === 'settlement' && extraFeeSuggestion.perPlayer > 0 && (
+              <div className="mb-3 flex flex-col gap-2 rounded-lg border border-violet-100 bg-violet-50 px-3 py-2 md:flex-row md:items-center md:justify-between">
+                <p className="text-xs text-violet-800">
+                  本车按当前规则建议每人加收 ¥{extraFeeSuggestion.perPlayer}
+                  {extraFeeSuggestion.earlyHours > 0 ? `，早起费 ${extraFeeSuggestion.earlyHours} 小时` : ''}
+                  {extraFeeSuggestion.nightHours > 0 ? `，修仙费 ${extraFeeSuggestion.nightHours} 小时` : ''}。
+                </p>
+                <button type="button" onClick={applyExtraFeeToRows} className="rounded-md bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-700">
+                  加到每人收款
+                </button>
+              </div>
+            )}
 
             {financeRows.length === 0 ? (
               <div className="rounded-lg bg-slate-50 p-8 text-center text-sm text-slate-500">这车还没有上车玩家，先通过拼车加入或客服代填上车。</div>

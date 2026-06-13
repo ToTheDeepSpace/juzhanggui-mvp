@@ -38,6 +38,14 @@ export interface StoreRecord {
   address?: string | null;
   contact?: string | null;
   default_deposit_amount?: number;
+  early_fee_enabled?: boolean;
+  early_fee_start_time?: string;
+  early_fee_end_time?: string;
+  early_fee_amount_per_hour?: number;
+  night_fee_enabled?: boolean;
+  night_fee_start_time?: string;
+  night_fee_end_time?: string;
+  night_fee_amount_per_hour?: number;
   status: 'active' | 'paused' | 'archived';
   created_at?: string;
 }
