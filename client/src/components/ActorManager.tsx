@@ -3,6 +3,23 @@ import { useApi } from '../hooks/useApi';
 import type { Actor, Script, ActorSkill } from '../types';
 
 const LINGQI_SITE_URL = (import.meta.env.VITE_LINGQI_SITE_URL || 'https://lingqi.jusichen.com').replace(/\/$/, '');
+const ROLE_KIND_LABEL: Record<string, string> = {
+  dm: 'DM',
+  field_control: '场控',
+  npc: 'NPC',
+  assistant: '助演',
+  other: '其他',
+};
+
+interface LearningTask {
+  id: string;
+  script_id: string;
+  script_name?: string;
+  title: string;
+  due_date?: string | null;
+  note?: string | null;
+  status: string;
+}
 
 export default function ActorManager() {
   const { get, post, put, del, loading } = useApi();
@@ -16,7 +33,11 @@ export default function ActorManager() {
   const [editingActor, setEditingActor] = useState<Actor | null>(null);
   const [selectedScript, setSelectedScript] = useState('');
   const [selectedRole, setSelectedRole] = useState('');
+  const [selectedRoleType, setSelectedRoleType] = useState('dm');
   const [proficiency, setProficiency] = useState(3);
+  const [learningTasks, setLearningTasks] = useState<LearningTask[]>([]);
+  const [learningForm, setLearningForm] = useState({ scriptId: '', dueDate: '', note: '' });
+  const [assessmentForm, setAssessmentForm] = useState({ taskId: '', scriptId: '', result: 'passed', score: '85', note: '' });
 
   useEffect(() => {
     loadActors();
@@ -42,6 +63,10 @@ export default function ActorManager() {
     if (result.success && result.data) {
       setActorSkills(result.data);
     }
+  };
+  const loadLearningTasks = async (actorId: string) => {
+    const result = await get<LearningTask[]>(`/actors/${actorId}/learning-tasks`);
+    if (result.success && result.data) setLearningTasks(result.data);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -79,6 +104,7 @@ export default function ActorManager() {
   const openSkillModal = async (actor: Actor) => {
     setSelectedActor(actor);
     await loadActorSkills(actor.id);
+    await loadLearningTasks(actor.id);
     setShowSkillModal(true);
   };
 
@@ -88,12 +114,41 @@ export default function ActorManager() {
     await post(`/actors/${selectedActor.id}/skills`, {
       scriptId: selectedScript,
       roleName: selectedRole,
-      roleType: script?.actor_roles?.includes(selectedRole) ? 'actor' : 'player',
+      roleType: selectedRoleType || (script?.actor_roles?.includes(selectedRole) ? 'dm' : 'player'),
       proficiency,
     });
     setSelectedScript('');
     setSelectedRole('');
+    setSelectedRoleType('dm');
     setProficiency(3);
+    loadActorSkills(selectedActor.id);
+  };
+  const createLearningTask = async () => {
+    if (!selectedActor || !learningForm.scriptId) return;
+    const result = await post(`/actors/${selectedActor.id}/learning-tasks`, {
+      scriptId: learningForm.scriptId,
+      dueDate: learningForm.dueDate || null,
+      note: learningForm.note,
+    });
+    if (!result.success) return alert(result.error || '派发学本任务失败');
+    setLearningForm({ scriptId: '', dueDate: '', note: '' });
+    loadLearningTasks(selectedActor.id);
+  };
+  const saveAssessment = async () => {
+    if (!selectedActor) return;
+    const task = learningTasks.find(item => item.id === assessmentForm.taskId);
+    const scriptId = assessmentForm.scriptId || task?.script_id;
+    if (!scriptId) return alert('请选择考核剧本');
+    const result = await post(`/actors/${selectedActor.id}/assessments`, {
+      taskId: assessmentForm.taskId || null,
+      scriptId,
+      result: assessmentForm.result,
+      score: Number(assessmentForm.score || 0),
+      note: assessmentForm.note,
+    });
+    if (!result.success) return alert(result.error || '保存考核失败');
+    setAssessmentForm({ taskId: '', scriptId: '', result: 'passed', score: '85', note: '' });
+    loadLearningTasks(selectedActor.id);
     loadActorSkills(selectedActor.id);
   };
 
@@ -108,7 +163,8 @@ export default function ActorManager() {
     const script = scripts.find(s => s.id === selectedScript);
     if (!script) return [];
     return [
-      ...(script.actor_roles || []).map(r => ({ name: r, type: 'actor' })),
+      ...(script.actor_role_details || []).map(r => ({ name: r.name, type: r.role_kind || 'dm' })),
+      ...(!script.actor_role_details?.length ? (script.actor_roles || []).map(r => ({ name: r, type: 'dm' })) : []),
       ...(script.player_roles || []).map(r => ({ name: r, type: 'player' }))
     ];
   };
@@ -301,10 +357,24 @@ export default function ActorManager() {
                     >
                       <option value="">选择角色</option>
                       {getSelectedScriptRoles().map((role) => (
-                        <option key={role.name} value={role.name}>
-                          {role.name} {role.type === 'actor' ? '(卡司)' : '(玩家)'}
+                        <option key={`${role.type}-${role.name}`} value={role.name}>
+                          {role.name} ({role.type === 'player' ? '玩家' : ROLE_KIND_LABEL[role.type] || '演绎'})
                         </option>
                       ))}
+                    </select>
+                  </div>
+                  <div className="w-28">
+                    <label className="block text-xs text-gray-500 mb-1">类型</label>
+                    <select
+                      value={selectedRoleType}
+                      onChange={(e) => setSelectedRoleType(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    >
+                      <option value="dm">DM</option>
+                      <option value="field_control">场控</option>
+                      <option value="npc">NPC</option>
+                      <option value="assistant">助演</option>
+                      <option value="player">玩家角色</option>
                     </select>
                   </div>
                   <div className="w-28">
@@ -348,7 +418,7 @@ export default function ActorManager() {
                         <span className="font-medium">{skill.script_name}</span>
                         <span className="text-sm text-gray-500 ml-2">- {skill.role_name}</span>
                         <span className={`ml-2 px-2 py-0.5 text-xs rounded ${skill.role_type === 'actor' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
-                          {skill.role_type === 'actor' ? '卡司' : '玩家'}
+                          {ROLE_KIND_LABEL[skill.role_type] || (skill.role_type === 'player' ? '玩家' : '演绎')}
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
@@ -370,6 +440,54 @@ export default function ActorManager() {
                   ))}
                 </div>
               )}
+            </div>
+
+            <div className="mt-6 border-t border-gray-100 pt-5">
+              <h4 className="font-medium mb-3">学本任务与考核</h4>
+              <div className="grid gap-3 rounded-lg bg-amber-50 p-3">
+                <select value={learningForm.scriptId} onChange={(e) => setLearningForm({ ...learningForm, scriptId: e.target.value })} className="px-3 py-2 border border-amber-200 rounded-lg bg-white text-sm">
+                  <option value="">选择要派发的剧本</option>
+                  {scripts.map(script => <option key={script.id} value={script.id}>{script.name}</option>)}
+                </select>
+                <input type="date" value={learningForm.dueDate} onChange={(e) => setLearningForm({ ...learningForm, dueDate: e.target.value })} className="px-3 py-2 border border-amber-200 rounded-lg bg-white text-sm" />
+                <textarea value={learningForm.note} onChange={(e) => setLearningForm({ ...learningForm, note: e.target.value })} placeholder="学习要求，例如先看本、跟车一次、准备复盘问题" className="h-20 px-3 py-2 border border-amber-200 rounded-lg bg-white text-sm" />
+                <button onClick={createLearningTask} disabled={!learningForm.scriptId} className="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50">派发学本任务</button>
+              </div>
+              <div className="mt-3 space-y-2">
+                {learningTasks.map(task => (
+                  <div key={task.id} className="rounded-lg border border-amber-100 bg-white p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-gray-800">{task.title}</p>
+                        <p className="text-xs text-gray-500">{task.script_name || '未命名剧本'} · {task.due_date || '未设截止'} · {task.status}</p>
+                        {task.note && <p className="mt-1 text-xs text-gray-500">{task.note}</p>}
+                      </div>
+                      <button
+                        onClick={() => setAssessmentForm({ ...assessmentForm, taskId: task.id, scriptId: task.script_id })}
+                        className="text-xs text-amber-700 hover:text-amber-900"
+                      >
+                        考核
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {learningTasks.length === 0 && <p className="text-sm text-gray-500 text-center py-3">暂无学本任务</p>}
+              </div>
+              <div className="mt-3 grid gap-2 rounded-lg bg-green-50 p-3">
+                <select value={assessmentForm.scriptId} onChange={(e) => setAssessmentForm({ ...assessmentForm, scriptId: e.target.value })} className="px-3 py-2 border border-green-200 rounded-lg bg-white text-sm">
+                  <option value="">选择考核剧本</option>
+                  {scripts.map(script => <option key={script.id} value={script.id}>{script.name}</option>)}
+                </select>
+                <div className="grid grid-cols-2 gap-2">
+                  <select value={assessmentForm.result} onChange={(e) => setAssessmentForm({ ...assessmentForm, result: e.target.value })} className="px-3 py-2 border border-green-200 rounded-lg bg-white text-sm">
+                    <option value="passed">通过</option>
+                    <option value="failed">未通过</option>
+                  </select>
+                  <input value={assessmentForm.score} onChange={(e) => setAssessmentForm({ ...assessmentForm, score: e.target.value })} type="number" min="0" max="100" className="px-3 py-2 border border-green-200 rounded-lg bg-white text-sm" placeholder="分数" />
+                </div>
+                <textarea value={assessmentForm.note} onChange={(e) => setAssessmentForm({ ...assessmentForm, note: e.target.value })} placeholder="考核备注" className="h-16 px-3 py-2 border border-green-200 rounded-lg bg-white text-sm" />
+                <button onClick={saveAssessment} disabled={!assessmentForm.scriptId} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50">保存考核结果</button>
+              </div>
             </div>
           </div>
         </div>

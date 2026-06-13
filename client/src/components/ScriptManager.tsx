@@ -17,9 +17,17 @@ const DISTRIBUTION_TYPE_OPTIONS = [
   { value: 'boxed', label: '盒装' },
   { value: 'exclusive', label: '独家' },
 ];
+const ROLE_KIND_OPTIONS = [
+  { value: 'dm', label: 'DM' },
+  { value: 'field_control', label: '场控' },
+  { value: 'npc', label: 'NPC' },
+  { value: 'assistant', label: '助演' },
+  { value: 'other', label: '其他' },
+];
 
 const scriptTypeLabel = (value?: string | null) => SCRIPT_TYPE_OPTIONS.find(option => option.value === value)?.label || '未设置类型';
 const distributionTypeLabel = (value?: string | null) => DISTRIBUTION_TYPE_OPTIONS.find(option => option.value === value)?.label || '未设置发行形态';
+const roleKindLabel = (value?: string | null) => ROLE_KIND_OPTIONS.find(option => option.value === value)?.label || 'DM';
 
 export default function ScriptManager() {
   const { get, post, put, del, loading } = useApi();
@@ -104,7 +112,7 @@ export default function ScriptManager() {
     const existingNames = new Set(formData.playerRoles.map(r => r.name));
     const newRoles = names
       .filter(name => !existingNames.has(name))
-      .map(name => ({ name, gender: '未指定' }));
+      .map(name => ({ name, gender: '未指定', role_kind: 'dm' }));
     
     if (newRoles.length > 0) {
       setFormData({
@@ -170,7 +178,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       maxDuration: Math.round(parseFloat(formData.maxDuration) * 60), // 小时转分钟
       playerCount: parseInt(formData.playerCount),
       playerRoles: formData.playerRoles.map(r => r.gender && r.gender !== '未指定' ? `${r.name}(${r.gender})` : r.name),
-      actorRoles: formData.actorRoles.map(r => r.name),
+      actorRoles: formData.actorRoles.map(r => ({ name: r.name, gender: r.gender || '', role_kind: r.role_kind || 'dm' })),
     };
 
     let result;
@@ -237,7 +245,8 @@ const handleSubmit = async (e: React.FormEvent) => {
     setEditingScript(script);
     
     // 解析字符串数组为Role对象数组
-    const parseRoles = (roles: string[]): Role[] => {
+    const parseRoles = (roles: string[], details?: { name: string; gender?: string; role_kind?: string }[]): Role[] => {
+      if (details?.length) return details.map(role => ({ name: role.name, gender: role.gender, role_kind: role.role_kind || 'dm' }));
       return roles.map(roleStr => {
         const match = roleStr.match(/^(.+?)\s*\((.*?)\)$/);
         if (match) {
@@ -256,7 +265,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       maxDuration: String(script.max_duration / 60), // 分钟转小时（最长时长）
       playerCount: String(script.player_count || script.player_roles?.length || ''),
       playerRoles: parseRoles(script.player_roles || []),
-      actorRoles: parseRoles(script.actor_roles || []),
+      actorRoles: parseRoles(script.actor_roles || [], script.actor_role_details),
     });
     setShowForm(true);
   };
@@ -522,8 +531,19 @@ const handleSubmit = async (e: React.FormEvent) => {
                   <p className="text-gray-400 text-sm italic">暂无卡司角色</p>
                 ) : (
                   formData.actorRoles.map((role, index) => (
-                    <div key={index} className="flex items-center gap-2 p-2 bg-purple-50 rounded">
+                    <div key={index} className="flex flex-wrap items-center gap-2 p-2 bg-purple-50 rounded">
                       <span className="flex-1 font-medium">{role.name}</span>
+                      <select
+                        value={role.role_kind || 'dm'}
+                        onChange={(e) => {
+                          const newRoles = [...formData.actorRoles];
+                          newRoles[index] = { ...role, role_kind: e.target.value };
+                          setFormData({ ...formData, actorRoles: newRoles });
+                        }}
+                        className="px-2 py-1 border border-gray-300 rounded text-sm"
+                      >
+                        {ROLE_KIND_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
                       <button
                         type="button"
                         onClick={() => {
@@ -581,6 +601,11 @@ const handleSubmit = async (e: React.FormEvent) => {
                 <p className="text-sm text-gray-500 mt-1">
                   ⏱️ {formatDuration(script.min_duration, script.max_duration)} · 👤 玩家{script.player_count || 0}人 · 🎭 卡司{script.actor_count || 0}人
                 </p>
+                {(script.actor_role_details || []).length > 0 && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    演绎：{(script.actor_role_details || []).slice(0, 4).map(role => `${role.name}/${roleKindLabel(role.role_kind)}`).join('、')}
+                  </p>
+                )}
                 {missingItems.length > 0 ? (
                   <p className="mt-2 inline-flex rounded-full bg-orange-100 px-2 py-1 text-xs font-medium text-orange-700">待补：{missingItems.join('、')}</p>
                 ) : (

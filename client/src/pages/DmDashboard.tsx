@@ -35,6 +35,24 @@ interface DmSchedule {
   customerName: string | null;
   playerCount: number;
   note: string | null;
+  execution?: {
+    confirmedAt?: string | null;
+    arrivedAt?: string | null;
+    prepCheckedAt?: string | null;
+    playersReadyAt?: string | null;
+    startedAt?: string | null;
+    heartbuildDoneAt?: string | null;
+    currentAct?: number;
+    totalActs?: number;
+    endedAt?: string | null;
+    checkoutConfirmedAt?: string | null;
+    propsChecked?: boolean;
+    costumesChecked?: boolean;
+    scriptCardsChecked?: boolean;
+    reviewRequested?: boolean;
+    debriefDone?: boolean;
+    leftAt?: string | null;
+  };
 }
 
 interface DmTask {
@@ -164,6 +182,16 @@ function formatDate(value: string) {
 function moneyRange(salary: SalaryEstimate | undefined) {
   if (!salary) return '¥0-0';
   return `¥${salary.estimatedMin}-${salary.estimatedMax}`;
+}
+function roleTypeText(value: string) {
+  return ({
+    dm: 'DM',
+    actor: '演绎',
+    field_control: '场控',
+    npc: 'NPC',
+    assistant: '助演',
+    player: '玩家角色',
+  } as Record<string, string>)[value] || value || '演绎';
 }
 
 function getToken() {
@@ -359,6 +387,26 @@ export default function DmDashboard() {
       setSubmitting(false);
     }
   };
+  const runScheduleAction = async (schedule: DmSchedule, action: string, payload: Record<string, unknown> = {}) => {
+    setMessage('');
+    try {
+      await apiRequest(`/dm/schedules/${schedule.scheduleId}/action`, {
+        method: 'POST',
+        body: JSON.stringify({ action, ...payload }),
+      });
+      await loadDashboard();
+      setMessage('排班进度已更新');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '操作失败');
+    }
+  };
+  const updateAct = async (schedule: DmSchedule) => {
+    const current = window.prompt('现在进行到第几幕？', String(schedule.execution?.currentAct || 1));
+    if (!current) return;
+    const total = window.prompt('这个本一共几幕？', String(schedule.execution?.totalActs || current));
+    if (!total) return;
+    await runScheduleAction(schedule, 'act_update', { currentAct: Number(current), totalActs: Number(total) });
+  };
 
   if (!actor) {
     return (
@@ -526,7 +574,7 @@ export default function DmDashboard() {
                 </Panel>
 
                 <Panel title="今日排班">
-                  <ScheduleList schedules={scheduleGroups.today} emptyText="今天没有排班。" />
+                  <ScheduleList schedules={scheduleGroups.today} emptyText="今天没有排班。" onAction={runScheduleAction} onActUpdate={updateAct} />
                 </Panel>
 
                 <Panel title="最近经验">
@@ -544,13 +592,13 @@ export default function DmDashboard() {
             {activeTab === 'schedule' && (
               <div className="space-y-5">
                 <Panel title="今日排班">
-                  <ScheduleList schedules={scheduleGroups.today} emptyText="今天没有排班。" />
+                  <ScheduleList schedules={scheduleGroups.today} emptyText="今天没有排班。" onAction={runScheduleAction} onActUpdate={updateAct} />
                 </Panel>
                 <Panel title="未来排班">
-                  <ScheduleList schedules={scheduleGroups.upcoming} emptyText="暂无未来排班。" />
+                  <ScheduleList schedules={scheduleGroups.upcoming} emptyText="暂无未来排班。" onAction={runScheduleAction} onActUpdate={updateAct} />
                 </Panel>
                 <Panel title="历史排班">
-                  <ScheduleList schedules={scheduleGroups.history.slice(0, 20)} emptyText="暂无历史排班。" />
+                  <ScheduleList schedules={scheduleGroups.history.slice(0, 20)} emptyText="暂无历史排班。" onAction={runScheduleAction} onActUpdate={updateAct} />
                 </Panel>
               </div>
             )}
@@ -593,7 +641,7 @@ export default function DmDashboard() {
                           <div className="flex items-start justify-between gap-3">
                             <div>
                               <p className="font-medium text-slate-900">{skill.scriptName}</p>
-                              <p className="text-sm text-slate-500">{skill.roleName || '未标注角色'} · {skill.roleType}</p>
+                      <p className="text-sm text-slate-500">{skill.roleName || '未标注角色'} · {roleTypeText(skill.roleType)}</p>
                             </div>
                             <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">熟练度 {skill.proficiency}/5</span>
                           </div>
@@ -767,7 +815,17 @@ function ScoreRow({ label, value }: { label: string; value: number }) {
   );
 }
 
-function ScheduleList({ schedules, emptyText }: { schedules: DmSchedule[]; emptyText: string }) {
+function ScheduleList({
+  schedules,
+  emptyText,
+  onAction,
+  onActUpdate,
+}: {
+  schedules: DmSchedule[];
+  emptyText: string;
+  onAction?: (schedule: DmSchedule, action: string, payload?: Record<string, unknown>) => void;
+  onActUpdate?: (schedule: DmSchedule) => void;
+}) {
   if (!schedules.length) return <EmptyState text={emptyText} />;
   return (
     <div className="space-y-3">
@@ -781,14 +839,49 @@ function ScheduleList({ schedules, emptyText }: { schedules: DmSchedule[]; empty
                 {schedule.roomName || '房间待定'} · {schedule.roleName} · {schedule.playerCount || 0} 人
               </p>
               {schedule.note && <p className="mt-1 text-xs text-slate-500">{schedule.note}</p>}
+              {schedule.execution?.currentAct ? (
+                <p className="mt-1 text-xs text-indigo-600">幕次：第 {schedule.execution.currentAct} / {schedule.execution.totalActs || '?'} 幕</p>
+              ) : null}
             </div>
             <span className={`w-fit rounded-full px-2 py-1 text-xs ${statusClass[schedule.status] || 'bg-slate-100 text-slate-600'}`}>
               {schedule.statusText}
             </span>
           </div>
+          {onAction && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {!schedule.execution?.confirmedAt && <DmActionButton onClick={() => onAction(schedule, 'confirm_assignment')}>确认排班</DmActionButton>}
+              {!schedule.execution?.arrivedAt && <DmActionButton onClick={() => onAction(schedule, 'arrive_prepare')}>到场准备</DmActionButton>}
+              {!schedule.execution?.playersReadyAt && <DmActionButton onClick={() => onAction(schedule, 'players_ready')}>玩家到齐</DmActionButton>}
+              {!schedule.execution?.startedAt && <DmActionButton onClick={() => onAction(schedule, 'start_game')}>开本</DmActionButton>}
+              {schedule.execution?.startedAt && !schedule.execution?.heartbuildDoneAt && <DmActionButton onClick={() => onAction(schedule, 'heartbuild_done')}>心建完成</DmActionButton>}
+              {schedule.execution?.startedAt && !schedule.execution?.endedAt && <DmActionButton onClick={() => onActUpdate?.(schedule)}>记录幕次</DmActionButton>}
+              {schedule.execution?.startedAt && !schedule.execution?.endedAt && <DmActionButton onClick={() => onAction(schedule, 'end_game')}>结束</DmActionButton>}
+              {schedule.execution?.endedAt && !schedule.execution?.checkoutConfirmedAt && <DmActionButton onClick={() => onAction(schedule, 'checkout_confirm')}>确认结账</DmActionButton>}
+              {schedule.execution?.endedAt && !schedule.execution?.leftAt && (
+                <DmActionButton onClick={() => onAction(schedule, 'wrapup_confirm', {
+                  propsChecked: true,
+                  costumesChecked: true,
+                  scriptCardsChecked: true,
+                  reviewRequested: true,
+                  debriefDone: true,
+                })}>
+                  收尾离场
+                </DmActionButton>
+              )}
+              {schedule.execution?.leftAt && <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs text-emerald-700">已离场 {formatDateTime(schedule.execution.leftAt)}</span>}
+            </div>
+          )}
         </div>
       ))}
     </div>
+  );
+}
+
+function DmActionButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="rounded-md border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100">
+      {children}
+    </button>
   );
 }
 

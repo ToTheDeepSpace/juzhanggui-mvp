@@ -179,6 +179,7 @@ export default function ScheduleCalendar() {
   const [actualLeftTime, setActualLeftTime] = useState('');
   const [positiveFeedbackDraft, setPositiveFeedbackDraft] = useState<PositiveFeedbackDraft>(defaultPositiveFeedbackDraft);
   const [savePositiveFeedback, setSavePositiveFeedback] = useState(false);
+  const [feedbackUploading, setFeedbackUploading] = useState(false);
   const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [showFinanceModal, setShowFinanceModal] = useState(false);
   const [financeSchedule, setFinanceSchedule] = useState<ScheduleWithDetails | null>(null);
@@ -328,6 +329,32 @@ export default function ScheduleCalendar() {
     setFeedbackSchedule(null);
     setPositiveFeedbackDraft(defaultPositiveFeedbackDraft);
     loadData();
+  };
+  const uploadPositiveFeedbackFile = async (file?: File | null) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('请上传图片文件');
+      return;
+    }
+    setFeedbackUploading(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('读取图片失败'));
+        reader.readAsDataURL(file);
+      });
+      const result = await post<{ url: string }>('/uploads/positive-feedback', { dataUrl });
+      if (!result.success || !result.data?.url) {
+        alert(result.error || '图片上传失败');
+        return;
+      }
+      setPositiveFeedbackDraft(d => ({ ...d, screenshotUrl: result.data!.url }));
+    } catch {
+      alert('图片上传失败');
+    } finally {
+      setFeedbackUploading(false);
+    }
   };
 
   const openStartModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
@@ -1239,7 +1266,11 @@ export default function ScheduleCalendar() {
                 <option value="其他">其他</option>
               </select>
               <input value={positiveFeedbackDraft.targetName} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, targetName: e.target.value }))} placeholder="好评给到谁，例如 DM小小 / 店家" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" />
-              <input value={positiveFeedbackDraft.screenshotUrl} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, screenshotUrl: e.target.value }))} placeholder="好评截图链接（上传接口下一步补）" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+              <div className="grid gap-2">
+                <input value={positiveFeedbackDraft.screenshotUrl} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, screenshotUrl: e.target.value }))} placeholder="好评截图链接，或点击下方上传图片" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+                <input type="file" accept="image/*" onChange={e => void uploadPositiveFeedbackFile(e.target.files?.[0])} className="text-sm text-slate-500" />
+                {feedbackUploading && <p className="text-xs text-emerald-600">截图上传中...</p>}
+              </div>
               <textarea value={positiveFeedbackDraft.content} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, content: e.target.value }))} placeholder="好评内容或备注" className="h-24 resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm" />
             </div>
             <div className="mt-4 flex gap-2">
@@ -1686,7 +1717,11 @@ export default function ScheduleCalendar() {
                           <option value="其他">其他</option>
                         </select>
                         <input value={positiveFeedbackDraft.targetName} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, targetName: e.target.value }))} placeholder="好评给到谁，例如 DM小小 / 店家" className="rounded-lg border border-emerald-200 px-2 py-1.5 text-sm" />
-                        <input value={positiveFeedbackDraft.screenshotUrl} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, screenshotUrl: e.target.value }))} placeholder="好评截图链接（上传接口下一步补）" className="rounded-lg border border-emerald-200 px-2 py-1.5 text-sm md:col-span-2" />
+                        <div className="grid gap-1 md:col-span-2">
+                          <input value={positiveFeedbackDraft.screenshotUrl} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, screenshotUrl: e.target.value }))} placeholder="好评截图链接，或上传图片" className="rounded-lg border border-emerald-200 px-2 py-1.5 text-sm" />
+                          <input type="file" accept="image/*" onChange={e => void uploadPositiveFeedbackFile(e.target.files?.[0])} className="text-xs text-emerald-700" />
+                          {feedbackUploading && <p className="text-xs text-emerald-700">截图上传中...</p>}
+                        </div>
                         <textarea value={positiveFeedbackDraft.content} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, content: e.target.value }))} placeholder="好评内容或备注" className="h-16 resize-none rounded-lg border border-emerald-200 px-2 py-1.5 text-sm md:col-span-2" />
                       </div>
                     )}

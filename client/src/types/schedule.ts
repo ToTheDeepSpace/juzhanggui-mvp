@@ -4,6 +4,7 @@ import type { Schedule, ScheduleActor } from '../types';
 export interface RoleInfo {
   name: string;
   gender?: string;
+  role_kind?: string;
 }
 
 /** 签到信息 */

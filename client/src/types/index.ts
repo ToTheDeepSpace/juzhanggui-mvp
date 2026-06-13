@@ -1,6 +1,7 @@
 export interface Role {
   name: string;
   gender?: string; // '男', '女', '其他', '未指定' 或自定义
+  role_kind?: 'dm' | 'field_control' | 'npc' | 'assistant' | 'other' | string;
 }
 
 export interface Room {
@@ -28,6 +29,7 @@ export interface Script {
   dm_gender?: string;
   player_roles?: string[];
   actor_roles?: string[];
+  actor_role_details?: { name: string; gender?: string; role_kind?: string }[];
   player_count?: number;
   role_count?: number;
   actor_count?: number;
@@ -59,7 +61,7 @@ export interface ScriptTemplate {
   min_duration_hours: number;
   max_duration_hours: number;
   player_roles: { role_name: string; gender?: string }[];
-  actor_roles: { role_name: string; gender?: string }[];
+  actor_roles: { role_name: string; gender?: string; role_kind?: string }[];
   usage_count: number;
   created_by?: string | null;
   review_status?: 'pending' | 'approved' | 'rejected';
@@ -82,7 +84,7 @@ export interface ActorSkill {
   script_id: string;
   script_name: string;
   role_name: string;
-  role_type: 'actor' | 'player';
+  role_type: 'actor' | 'player' | 'dm' | 'field_control' | 'npc' | 'assistant' | 'other' | string;
   duration: number;
   proficiency: number;
 }

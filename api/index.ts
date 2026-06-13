@@ -11,6 +11,8 @@ import { createClient } from '@supabase/supabase-js';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import fs from 'node:fs';
+import path from 'node:path';
 
 function hashPhone(phone: string): string {
   return crypto.createHash('sha256').update(`juzhanggui:${phone.trim()}`).digest('hex');
@@ -56,6 +58,7 @@ const LINGQI_SITE_URL = (process.env.LINGQI_SITE_URL || process.env.VITE_LINGQI_
 const JZG_WECHAT_OPEN_APP_ID = process.env.JZG_WECHAT_OPEN_APP_ID || process.env.WECHAT_OPEN_APP_ID || '';
 const JZG_WECHAT_OPEN_APP_SECRET = process.env.JZG_WECHAT_OPEN_APP_SECRET || process.env.WECHAT_OPEN_APP_SECRET || '';
 const JZG_WECHAT_REDIRECT_URI = process.env.JZG_WECHAT_REDIRECT_URI || `${JUZHANGGUI_SITE_URL}/api/player/wechat/callback`;
+const LOCAL_UPLOAD_ROOT = process.env.LOCAL_UPLOAD_ROOT || path.join(process.cwd(), 'public', 'uploads');
 
 const app = express();
 app.use(cors({
@@ -73,7 +76,8 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json());
+app.use('/uploads', express.static(LOCAL_UPLOAD_ROOT));
+app.use(express.json({ limit: '25mb' }));
 
 // Auth middleware
 const PUBLIC_PATHS = [
@@ -151,6 +155,19 @@ function scriptTypeValue(input: unknown) {
 function distributionTypeValue(input: unknown) {
   const value = cleanText(input, 40);
   return ['city_limited', 'boxed', 'exclusive'].includes(value) ? value : null;
+}
+function roleKindValue(input: unknown) {
+  const value = cleanText(input, 40);
+  return ['dm', 'field_control', 'npc', 'assistant', 'other'].includes(value) ? value : 'dm';
+}
+function roleKindLabel(value: unknown) {
+  return ({
+    dm: 'DM',
+    field_control: '场控',
+    npc: 'NPC',
+    assistant: '助演',
+    other: '其他',
+  } as Record<string, string>)[cleanText(value, 40)] || 'DM';
 }
 function currentTenantId(req: any): string {
   return cleanText(req?.user?.tenantId, 80) || TENANT_ID;
@@ -981,15 +998,24 @@ async function createStoreForAdminAccount(name: string, city?: string | null, co
   if (error) throw error;
   return data;
 }
-function parseRole(role: string): { role_name: string; gender: string } {
-  const m = role.match(/^(.+?)\s*\((.*?)\)$/);
-  return { role_name: m ? m[1].trim() : role, gender: m?.[2]?.trim() || '' };
+function parseRole(role: any): { role_name: string; gender: string; role_kind?: string } {
+  if (role && typeof role === 'object') {
+    return {
+      role_name: cleanText(role.name || role.role_name, 80),
+      gender: cleanText(role.gender, 40),
+      role_kind: role.role_kind !== undefined || role.kind !== undefined ? roleKindValue(role.role_kind || role.kind) : undefined,
+    };
+  }
+  const text = cleanText(role, 120);
+  const m = text.match(/^(.+?)\s*\((.*?)\)$/);
+  return { role_name: m ? m[1].trim() : text, gender: m?.[2]?.trim() || '' };
 }
 
 function serializeRoles(rows: any[] | null | undefined) {
   return (rows || []).map((r: any) => ({
     role_name: r.role_name,
     gender: r.gender || '',
+    role_kind: r.role_kind || 'dm',
   }));
 }
 
@@ -1575,7 +1601,7 @@ app.post('/api/platform/script-templates/sync-existing', async (req: any, res: a
   try {
     if (!requireSuperAdmin(req, res)) return;
     const { data: scripts, error } = await supabase.from('scripts')
-      .select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender)')
+      .select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender, role_kind)')
       .order('created_at', { ascending: false });
     if (error) throw error;
     const templates = await publishScriptRowsAsTemplates(scripts || [], '超级管理员同步', 'approved', req.user?.adminUserId || null);
@@ -1783,7 +1809,7 @@ app.post('/api/scripts/:id/publish-template', async (req: any, res: any) => {
   try {
     const tenantId = currentTenantId(req);
     const { data: s, error: scriptErr } = await supabase.from('scripts')
-      .select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender)')
+      .select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender, role_kind)')
       .eq('id', req.params.id)
       .eq('tenant_id', tenantId)
       .single();
@@ -1832,6 +1858,7 @@ app.post('/api/script-templates/:id/import', async (req: any, res: any) => {
         script_id: script!.id,
         role_name: r.role_name,
         gender: r.gender || '',
+        role_kind: roleKindValue(r.role_kind),
       })));
     }
     await supabase.from('jzg_script_templates').update({
@@ -1922,7 +1949,10 @@ app.get('/api/actors/:id/skills', async (req: any, res: any) => {
     const { data: actor } = await supabase.from('actors').select('id').eq('id', req.params.id).eq('tenant_id', currentTenantId(req)).maybeSingle();
     if (!actor) return res.status(404).json(err(new Error('卡司不存在')));
     const { data } = await supabase.from('actor_skills').select('*, scripts(name)').eq('actor_id', req.params.id);
-    res.json(ok(data));
+    res.json(ok((data || []).map((row: any) => ({
+      ...row,
+      script_name: relationName(row, 'scripts') || '未命名剧本',
+    }))));
   }
   catch (e) { res.status(500).json(err(e)); }
 });
@@ -1939,13 +1969,155 @@ app.post('/api/actors/:id/skills', async (req: any, res: any) => {
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
+app.delete('/api/actors/:id/skills/:scriptId/:roleName', async (req: any, res: any) => {
+  try {
+    const { data: actor } = await supabase.from('actors').select('id').eq('id', req.params.id).eq('tenant_id', currentTenantId(req)).maybeSingle();
+    if (!actor) return res.status(404).json(err(new Error('卡司不存在')));
+    await supabase.from('actor_skills')
+      .delete()
+      .eq('actor_id', req.params.id)
+      .eq('script_id', req.params.scriptId)
+      .eq('role_name', decodeURIComponent(req.params.roleName));
+    res.json(ok());
+  } catch (e) { res.status(500).json(err(e)); }
+});
+app.get('/api/actors/:id/learning-tasks', async (req: any, res: any) => {
+  try {
+    const actorId = cleanText(req.params.id, 80);
+    const tenantId = currentTenantId(req);
+    const { data: actor } = await supabase.from('actors').select('id').eq('id', actorId).eq('tenant_id', tenantId).maybeSingle();
+    if (!actor) return res.status(404).json(err(new Error('卡司不存在')));
+    const { data, error } = await supabase.from('jzg_actor_learning_tasks')
+      .select('*, scripts(name)')
+      .eq('actor_id', actorId)
+      .eq('tenant_id', tenantId)
+      .order('created_at', { ascending: false });
+    if (error && isMissingRelationError(error, 'jzg_actor_learning_tasks')) return res.json(ok([]));
+    if (error) throw error;
+    res.json(ok((data || []).map((row: any) => ({
+      ...row,
+      script_name: relationName(row, 'scripts') || '未命名剧本',
+    }))));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+app.post('/api/actors/:id/learning-tasks', async (req: any, res: any) => {
+  try {
+    const actorId = cleanText(req.params.id, 80);
+    const tenantId = currentTenantId(req);
+    const scriptId = cleanText(req.body?.scriptId, 80);
+    if (!scriptId) return res.status(400).json(err(new Error('请选择要学的剧本')));
+    const [{ data: actor }, { data: script }] = await Promise.all([
+      supabase.from('actors').select('id,name').eq('id', actorId).eq('tenant_id', tenantId).maybeSingle(),
+      supabase.from('scripts').select('id,name').eq('id', scriptId).eq('tenant_id', tenantId).maybeSingle(),
+    ]);
+    if (!actor || !script) return res.status(404).json(err(new Error('卡司或剧本不存在')));
+    const { data, error } = await supabase.from('jzg_actor_learning_tasks').insert({
+      tenant_id: tenantId,
+      actor_id: actorId,
+      script_id: scriptId,
+      title: cleanText(req.body?.title, 160) || `学习《${script.name}》`,
+      due_date: cleanText(req.body?.dueDate, 20) || null,
+      note: cleanText(req.body?.note, 1000) || null,
+      status: 'assigned',
+      created_by: req.user?.displayName || req.user?.email || req.user?.adminUserId || null,
+    }).select('*, scripts(name)').single();
+    if (error) throw error;
+    await logStoreAction(req, 'actor_learning_task_created', { type: 'actor', id: actorId, label: actor.name }, { scriptId, scriptName: script.name });
+    res.json(ok({ ...data, script_name: relationName(data, 'scripts') || script.name }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+app.put('/api/actors/:id/learning-tasks/:taskId', async (req: any, res: any) => {
+  try {
+    const actorId = cleanText(req.params.id, 80);
+    const tenantId = currentTenantId(req);
+    const status = cleanText(req.body?.status, 30);
+    if (!['assigned', 'in_progress', 'submitted', 'passed', 'failed', 'cancelled'].includes(status)) return res.status(400).json(err(new Error('任务状态无效')));
+    const { data: task } = await supabase.from('jzg_actor_learning_tasks')
+      .select('*, scripts(name)')
+      .eq('id', req.params.taskId)
+      .eq('actor_id', actorId)
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
+    if (!task) return res.status(404).json(err(new Error('学本任务不存在')));
+    const { data, error } = await supabase.from('jzg_actor_learning_tasks')
+      .update({ status, note: req.body?.note !== undefined ? cleanText(req.body.note, 1000) : task.note, updated_at: new Date().toISOString() })
+      .eq('id', task.id)
+      .select('*, scripts(name)')
+      .single();
+    if (error) throw error;
+    res.json(ok({ ...data, script_name: relationName(data, 'scripts') || relationName(task, 'scripts') || '未命名剧本' }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+app.post('/api/actors/:id/assessments', async (req: any, res: any) => {
+  try {
+    const actorId = cleanText(req.params.id, 80);
+    const tenantId = currentTenantId(req);
+    const scriptId = cleanText(req.body?.scriptId, 80);
+    const taskId = cleanText(req.body?.taskId, 80) || null;
+    const result = cleanText(req.body?.result, 20);
+    if (!scriptId) return res.status(400).json(err(new Error('请选择考核剧本')));
+    if (!['passed', 'failed'].includes(result)) return res.status(400).json(err(new Error('请选择考核结果')));
+    const [{ data: actor }, { data: script }] = await Promise.all([
+      supabase.from('actors').select('id,name').eq('id', actorId).eq('tenant_id', tenantId).maybeSingle(),
+      supabase.from('scripts').select('id,name').eq('id', scriptId).eq('tenant_id', tenantId).maybeSingle(),
+    ]);
+    if (!actor || !script) return res.status(404).json(err(new Error('卡司或剧本不存在')));
+    const score = Math.max(0, Math.min(100, Number(req.body?.score || (result === 'passed' ? 80 : 50))));
+    const { data: assessment, error } = await supabase.from('jzg_actor_assessments').insert({
+      tenant_id: tenantId,
+      actor_id: actorId,
+      script_id: scriptId,
+      task_id: taskId,
+      assessor_name: cleanText(req.body?.assessorName, 120) || req.user?.displayName || req.user?.email || '店家',
+      result,
+      score,
+      note: cleanText(req.body?.note, 1000) || null,
+      assessed_at: new Date().toISOString(),
+    }).select('*').single();
+    if (error) throw error;
+    if (taskId) {
+      await supabase.from('jzg_actor_learning_tasks').update({ status: result, updated_at: new Date().toISOString() }).eq('id', taskId).eq('tenant_id', tenantId);
+    }
+    if (result === 'passed') {
+      const { data: actorRole } = await supabase.from('script_actor_roles')
+        .select('role_name, role_kind')
+        .eq('script_id', scriptId)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      const roleName = cleanText(req.body?.roleName, 80) || actorRole?.role_name || 'DM';
+      const roleType = roleKindValue(req.body?.roleType || actorRole?.role_kind || 'dm');
+      const proficiency = Math.max(3, Math.min(5, Math.ceil(score / 20)));
+      const { data: existingSkill } = await supabase.from('actor_skills')
+        .select('id')
+        .eq('actor_id', actorId)
+        .eq('script_id', scriptId)
+        .eq('role_name', roleName)
+        .maybeSingle();
+      if (existingSkill?.id) {
+        await supabase.from('actor_skills').update({ role_type: roleType, proficiency }).eq('id', existingSkill.id);
+      } else {
+        await supabase.from('actor_skills').insert({
+          actor_id: actorId,
+          script_id: scriptId,
+          role_name: roleName,
+          role_type: roleType,
+          proficiency,
+        });
+      }
+    }
+    await logStoreAction(req, 'actor_assessment_recorded', { type: 'actor', id: actorId, label: actor.name }, { scriptId, scriptName: script.name, result, score });
+    res.json(ok(assessment));
+  } catch (e) { res.status(500).json(err(e)); }
+});
 
 // ===== Scripts =====
 app.get('/api/scripts', async (req: any, res: any) => {
   try {
-    const { data: scripts } = await supabase.from('scripts').select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender)').eq('tenant_id', currentTenantId(req)).order('name');
+    const { data: scripts } = await supabase.from('scripts').select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender, role_kind)').eq('tenant_id', currentTenantId(req)).order('name');
     for (const s of scripts || []) {
       s.player_roles = (s.script_player_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
+      s.actor_role_details = (s.script_actor_roles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '', role_kind: r.role_kind || 'dm' }));
       s.actor_roles = (s.script_actor_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
       s.role_count = s.script_player_roles?.length || 0;
       s.player_count = Number(s.player_count || s.role_count || 0);
@@ -1961,10 +2133,11 @@ app.get('/api/scripts', async (req: any, res: any) => {
 });
 app.get('/api/scripts/:id', async (req: any, res: any) => {
   try {
-    const { data: s } = await supabase.from('scripts').select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender)').eq('id', req.params.id).eq('tenant_id', currentTenantId(req)).single();
+    const { data: s } = await supabase.from('scripts').select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender, role_kind)').eq('id', req.params.id).eq('tenant_id', currentTenantId(req)).single();
     if (!s) return res.status(404).json(err(new Error('不存在')));
     const { data: skills } = await supabase.from('actor_skills').select('*, actors(name)').eq('script_id', s.id);
     s.player_roles = (s.script_player_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
+    s.actor_role_details = (s.script_actor_roles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '', role_kind: r.role_kind || 'dm' }));
     s.actor_roles = (s.script_actor_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
     s.skilled_actors = skills || [];
     s.role_count = s.script_player_roles?.length || 0;
@@ -1997,7 +2170,8 @@ app.post('/api/scripts', async (req: any, res: any) => {
       await supabase.from('script_player_roles').insert({ script_id: data!.id, ...parseRole(r) });
     }
     for (const r of actorRoles || []) {
-      await supabase.from('script_actor_roles').insert({ script_id: data!.id, ...parseRole(r) });
+      const parsed = parseRole(r);
+      await supabase.from('script_actor_roles').insert({ script_id: data!.id, ...parsed, role_kind: roleKindValue(parsed.role_kind) });
     }
     await publishScriptRowsAsTemplates([{
       ...data,
@@ -2030,7 +2204,8 @@ app.put('/api/scripts/:id', async (req: any, res: any) => {
       await supabase.from('script_player_roles').insert({ script_id: req.params.id, ...parseRole(r) });
     }
     for (const r of actorRoles || []) {
-      await supabase.from('script_actor_roles').insert({ script_id: req.params.id, ...parseRole(r) });
+      const parsed = parseRole(r);
+      await supabase.from('script_actor_roles').insert({ script_id: req.params.id, ...parsed, role_kind: roleKindValue(parsed.role_kind) });
     }
     res.json(ok());
   } catch (e) { res.status(500).json(err(e)); }
@@ -2055,7 +2230,7 @@ app.get('/api/schedules', async (req: any, res: any) => {
       const customerMap = new Map<string, any>((customers || []).map((c: any) => [c.id, c]));
       const checkinsWithCustomer = (checkins || []).map((c: any) => ({ ...c, customer: customerMap.get(c.customer_id) || null, lock_dm_credits: customerMap.get(c.customer_id)?.lock_dm_credits || 0 }));
       const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
-      const { data: actorRoles } = await supabase.from('script_actor_roles').select('role_name, gender').eq('script_id', s.script_id);
+      const { data: actorRoles } = await supabase.from('script_actor_roles').select('role_name, gender, role_kind').eq('script_id', s.script_id);
       const { data: evaluations } = await supabase.from('evaluations').select('rating, comment').eq('schedule_id', s.id);
       const { count: positiveFeedbackCount } = await supabase.from('jzg_positive_feedbacks')
         .select('*', { count: 'exact', head: true })
@@ -2066,7 +2241,7 @@ app.get('/api/schedules', async (req: any, res: any) => {
         .eq('schedule_id', s.id)
         .eq('status', 'pending');
       const normalizedPlayerRoles = (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
-      const normalizedActorRoles = (actorRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
+      const normalizedActorRoles = (actorRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '', role_kind: r.role_kind || 'dm' }));
       return {
         ...s, script_name: s.scripts?.name, room_name: s.rooms?.name,
         start_time: `${s.scheduled_date}T${s.start_time}`,
@@ -2093,14 +2268,14 @@ app.get('/api/schedules/:id', async (req: any, res: any) => {
     const customerMap = new Map<string, any>((customers || []).map((c: any) => [c.id, c]));
     const checkinsWithCustomer = (checkins || []).map((c: any) => ({ ...c, customer: customerMap.get(c.customer_id) || null, lock_dm_credits: customerMap.get(c.customer_id)?.lock_dm_credits || 0 }));
     const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
-    const { data: actorRoles } = await supabase.from('script_actor_roles').select('role_name, gender').eq('script_id', s.script_id);
+    const { data: actorRoles } = await supabase.from('script_actor_roles').select('role_name, gender, role_kind').eq('script_id', s.script_id);
     const { data: evaluations } = await supabase.from('evaluations').select('rating, comment').eq('schedule_id', req.params.id);
     const { count: positiveFeedbackCount } = await supabase.from('jzg_positive_feedbacks')
       .select('*', { count: 'exact', head: true })
       .eq('schedule_id', req.params.id)
       .eq('tenant_id', currentTenantId(req));
     const normalizedPlayerRoles = (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
-    const normalizedActorRoles = (actorRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
+    const normalizedActorRoles = (actorRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '', role_kind: r.role_kind || 'dm' }));
     res.json(ok({
       ...s, script_name: s.scripts?.name, room_name: s.rooms?.name, actors: actors || [],
       checkins: checkinsWithCustomer,
@@ -2350,7 +2525,7 @@ app.post('/api/schedules/:id/dm-start', async (req: any, res: any) => {
       .maybeSingle();
     if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
     if (!['locked', 'confirmed', 'ongoing'].includes(schedule.status)) return res.status(400).json(err(new Error('当前状态不能确认开本')));
-    const { data: actorRoles } = await supabase.from('script_actor_roles').select('role_name').eq('script_id', schedule.script_id);
+    const { data: actorRoles } = await supabase.from('script_actor_roles').select('role_name, role_kind').eq('script_id', schedule.script_id);
     const validRoleNames = new Set((actorRoles || []).map((role: any) => cleanText(role.role_name, 120)).filter(Boolean));
     if (validRoleNames.size > 0) {
       for (const roleName of validRoleNames) {
@@ -2645,7 +2820,7 @@ app.put('/api/schedules/:id/dm-assignment', async (req: any, res: any) => {
     const { data: actor } = await supabase.from('actors').select('id').eq('id', actorId).eq('tenant_id', tenantId).maybeSingle();
     if (!actor) return res.status(404).json(err(new Error('卡司/DM 不存在')));
     const { data: role } = await supabase.from('script_actor_roles')
-      .select('id, role_name')
+      .select('id, role_name, role_kind')
       .eq('script_id', schedule.script_id)
       .eq('role_name', roleName)
       .maybeSingle();
@@ -3163,6 +3338,23 @@ app.get('/api/schedules/:id/positive-feedbacks', async (req: any, res: any) => {
     res.json(ok(data || []));
   } catch (e) { res.status(500).json(err(e)); }
 });
+app.post('/api/uploads/positive-feedback', async (req: any, res: any) => {
+  try {
+    const dataUrl = typeof req.body?.dataUrl === 'string' ? req.body.dataUrl : '';
+    const match = dataUrl.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,([A-Za-z0-9+/=]+)$/);
+    if (!match) return res.status(400).json(err(new Error('请上传 png、jpg 或 webp 图片')));
+    const contentType = match[1] === 'image/jpg' ? 'image/jpeg' : match[1];
+    const ext = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
+    const buffer = Buffer.from(match[2], 'base64');
+    if (buffer.length > 8 * 1024 * 1024) return res.status(400).json(err(new Error('图片不能超过 8MB')));
+    const day = new Date().toISOString().slice(0, 10);
+    const dir = path.join(LOCAL_UPLOAD_ROOT, 'positive-feedback', day);
+    fs.mkdirSync(dir, { recursive: true });
+    const name = `${Date.now()}-${crypto.randomUUID()}.${ext}`;
+    fs.writeFileSync(path.join(dir, name), buffer);
+    res.json(ok({ url: `/uploads/positive-feedback/${day}/${name}` }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
 app.post('/api/schedules/:id/positive-feedbacks', async (req: any, res: any) => {
   try {
     const tenantId = currentTenantId(req);
@@ -3670,7 +3862,7 @@ app.get('/api/dm/dashboard', async (req: any, res: any) => {
     if (!actor) return res.status(404).json(err(new Error('DM 不存在')));
 
     const { data: assignmentRows, error: assignmentErr } = await supabase.from('schedule_actors')
-      .select('id, role_name, start_time, end_time, schedules!inner(id, tenant_id, scheduled_date, start_time, end_time, status, player_count, customer_name, note, script_id, room_id, scripts(id, name), rooms(id, name))')
+      .select('id, role_name, start_time, end_time, dm_confirmed_at, arrived_at, prep_checked_at, players_ready_at, started_by_dm_at, heartbuild_done_at, current_act, total_acts, ended_by_dm_at, checkout_confirmed_at, props_checked, costumes_checked, script_cards_checked, review_requested, debrief_done, left_at, schedules!inner(id, tenant_id, scheduled_date, start_time, end_time, status, player_count, customer_name, note, script_id, room_id, scripts(id, name), rooms(id, name))')
       .eq('actor_id', actorId)
       .eq('schedules.tenant_id', tenantId);
     if (assignmentErr) throw assignmentErr;
@@ -3693,6 +3885,24 @@ app.get('/api/dm/dashboard', async (req: any, res: any) => {
         customerName: cleanText(schedule?.customer_name, 80) || null,
         playerCount: Number(schedule?.player_count || 0),
         note: cleanText(schedule?.note, 500) || null,
+        execution: {
+          confirmedAt: row.dm_confirmed_at || null,
+          arrivedAt: row.arrived_at || null,
+          prepCheckedAt: row.prep_checked_at || null,
+          playersReadyAt: row.players_ready_at || null,
+          startedAt: row.started_by_dm_at || null,
+          heartbuildDoneAt: row.heartbuild_done_at || null,
+          currentAct: Number(row.current_act || 0),
+          totalActs: Number(row.total_acts || 0),
+          endedAt: row.ended_by_dm_at || null,
+          checkoutConfirmedAt: row.checkout_confirmed_at || null,
+          propsChecked: row.props_checked === true,
+          costumesChecked: row.costumes_checked === true,
+          scriptCardsChecked: row.script_cards_checked === true,
+          reviewRequested: row.review_requested === true,
+          debriefDone: row.debrief_done === true,
+          leftAt: row.left_at || null,
+        },
       };
     }).filter((item: any) => item.scheduleId);
 
@@ -3787,6 +3997,23 @@ app.get('/api/dm/dashboard', async (req: any, res: any) => {
         status: item.statusText,
         source: '排班',
       }));
+    const learningQuery = await supabase.from('jzg_actor_learning_tasks')
+      .select('*, scripts(name)')
+      .eq('actor_id', actorId)
+      .eq('tenant_id', tenantId)
+      .in('status', ['assigned', 'in_progress', 'submitted'])
+      .order('due_date', { ascending: true })
+      .limit(8);
+    if (learningQuery.error && !isMissingRelationError(learningQuery.error, 'jzg_actor_learning_tasks')) throw learningQuery.error;
+    const learningTasks = (learningQuery.data || []).map((task: any) => ({
+      id: `learning-${task.id}`,
+      title: task.title || `学习 ${relationName(task, 'scripts') || '未命名剧本'}`,
+      dueAt: task.due_date || null,
+      dueLabel: task.due_date || '未设截止',
+      priority: task.status === 'submitted' ? 'high' : 'normal',
+      status: ({ assigned: '待开始', in_progress: '学习中', submitted: '待考核' } as Record<string, string>)[task.status] || task.status,
+      source: '学本',
+    }));
     const skillTasks = skills
       .filter((skill: any) => skill.proficiency < 3)
       .slice(0, 3)
@@ -3799,7 +4026,7 @@ app.get('/api/dm/dashboard', async (req: any, res: any) => {
         status: `熟练度 ${skill.proficiency}/5`,
         source: '技能',
       }));
-    const tasks = [...upcomingTasks, ...skillTasks].slice(0, 8);
+    const tasks = [...upcomingTasks, ...learningTasks, ...skillTasks].slice(0, 10);
 
     res.json(ok({
       actor: {
@@ -3842,6 +4069,80 @@ app.get('/api/dm/dashboard', async (req: any, res: any) => {
         experienceTableReady: !noteQuery.error,
       },
     }));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/dm/schedules/:id/action', async (req: any, res: any) => {
+  try {
+    const actorId = cleanText(req.user?.actorId, 80);
+    const tenantId = currentTenantId(req);
+    const scheduleId = cleanText(req.params.id, 80);
+    const action = cleanText(req.body?.action, 40);
+    if (!actorId) return res.status(403).json(err(new Error('缺少 DM 身份')));
+    const { data: assignment, error: assignmentErr } = await supabase.from('schedule_actors')
+      .select('id, schedule_id, actor_id, schedules!inner(id, tenant_id, status)')
+      .eq('schedule_id', scheduleId)
+      .eq('actor_id', actorId)
+      .eq('schedules.tenant_id', tenantId)
+      .maybeSingle();
+    if (assignmentErr) throw assignmentErr;
+    if (!assignment) return res.status(404).json(err(new Error('未找到你的这场排班')));
+    const now = new Date().toISOString();
+    const patch: Record<string, unknown> = {};
+    const schedulePatch: Record<string, unknown> = {};
+    const metadata: Record<string, unknown> = {};
+    if (action === 'confirm_assignment') patch.dm_confirmed_at = now;
+    else if (action === 'arrive_prepare') {
+      patch.arrived_at = now;
+      patch.prep_checked_at = now;
+    } else if (action === 'players_ready') patch.players_ready_at = now;
+    else if (action === 'start_game') {
+      patch.started_by_dm_at = now;
+      schedulePatch.status = 'ongoing';
+      schedulePatch.actual_started_at = now;
+    } else if (action === 'heartbuild_done') patch.heartbuild_done_at = now;
+    else if (action === 'act_update') {
+      const currentAct = Math.max(1, Number(req.body?.currentAct || 1));
+      const totalActs = Math.max(currentAct, Number(req.body?.totalActs || currentAct));
+      patch.current_act = currentAct;
+      patch.total_acts = totalActs;
+      metadata.currentAct = currentAct;
+      metadata.totalActs = totalActs;
+    } else if (action === 'end_game') {
+      patch.ended_by_dm_at = now;
+      schedulePatch.status = 'settling';
+      schedulePatch.actual_ended_at = now;
+    } else if (action === 'checkout_confirm') patch.checkout_confirmed_at = now;
+    else if (action === 'wrapup_confirm') {
+      patch.props_checked = Boolean(req.body?.propsChecked);
+      patch.costumes_checked = Boolean(req.body?.costumesChecked);
+      patch.script_cards_checked = Boolean(req.body?.scriptCardsChecked);
+      patch.review_requested = Boolean(req.body?.reviewRequested);
+      patch.debrief_done = Boolean(req.body?.debriefDone);
+      patch.left_at = now;
+      schedulePatch.props_checked = patch.props_checked;
+      schedulePatch.costumes_checked = patch.costumes_checked;
+      schedulePatch.script_cards_checked = patch.script_cards_checked;
+      schedulePatch.review_requested = patch.review_requested;
+      schedulePatch.debrief_done = patch.debrief_done;
+      schedulePatch.actual_left_at = now;
+    } else {
+      return res.status(400).json(err(new Error('DM 动作无效')));
+    }
+    if (Object.keys(patch).length) {
+      await supabase.from('schedule_actors').update(patch).eq('id', assignment.id);
+    }
+    if (Object.keys(schedulePatch).length) {
+      await supabase.from('schedules').update(schedulePatch).eq('id', scheduleId).eq('tenant_id', tenantId);
+    }
+    await supabase.from('jzg_schedule_execution_logs').insert({
+      tenant_id: tenantId,
+      schedule_id: scheduleId,
+      actor_id: actorId,
+      action,
+      metadata,
+    });
+    res.json(ok({ action, at: now }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 
