@@ -97,6 +97,7 @@ function App() {
           <Route path="/store" element={<StorePortal />} />
 
           {/* DM 公开身份在灵契，店内工作流保留在剧司辰 */}
+          <Route path="/dm" element={<DmDashboard />} />
           <Route path="/store/dm" element={<DmDashboard />} />
 
           {/* 店长登录 */}
