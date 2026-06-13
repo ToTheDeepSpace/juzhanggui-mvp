@@ -176,10 +176,10 @@ export default function MainLayout() {
           type="button"
           onClick={() => navigate(`${basePath}/feedback`)}
           className="fixed right-4 top-1/2 z-40 -translate-y-1/2 rounded-l-2xl rounded-r-md bg-sky-600 px-3 py-4 text-sm font-medium text-white shadow-lg transition hover:bg-sky-700 sm:right-6"
-          title="投诉举报 / 建议反馈"
+          title="建议反馈"
         >
-          <span className="block leading-tight">投诉</span>
-          <span className="block leading-tight">举报</span>
+          <span className="block leading-tight">建议</span>
+          <span className="block leading-tight">反馈</span>
         </button>
       )}
 
@@ -996,27 +996,19 @@ function FeedbackPanel() {
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-bold text-gray-900">投诉举报 / 建议反馈</h2>
-        <p className="mt-1 text-sm text-gray-500">违法信息、隐私泄露、账号安全、店家纠纷和产品建议都从这里提交。平台会记录账号、时间、IP、对象信息和处理结果，用于巡查、应急处置和依法协助。</p>
+        <h2 className="text-xl font-bold text-gray-900">建议反馈</h2>
+        <p className="mt-1 text-sm text-gray-500">遇到问题、想提建议，直接发给平台。处理结果会显示在下面。</p>
         <form onSubmit={submit} className="mt-5 grid gap-3">
           <div className="grid gap-3 md:grid-cols-3">
             <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} className="rounded-lg border border-gray-200 px-3 py-2 text-sm">
               <option value="suggestion">建议</option>
               <option value="bug">问题</option>
               <option value="question">咨询</option>
-              <option value="complaint">投诉申诉</option>
-              <option value="report">举报</option>
-              <option value="illegal_content">违法信息</option>
-              <option value="security">账号/安全事件</option>
-              <option value="privacy">隐私/个人信息</option>
               <option value="other">其他</option>
             </select>
             <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="一句话标题" className="md:col-span-2 rounded-lg border border-gray-200 px-3 py-2 text-sm" />
           </div>
-          <textarea value={form.content} onChange={e => setForm({ ...form, content: e.target.value })} placeholder="请写清相关店家、排期、账号、页面链接、对象 ID、截图说明或希望平台采取的处置。请勿在正文中过度暴露无关第三方隐私。" className="h-32 rounded-lg border border-gray-200 px-3 py-2 text-sm" />
-          <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs leading-6 text-amber-800">
-            互联网不是法外之地。投诉举报应基于事实，不得捏造、恶意攻击或泄露无关个人信息；平台会对违法违规、侵权、隐私泄露、账号风险等内容进行巡查、下架、限制账号或配合主管机关处理。
-          </div>
+          <textarea value={form.content} onChange={e => setForm({ ...form, content: e.target.value })} placeholder="请描述具体建议或问题，越具体越好。" className="h-32 rounded-lg border border-gray-200 px-3 py-2 text-sm" />
           <div className="flex items-center justify-between gap-3">
             {message && <p className="text-sm text-sky-700">{message}</p>}
             <button disabled={loading} className="ml-auto rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50">提交反馈</button>
@@ -1040,6 +1032,35 @@ function FeedbackPanel() {
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="bg-white rounded-lg border border-amber-100 p-6 shadow">
+        <h3 className="font-bold text-gray-900">投诉举报 / 安全事件</h3>
+        <p className="mt-1 text-sm text-gray-500">违法信息、隐私泄露、账号安全、店家纠纷等放在这里提交。平台会记录账号、时间、IP、对象信息和处理结果，用于巡查、应急处置和依法协助。</p>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          {[
+            ['complaint', '投诉申诉'],
+            ['report', '举报'],
+            ['illegal_content', '违法信息'],
+            ['security', '账号/安全事件'],
+            ['privacy', '隐私/个人信息'],
+          ].map(([category, label]) => (
+            <button
+              key={category}
+              type="button"
+              onClick={() => {
+                setForm({ category, title: '', content: '' });
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-3 text-xs leading-6 text-amber-800">
+          互联网不是法外之地。投诉举报应基于事实，不得捏造、恶意攻击或泄露无关个人信息；平台会对违法违规、侵权、隐私泄露、账号风险等内容进行巡查、下架、限制账号或配合主管机关处理。
+        </p>
       </div>
     </div>
   );
