@@ -50,6 +50,7 @@ export interface ScheduleWithDetails extends Schedule {
   checkin_count?: number;
   checkins?: CheckinInfo[];
   pending_request_count?: number;
+  positive_feedback_count?: number;
   progress_summary?: ScheduleProgressSummary;
 }
 

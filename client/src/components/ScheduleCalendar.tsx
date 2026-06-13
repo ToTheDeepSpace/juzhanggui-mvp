@@ -21,6 +21,13 @@ type ExtraFeeDraft = {
   nightFeeAmountPerHour: string;
 };
 
+type PositiveFeedbackDraft = {
+  platform: string;
+  targetName: string;
+  content: string;
+  screenshotUrl: string;
+};
+
 const defaultExtraFeeDraft: ExtraFeeDraft = {
   earlyFeeEnabled: true,
   earlyFeeStartTime: '00:00',
@@ -32,7 +39,28 @@ const defaultExtraFeeDraft: ExtraFeeDraft = {
   nightFeeAmountPerHour: '10',
 };
 
+const defaultPositiveFeedbackDraft: PositiveFeedbackDraft = {
+  platform: '大众点评',
+  targetName: '',
+  content: '',
+  screenshotUrl: '',
+};
+
 const centsToYuan = (cents?: number, fallback = 0) => Math.round(Number(cents ?? fallback) / 100);
+
+const scriptTypeLabel = (value?: string | null) => ({
+  emotional: '情感本',
+  comedy: '欢乐本',
+  horror: '恐怖本',
+  mechanism: '机制本',
+  faction: '阵营本',
+}[String(value || '')] || '未设置类型');
+
+const distributionTypeLabel = (value?: string | null) => ({
+  city_limited: '城限',
+  boxed: '盒装',
+  exclusive: '独家',
+}[String(value || '')] || '');
 
 function draftFromStore(store?: StoreRecord | null): ExtraFeeDraft {
   if (!store) return defaultExtraFeeDraft;
@@ -118,6 +146,7 @@ export default function ScheduleCalendar() {
   const [showModal, setShowModal] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<ScheduleWithDetails | null>(null);
   const [viewingEndedSchedule, setViewingEndedSchedule] = useState<ScheduleWithDetails | null>(null);
+  const [feedbackSchedule, setFeedbackSchedule] = useState<ScheduleWithDetails | null>(null);
   const [isPendingMode, setIsPendingMode] = useState(false);
 
   const [showQRModal, setShowQRModal] = useState(false);
@@ -142,6 +171,15 @@ export default function ScheduleCalendar() {
   const [showConflict, setShowConflict] = useState(false);
   const [conflictType, setConflictType] = useState('service_attitude');
   const [conflictDesc, setConflictDesc] = useState('');
+  const [propsChecked, setPropsChecked] = useState(false);
+  const [costumesChecked, setCostumesChecked] = useState(false);
+  const [scriptCardsChecked, setScriptCardsChecked] = useState(false);
+  const [reviewRequested, setReviewRequested] = useState(false);
+  const [debriefDone, setDebriefDone] = useState(false);
+  const [actualLeftTime, setActualLeftTime] = useState('');
+  const [positiveFeedbackDraft, setPositiveFeedbackDraft] = useState<PositiveFeedbackDraft>(defaultPositiveFeedbackDraft);
+  const [savePositiveFeedback, setSavePositiveFeedback] = useState(false);
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [showFinanceModal, setShowFinanceModal] = useState(false);
   const [financeSchedule, setFinanceSchedule] = useState<ScheduleWithDetails | null>(null);
   const [financeRows, setFinanceRows] = useState<any[]>([]);
@@ -249,7 +287,47 @@ export default function ScheduleCalendar() {
   };
 
   const openEndModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
-    e.stopPropagation(); setEndingSchedule(schedule); setEndType('normal'); setEndNote(''); setConflictDesc(''); setConflictType('other_conflict'); setShowConflict(false); setShowEndModal(true);
+    e.stopPropagation();
+    setEndingSchedule(schedule);
+    setEndType('normal');
+    setEndNote('');
+    setConflictDesc('');
+    setConflictType('other_conflict');
+    setShowConflict(false);
+    setPropsChecked(false);
+    setCostumesChecked(false);
+    setScriptCardsChecked(false);
+    setReviewRequested(false);
+    setDebriefDone(false);
+    setActualLeftTime(format(new Date(), 'HH:mm'));
+    setSavePositiveFeedback(false);
+    setPositiveFeedbackDraft(defaultPositiveFeedbackDraft);
+    setShowEndModal(true);
+  };
+
+  const openPositiveFeedbackModal = (schedule: ScheduleWithDetails, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setFeedbackSchedule(schedule);
+    setPositiveFeedbackDraft(defaultPositiveFeedbackDraft);
+  };
+
+  const submitPositiveFeedback = async () => {
+    if (!feedbackSchedule) return;
+    setFeedbackSaving(true);
+    const result = await post(`/schedules/${feedbackSchedule.id}/positive-feedbacks`, {
+      platform: positiveFeedbackDraft.platform,
+      targetName: positiveFeedbackDraft.targetName,
+      content: positiveFeedbackDraft.content,
+      screenshotUrl: positiveFeedbackDraft.screenshotUrl,
+    });
+    setFeedbackSaving(false);
+    if (!result.success) {
+      alert(result.error || '好评记录保存失败');
+      return;
+    }
+    setFeedbackSchedule(null);
+    setPositiveFeedbackDraft(defaultPositiveFeedbackDraft);
+    loadData();
   };
 
   const openStartModal = (schedule: ScheduleWithDetails, e: React.MouseEvent) => {
@@ -454,7 +532,15 @@ export default function ScheduleCalendar() {
     if (!endingSchedule) return;
     setEndSubmitting(true);
     if (endType === 'normal') {
-      const result = await put(`/schedules/${endingSchedule.id}/complete`, {});
+      const scheduleDate = endingSchedule.start_time.split('T')[0];
+      const result = await put(`/schedules/${endingSchedule.id}/complete`, {
+        propsChecked,
+        costumesChecked,
+        scriptCardsChecked,
+        reviewRequested,
+        debriefDone,
+        actualLeftAt: actualLeftTime ? new Date(`${scheduleDate}T${actualLeftTime}`).toISOString() : undefined,
+      });
       if (!result.success) {
         alert(result.error || '收尾确认失败');
         setEndSubmitting(false);
@@ -472,6 +558,19 @@ export default function ScheduleCalendar() {
     const issueDesc = conflictDesc.trim();
     if (showConflict && issueDesc) {
       await post('/conflicts', { scheduleId: endingSchedule.id, conflictType, conflictDescription: issueDesc, conflictDate: new Date().toISOString() });
+    }
+    if (savePositiveFeedback) {
+      const feedbackResult = await post(`/schedules/${endingSchedule.id}/positive-feedbacks`, {
+        platform: positiveFeedbackDraft.platform,
+        targetName: positiveFeedbackDraft.targetName,
+        content: positiveFeedbackDraft.content,
+        screenshotUrl: positiveFeedbackDraft.screenshotUrl,
+      });
+      if (!feedbackResult.success) {
+        alert(feedbackResult.error || '好评记录保存失败');
+        setEndSubmitting(false);
+        return;
+      }
     }
     setShowEndModal(false); setEndSubmitting(false); loadData();
   };
@@ -657,6 +756,8 @@ export default function ScheduleCalendar() {
     const pendingRequestCount = s.pending_request_count || 0;
     const isOverdueUnfinished = eD.getTime() < Date.now() && !terminalStatuses.includes(s.status);
     const missingSteps = (s.progress_summary?.steps || []).filter(step => !step.done && !step.optional).map(step => step.label);
+    const scriptType = scriptTypeLabel(script?.script_type);
+    const distributionType = distributionTypeLabel(script?.distribution_type);
     return (
       <tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => openEditModal(s)}>
         <td className="px-4 py-3">
@@ -667,7 +768,10 @@ export default function ScheduleCalendar() {
         </td>
         <td className="px-4 py-3 text-gray-500">{format(sD, 'EEEE', { locale: zhCN })}</td>
         <td className="px-4 py-3">
-          <span className="text-xs px-2 py-0.5 rounded bg-purple-50 text-purple-600">{script?.dm_gender || '未分类'}</span>
+          <div className="flex flex-col gap-1">
+            <span className={`w-fit rounded px-2 py-0.5 text-xs font-medium ${script?.script_type ? 'bg-purple-50 text-purple-700' : 'bg-orange-50 text-orange-700'}`}>{scriptType}</span>
+            {distributionType && <span className="w-fit rounded bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-500">{distributionType}</span>}
+          </div>
         </td>
         <td className="px-4 py-3 text-gray-800">{format(sD, 'HH:mm')}-{format(eD, 'HH:mm')}</td>
         <td className="px-4 py-3 font-medium text-gray-900">{script?.name || '未知剧本'}</td>
@@ -696,32 +800,38 @@ export default function ScheduleCalendar() {
           )}
         </td>
         <td className="px-4 py-3">
-          <span className={`text-xs px-2 py-0.5 rounded-full ${stColor[s.status] || 'bg-gray-50 text-gray-500'}`}>
-            {stText[s.status] || s.status}
-          </span>
-          {s.status === 'locked' && s.lock_reason && (
-            <div className="mt-1 text-[11px] text-orange-600">{lockReasonText[s.lock_reason] || s.lock_reason}</div>
-          )}
-          {isOverdueUnfinished && (
-            <div className="mt-1.5 inline-flex max-w-[220px] items-center rounded-full border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-700" title={missingSteps.length > 0 ? `待补：${missingSteps.join('、')}` : '这车按时间已开完，但记录未补齐'}>
-              已过时 · 待补记录
+          <div className="min-w-[260px] space-y-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${stColor[s.status] || 'bg-gray-50 text-gray-500'}`}>
+                {stText[s.status] || s.status}
+              </span>
+              {s.status === 'locked' && s.lock_reason && (
+                <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-medium text-orange-600">{lockReasonText[s.lock_reason] || s.lock_reason}</span>
+              )}
+              {isOverdueUnfinished && (
+                <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700" title={missingSteps.length > 0 ? `待补：${missingSteps.join('、')}` : '这车按时间已开完，但记录未补齐'}>
+                  已过时 · 待补记录
+                </span>
+              )}
             </div>
-          )}
-          {!['cancelled', 'bombed', 'completed'].includes(s.status) && (
-            <button onClick={(e) => openDmModal(s, e)} className="mt-1 block rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100">
-              {s.dm_lock_status === 'confirmed'
-                ? `指定卡司：${s.requested_dm_role_name || '角色'} · ${actorName(s.requested_dm_actor_id) || '已指定'}`
-                : s.dm_lock_status === 'not_needed'
-                  ? '指定卡司：不需要'
-                  : '指定卡司'}
-            </button>
-          )}
-          {s.status === 'scheduled' && (
-            <button onClick={(e) => { e.stopPropagation(); openFinanceModal(s, e, 'deposit'); }} className="mt-1 block rounded-lg border border-orange-200 bg-orange-50 px-2 py-1 text-xs font-medium text-orange-700 hover:bg-orange-100">
-              锁车 · 确认定金
-            </button>
-          )}
-          <ProgressLine schedule={s} />
+            <ProgressLine schedule={s} />
+            <div className="flex flex-wrap gap-1.5">
+              {!['cancelled', 'bombed', 'completed'].includes(s.status) && (
+                <button onClick={(e) => openDmModal(s, e)} className="rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100">
+                  {s.dm_lock_status === 'confirmed'
+                    ? `指定卡司：${s.requested_dm_role_name || '角色'} · ${actorName(s.requested_dm_actor_id) || '已指定'}`
+                    : s.dm_lock_status === 'not_needed'
+                      ? '指定卡司：不需要'
+                      : '指定卡司'}
+                </button>
+              )}
+              {s.status === 'scheduled' && (
+                <button onClick={(e) => { e.stopPropagation(); openFinanceModal(s, e, 'deposit'); }} className="rounded-lg border border-orange-200 bg-orange-50 px-2 py-1 text-xs font-medium text-orange-700 hover:bg-orange-100">
+                  锁车 · 确认定金
+                </button>
+              )}
+            </div>
+          </div>
         </td>
         {showActions && (
           <td className="px-4 py-3">
@@ -1017,13 +1127,20 @@ export default function ScheduleCalendar() {
                   const sd = parseISO(s.start_time);
                   const ed = parseISO(s.end_time);
                   const pendingRequestCount = s.pending_request_count || 0;
+                  const typeLabel = scriptTypeLabel(sc?.script_type);
+                  const distLabel = distributionTypeLabel(sc?.distribution_type);
                   carCounter++;
                   const cn = `#${String(carCounter).padStart(3, '0')}`;
                   return (<tr key={s.id} className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer" onClick={() => setViewingEndedSchedule(s)}>
                     <td className="px-4 py-3"><span className="text-xs font-mono font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">{cn}</span></td>
                     <td className="px-4 py-3 text-gray-800">{format(sd, 'M/d')}</td>
                     <td className="px-4 py-3 text-gray-500">{format(sd, 'EEEE', { locale: zhCN })}</td>
-                    <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded bg-purple-50 text-purple-600">{sc?.dm_gender || '未分类'}</span></td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col gap-1">
+                        <span className={`w-fit rounded px-2 py-0.5 text-xs font-medium ${sc?.script_type ? 'bg-purple-50 text-purple-700' : 'bg-orange-50 text-orange-700'}`}>{typeLabel}</span>
+                        {distLabel && <span className="w-fit rounded bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-500">{distLabel}</span>}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-gray-800">{format(sd, 'HH:mm')}-{format(ed, 'HH:mm')}</td>
                     <td className="px-4 py-3 font-medium text-gray-900">{sc?.name || '未知剧本'}</td>
                     <td className="px-4 py-3 text-gray-600">{s.room_name || '-'}</td>
@@ -1040,6 +1157,7 @@ export default function ScheduleCalendar() {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-xs px-2 py-0.5 rounded-full ${stColor[s.status] || 'bg-gray-100 text-gray-500'}`}>{stText[s.status] || s.status}</span>
+                      {(s.positive_feedback_count || 0) > 0 && <span className="ml-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">好评 {s.positive_feedback_count}</span>}
                       <ProgressLine schedule={s} />
                     </td>
                   </tr>);
@@ -1083,6 +1201,52 @@ export default function ScheduleCalendar() {
               <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-400">房间</p><p className="mt-1 font-medium text-slate-900">{viewingEndedSchedule.room_name || '未指定'}</p></div>
               <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-400">人数</p><p className="mt-1 font-medium text-slate-900">{viewingEndedSchedule.checked_in_count || 0}/{viewingEndedSchedule.player_count || 0}</p></div>
               <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-400">结算</p><p className="mt-1 font-medium text-slate-900">{settlementStatusText[viewingEndedSchedule.settlement_status || 'pending']}</p></div>
+              <div className="rounded-lg bg-emerald-50 p-3">
+                <p className="text-xs text-emerald-600">好评记录</p>
+                <p className="mt-1 font-medium text-emerald-900">{viewingEndedSchedule.positive_feedback_count || 0} 条</p>
+              </div>
+              <div className="rounded-lg bg-slate-50 p-3">
+                <p className="text-xs text-slate-400">离场时间</p>
+                <p className="mt-1 font-medium text-slate-900">{viewingEndedSchedule.actual_left_at ? format(parseISO(viewingEndedSchedule.actual_left_at), 'HH:mm') : '未记录'}</p>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button onClick={(e) => openPositiveFeedbackModal(viewingEndedSchedule, e)} className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700">
+                补记好评
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {feedbackSchedule && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={() => setFeedbackSchedule(null)}>
+          <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">补记好评</h3>
+                <p className="mt-1 text-sm text-slate-500">{feedbackSchedule.script_name || '未知剧本'} · {format(parseISO(feedbackSchedule.start_time), 'yyyy-MM-dd HH:mm')}</p>
+              </div>
+              <button onClick={() => setFeedbackSchedule(null)} className="rounded-full px-3 py-1 text-sm text-slate-500 hover:bg-slate-100">关闭</button>
+            </div>
+            <div className="mt-4 grid gap-3">
+              <select value={positiveFeedbackDraft.platform} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, platform: e.target.value }))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                <option value="大众点评">大众点评</option>
+                <option value="小红书">小红书</option>
+                <option value="抖音">抖音</option>
+                <option value="美团">美团</option>
+                <option value="微信社群">微信社群</option>
+                <option value="其他">其他</option>
+              </select>
+              <input value={positiveFeedbackDraft.targetName} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, targetName: e.target.value }))} placeholder="好评给到谁，例如 DM小小 / 店家" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+              <input value={positiveFeedbackDraft.screenshotUrl} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, screenshotUrl: e.target.value }))} placeholder="好评截图链接（上传接口下一步补）" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+              <textarea value={positiveFeedbackDraft.content} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, content: e.target.value }))} placeholder="好评内容或备注" className="h-24 resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm" />
+            </div>
+            <div className="mt-4 flex gap-2">
+              <button onClick={() => setFeedbackSchedule(null)} className="flex-1 rounded-lg border border-slate-200 py-2 text-sm text-slate-600 hover:bg-slate-50">取消</button>
+              <button onClick={submitPositiveFeedback} disabled={feedbackSaving} className="flex-1 rounded-lg bg-emerald-600 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                {feedbackSaving ? '保存中...' : '保存好评'}
+              </button>
             </div>
           </div>
         </div>
@@ -1506,6 +1670,27 @@ export default function ScheduleCalendar() {
                       <textarea value={conflictDesc} onChange={e => setConflictDesc(e.target.value)} placeholder="描述异常或矛盾情况..." className="h-16 resize-none rounded-lg border border-red-200 px-2 py-1.5 text-sm focus:outline-none" />
                     </div>
                   )}
+                  <div className="mt-2 rounded-lg border border-emerald-100 bg-emerald-50 p-2">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-emerald-800">
+                      <input type="checkbox" checked={savePositiveFeedback} onChange={e => setSavePositiveFeedback(e.target.checked)} />
+                      记录这车收到的好评
+                    </label>
+                    {savePositiveFeedback && (
+                      <div className="mt-2 grid gap-2 md:grid-cols-2">
+                        <select value={positiveFeedbackDraft.platform} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, platform: e.target.value }))} className="rounded-lg border border-emerald-200 px-2 py-1.5 text-sm">
+                          <option value="大众点评">大众点评</option>
+                          <option value="小红书">小红书</option>
+                          <option value="抖音">抖音</option>
+                          <option value="美团">美团</option>
+                          <option value="微信社群">微信社群</option>
+                          <option value="其他">其他</option>
+                        </select>
+                        <input value={positiveFeedbackDraft.targetName} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, targetName: e.target.value }))} placeholder="好评给到谁，例如 DM小小 / 店家" className="rounded-lg border border-emerald-200 px-2 py-1.5 text-sm" />
+                        <input value={positiveFeedbackDraft.screenshotUrl} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, screenshotUrl: e.target.value }))} placeholder="好评截图链接（上传接口下一步补）" className="rounded-lg border border-emerald-200 px-2 py-1.5 text-sm md:col-span-2" />
+                        <textarea value={positiveFeedbackDraft.content} onChange={e => setPositiveFeedbackDraft(d => ({ ...d, content: e.target.value }))} placeholder="好评内容或备注" className="h-16 resize-none rounded-lg border border-emerald-200 px-2 py-1.5 text-sm md:col-span-2" />
+                      </div>
+                    )}
+                  </div>
                 </div>
               </section>
               <section className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-center">
@@ -1515,6 +1700,20 @@ export default function ScheduleCalendar() {
                   <img src={`https://api.qrserver.com/v1/create-qr-code/?size=128x128&data=${encodeURIComponent(window.location.origin + '/evaluate/' + endingSchedule.id)}`} alt="评价二维码" className="h-32 w-32" />
                 </div>
                 <button onClick={() => navigator.clipboard.writeText(window.location.origin + '/evaluate/' + endingSchedule.id)} className="mt-2 block w-full text-xs text-blue-600 hover:underline">复制评价链接</button>
+                <div className="mt-3 rounded-lg bg-white/80 p-2 text-left">
+                  <h5 className="text-xs font-semibold text-slate-900">DM / 客服收尾</h5>
+                  <div className="mt-2 grid gap-1.5 text-xs text-slate-700">
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={propsChecked} onChange={e => setPropsChecked(e.target.checked)} /> 道具已收齐</label>
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={costumesChecked} onChange={e => setCostumesChecked(e.target.checked)} /> 服装已收齐</label>
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={scriptCardsChecked} onChange={e => setScriptCardsChecked(e.target.checked)} /> 本及线索卡已收齐</label>
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={reviewRequested} onChange={e => setReviewRequested(e.target.checked)} /> 已向玩家要好评</label>
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={debriefDone} onChange={e => setDebriefDone(e.target.checked)} /> 已完成复盘</label>
+                    <label className="mt-1 block">
+                      <span className="mb-1 block text-[11px] font-medium text-slate-500">确认离场时间</span>
+                      <input type="time" value={actualLeftTime} onChange={e => setActualLeftTime(e.target.value)} className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-xs" />
+                    </label>
+                  </div>
+                </div>
               </section>
             </div>
             <div className="mt-3 flex gap-2">

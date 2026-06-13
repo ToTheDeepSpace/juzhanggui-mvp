@@ -144,6 +144,14 @@ function sha256(input: string): string { return crypto.createHash('sha256').upda
 function cleanText(input: unknown, max = 120): string {
   return typeof input === 'string' ? input.trim().slice(0, max) : '';
 }
+function scriptTypeValue(input: unknown) {
+  const value = cleanText(input, 40);
+  return ['emotional', 'comedy', 'horror', 'mechanism', 'faction'].includes(value) ? value : null;
+}
+function distributionTypeValue(input: unknown) {
+  const value = cleanText(input, 40);
+  return ['city_limited', 'boxed', 'exclusive'].includes(value) ? value : null;
+}
 function currentTenantId(req: any): string {
   return cleanText(req?.user?.tenantId, 80) || TENANT_ID;
 }
@@ -1976,7 +1984,14 @@ app.post('/api/scripts', async (req: any, res: any) => {
     if (!name) return res.status(400).json(err(new Error('请填写名称')));
     const playerCount = Math.max(1, Number(req.body.playerCount || (playerRoles || []).length || 1));
     const { data } = await supabase.from('scripts').insert({
-      name, duration_minutes: minDuration, min_duration_hours: (minDuration || 0) / 60, max_duration_hours: (maxDuration || 0) / 60, player_count: playerCount, tenant_id: currentTenantId(req)
+      name,
+      script_type: scriptTypeValue(req.body.scriptType),
+      distribution_type: distributionTypeValue(req.body.distributionType),
+      duration_minutes: minDuration,
+      min_duration_hours: (minDuration || 0) / 60,
+      max_duration_hours: (maxDuration || 0) / 60,
+      player_count: playerCount,
+      tenant_id: currentTenantId(req)
     }).select().single();
     for (const r of playerRoles || []) {
       await supabase.from('script_player_roles').insert({ script_id: data!.id, ...parseRole(r) });
@@ -2000,7 +2015,15 @@ app.put('/api/scripts/:id', async (req: any, res: any) => {
     const tenantId = currentTenantId(req);
     const { data: owned } = await supabase.from('scripts').select('id').eq('id', req.params.id).eq('tenant_id', tenantId).maybeSingle();
     if (!owned) return res.status(404).json(err(new Error('剧本不存在')));
-    await supabase.from('scripts').update({ name, duration_minutes: minDuration, min_duration_hours: (minDuration || 0) / 60, max_duration_hours: (maxDuration || 0) / 60, player_count: playerCount }).eq('id', req.params.id).eq('tenant_id', tenantId);
+    await supabase.from('scripts').update({
+      name,
+      script_type: scriptTypeValue(req.body.scriptType),
+      distribution_type: distributionTypeValue(req.body.distributionType),
+      duration_minutes: minDuration,
+      min_duration_hours: (minDuration || 0) / 60,
+      max_duration_hours: (maxDuration || 0) / 60,
+      player_count: playerCount,
+    }).eq('id', req.params.id).eq('tenant_id', tenantId);
     await supabase.from('script_player_roles').delete().eq('script_id', req.params.id);
     await supabase.from('script_actor_roles').delete().eq('script_id', req.params.id);
     for (const r of playerRoles || []) {
@@ -2034,6 +2057,10 @@ app.get('/api/schedules', async (req: any, res: any) => {
       const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
       const { data: actorRoles } = await supabase.from('script_actor_roles').select('role_name, gender').eq('script_id', s.script_id);
       const { data: evaluations } = await supabase.from('evaluations').select('rating, comment').eq('schedule_id', s.id);
+      const { count: positiveFeedbackCount } = await supabase.from('jzg_positive_feedbacks')
+        .select('*', { count: 'exact', head: true })
+        .eq('schedule_id', s.id)
+        .eq('tenant_id', currentTenantId(req));
       const { count: pendingRequestCount } = await supabase.from('jzg_carpool_join_requests')
         .select('*', { count: 'exact', head: true })
         .eq('schedule_id', s.id)
@@ -2048,6 +2075,7 @@ app.get('/api/schedules', async (req: any, res: any) => {
         player_roles: normalizedPlayerRoles,
         actor_roles: normalizedActorRoles,
         pending_request_count: pendingRequestCount || 0,
+        positive_feedback_count: positiveFeedbackCount || 0,
         progress_summary: buildScheduleProgress(s, checkinsWithCustomer, normalizedPlayerRoles, evaluations || []),
       };
     }));
@@ -2067,6 +2095,10 @@ app.get('/api/schedules/:id', async (req: any, res: any) => {
     const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
     const { data: actorRoles } = await supabase.from('script_actor_roles').select('role_name, gender').eq('script_id', s.script_id);
     const { data: evaluations } = await supabase.from('evaluations').select('rating, comment').eq('schedule_id', req.params.id);
+    const { count: positiveFeedbackCount } = await supabase.from('jzg_positive_feedbacks')
+      .select('*', { count: 'exact', head: true })
+      .eq('schedule_id', req.params.id)
+      .eq('tenant_id', currentTenantId(req));
     const normalizedPlayerRoles = (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
     const normalizedActorRoles = (actorRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
     res.json(ok({
@@ -2074,6 +2106,7 @@ app.get('/api/schedules/:id', async (req: any, res: any) => {
       checkins: checkinsWithCustomer,
       player_roles: normalizedPlayerRoles,
       actor_roles: normalizedActorRoles,
+      positive_feedback_count: positiveFeedbackCount || 0,
       progress_summary: buildScheduleProgress(s, checkinsWithCustomer, normalizedPlayerRoles, evaluations || []),
       start_time: `${s.scheduled_date}T${s.start_time}`,
       end_time: `${s.scheduled_date}T${s.end_time}`,
@@ -2265,12 +2298,26 @@ app.put('/api/schedules/:id/complete', async (req: any, res: any) => {
   try {
     const schedule = await requireTenantSchedule(req, res, req.params.id);
     if (!schedule) return;
+    const actualLeftAt = cleanText(req.body?.actualLeftAt, 40);
     await supabase.from('schedules').update({
       status: 'settling',
       actual_ended_at: new Date().toISOString(),
+      actual_left_at: actualLeftAt || null,
+      props_checked: !!req.body?.propsChecked,
+      costumes_checked: !!req.body?.costumesChecked,
+      script_cards_checked: !!req.body?.scriptCardsChecked,
+      review_requested: !!req.body?.reviewRequested,
+      debrief_done: !!req.body?.debriefDone,
       settlement_status: 'pending',
     }).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
-    await logStoreAction(req, 'schedule_wrapup_confirmed', { type: 'schedule', id: req.params.id });
+    await logStoreAction(req, 'schedule_wrapup_confirmed', { type: 'schedule', id: req.params.id }, {
+      propsChecked: !!req.body?.propsChecked,
+      costumesChecked: !!req.body?.costumesChecked,
+      scriptCardsChecked: !!req.body?.scriptCardsChecked,
+      reviewRequested: !!req.body?.reviewRequested,
+      debriefDone: !!req.body?.debriefDone,
+      actualLeftAt: actualLeftAt || null,
+    });
     res.json(ok());
   }
   catch (e) { res.status(500).json(err(e)); }
@@ -3102,6 +3149,46 @@ app.post('/api/schedules/:id/evaluate', async (req: any, res: any) => {
   }
   catch (e) { res.status(500).json(err(e)); }
 });
+app.get('/api/schedules/:id/positive-feedbacks', async (req: any, res: any) => {
+  try {
+    const schedule = await requireTenantSchedule(req, res, req.params.id);
+    if (!schedule) return;
+    const { data, error } = await supabase.from('jzg_positive_feedbacks')
+      .select('*')
+      .eq('schedule_id', req.params.id)
+      .eq('tenant_id', currentTenantId(req))
+      .order('feedback_at', { ascending: false })
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(ok(data || []));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+app.post('/api/schedules/:id/positive-feedbacks', async (req: any, res: any) => {
+  try {
+    const tenantId = currentTenantId(req);
+    const schedule = await requireTenantSchedule(req, res, req.params.id, 'id, tenant_id');
+    if (!schedule) return;
+    const platform = cleanText(req.body.platform, 60);
+    const targetName = cleanText(req.body.targetName, 100);
+    const content = cleanText(req.body.content, 1000);
+    const screenshotUrl = cleanText(req.body.screenshotUrl, 500) || null;
+    if (!platform) return res.status(400).json(err(new Error('请选择或填写好评平台')));
+    if (!targetName) return res.status(400).json(err(new Error('请填写好评给到谁')));
+    const { data, error } = await supabase.from('jzg_positive_feedbacks').insert({
+      tenant_id: tenantId,
+      schedule_id: req.params.id,
+      platform,
+      target_name: targetName,
+      content: content || null,
+      screenshot_url: screenshotUrl,
+      feedback_at: req.body.feedbackAt || new Date().toISOString(),
+      created_by: req.user?.adminUserId || req.user?.email || null,
+    }).select().single();
+    if (error) throw error;
+    await logStoreAction(req, 'positive_feedback_created', { type: 'schedule', id: req.params.id }, { platform, targetName });
+    res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
 app.get('/api/scripts/:id/evaluations', async (req: any, res: any) => {
   try {
     const tenantId = currentTenantId(req);
@@ -3425,6 +3512,20 @@ app.put('/api/notifications/read-all', async (req: any, res: any) => {
 });
 
 // ===== Conflicts =====
+app.get('/api/conflicts', async (req: any, res: any) => {
+  try {
+    const tenantId = currentTenantId(req);
+    const status = cleanText(req.query.status, 30);
+    let query = supabase.from('conflict_records')
+      .select('*, customers(name), actors(name), schedules(script_id, scheduled_date, start_time, scripts(name))')
+      .eq('tenant_id', tenantId)
+      .order('conflict_date', { ascending: false });
+    if (status && status !== 'all') query = query.eq('status', status);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(ok(data || []));
+  } catch (e) { res.status(500).json(err(e)); }
+});
 app.get('/api/conflicts/pending', async (req: any, res: any) => {
   try {
     const tenantId = currentTenantId(req);

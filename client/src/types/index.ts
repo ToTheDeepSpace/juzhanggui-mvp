@@ -20,6 +20,8 @@ export interface Actor {
 export interface Script {
   id: string;
   name: string;
+  script_type?: 'emotional' | 'comedy' | 'horror' | 'mechanism' | 'faction' | string | null;
+  distribution_type?: 'city_limited' | 'boxed' | 'exclusive' | string | null;
   duration: number; // 为了向后兼容，实际值为min_duration
   min_duration: number;
   max_duration: number;
@@ -106,6 +108,12 @@ export interface Schedule {
   dm_lock_customer_id?: string | null;
   actual_started_at?: string | null;
   actual_ended_at?: string | null;
+  actual_left_at?: string | null;
+  props_checked?: boolean;
+  costumes_checked?: boolean;
+  script_cards_checked?: boolean;
+  review_requested?: boolean;
+  debrief_done?: boolean;
   settlement_status?: string | null;
 }
 

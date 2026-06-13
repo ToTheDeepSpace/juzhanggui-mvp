@@ -22,6 +22,13 @@ interface ConflictRecord {
   schedules?: { scheduled_date?: string; start_time?: string; scripts?: { name?: string } | null } | null;
 }
 
+interface ScheduleOption {
+  id: string;
+  script_name?: string;
+  start_time: string;
+  status: string;
+}
+
 const conflictTypeLabels: Record<string, string> = {
   'service_attitude': '服务态度',
   'performance': '表演水平',
@@ -42,33 +49,43 @@ const statusColors: Record<string, string> = {
 };
 
 const ConflictResolutionPage: React.FC = () => {
-  const { get, post } = useApi();
-  const [pendingConflicts, setPendingConflicts] = useState<ConflictRecord[]>([]);
+  const { get, post, put } = useApi();
+  const [conflicts, setConflicts] = useState<ConflictRecord[]>([]);
+  const [schedules, setSchedules] = useState<ScheduleOption[]>([]);
+  const [filter, setFilter] = useState<'pending' | 'all'>('pending');
   const [loading, setLoading] = useState(true);
   const [openDialog, setOpenDialog] = useState(false);
   const [selectedConflict, setSelectedConflict] = useState<ConflictRecord | null>(null);
   const [resolution, setResolution] = useState('');
   const [resolvedBy, setResolvedBy] = useState('');
   const [status, setStatus] = useState<'pending' | 'resolved' | 'escalated'>('pending');
+  const [linkedScheduleId, setLinkedScheduleId] = useState('');
 
   // 加载矛盾记录
   useEffect(() => {
     fetchConflicts();
-  }, []);
+    fetchSchedules();
+  }, [filter]);
 
   const fetchConflicts = async () => {
     try {
-      const result = await get<ConflictRecord[]>('/conflicts/pending');
-      setPendingConflicts(result.success && result.data ? result.data : []);
+      const result = await get<ConflictRecord[]>(filter === 'pending' ? '/conflicts?status=pending' : '/conflicts?status=all');
+      setConflicts(result.success && result.data ? result.data : []);
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchSchedules = async () => {
+    const result = await get<ScheduleOption[]>('/schedules');
+    if (result.success && result.data) setSchedules(result.data);
   };
 
   const handleOpenDialog = (conflict: ConflictRecord) => {
     setSelectedConflict(conflict);
     setResolution(conflict.resolution || '');
     setStatus(conflict.status);
+    setLinkedScheduleId(conflict.schedule_id || '');
     setOpenDialog(true);
   };
 
@@ -78,11 +95,17 @@ const ConflictResolutionPage: React.FC = () => {
     setResolution('');
     setResolvedBy('');
     setStatus('pending');
+    setLinkedScheduleId('');
   };
 
   const handleSaveResolution = async () => {
     if (!selectedConflict) return;
     try {
+      const linkChanged = linkedScheduleId !== (selectedConflict.schedule_id || '');
+      if (linkChanged) {
+        const linkRes = await put(`/conflicts/${selectedConflict.id}`, { scheduleId: linkedScheduleId || null });
+        if (!linkRes.success) throw new Error(linkRes.error || '关联车次失败');
+      }
       const res = await post(`/conflicts/${selectedConflict.id}/resolve`, { resolution, resolved_by: resolvedBy, status });
       if (res.success) {
         await fetchConflicts();
@@ -105,7 +128,8 @@ const ConflictResolutionPage: React.FC = () => {
   const customerName = (conflict: ConflictRecord) => conflict.customer_name || conflict.customers?.name || '未关联客户';
   const actorName = (conflict: ConflictRecord) => conflict.actor_name || conflict.actors?.name || '未关联卡司';
   const scriptName = (conflict: ConflictRecord) => conflict.script_name || conflict.schedules?.scripts?.name || '未关联剧本';
-  const scheduleTime = (conflict: ConflictRecord) => conflict.start_time || conflict.schedules?.scheduled_date || conflict.conflict_date;
+  const scheduleTime = (conflict: ConflictRecord) => conflict.start_time || conflict.schedules?.start_time || conflict.schedules?.scheduled_date || conflict.conflict_date;
+  const scheduleLabel = (schedule: ScheduleOption) => `${formatDate(schedule.start_time)} · ${schedule.script_name || '未知剧本'} · ${statusLabels[schedule.status] || schedule.status}`;
 
   if (loading) {
     return <div className="p-6">加载中...</div>;
@@ -113,10 +137,19 @@ const ConflictResolutionPage: React.FC = () => {
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-6">矛盾调解页面</h1>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">矛盾调解</h1>
+          <p className="mt-1 text-sm text-gray-500">矛盾必须尽量关联到具体车次，后续才能沉淀历史、复盘服务和保护店家。</p>
+        </div>
+        <div className="rounded-lg border border-gray-200 bg-white p-1">
+          <button onClick={() => setFilter('pending')} className={`rounded-md px-3 py-1.5 text-sm font-medium ${filter === 'pending' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>待处理</button>
+          <button onClick={() => setFilter('all')} className={`rounded-md px-3 py-1.5 text-sm font-medium ${filter === 'all' ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>历史记录</button>
+        </div>
+      </div>
       
-      {pendingConflicts.length === 0 ? (
-        <div className="text-gray-500">暂无待处理的矛盾记录</div>
+      {conflicts.length === 0 ? (
+        <div className="text-gray-500">{filter === 'pending' ? '暂无待处理的矛盾记录' : '暂无矛盾历史记录'}</div>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 border">
@@ -132,11 +165,14 @@ const ConflictResolutionPage: React.FC = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {pendingConflicts.map(conflict => (
+              {conflicts.map(conflict => (
                 <tr key={conflict.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{customerName(conflict)}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{actorName(conflict)}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{scriptName(conflict)}</td>
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                    {scriptName(conflict)}
+                    {!conflict.schedule_id && <div className="mt-1 text-xs font-medium text-orange-600">未关联车次</div>}
+                  </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{formatDate(scheduleTime(conflict))}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{conflictTypeLabels[conflict.conflict_type] || conflict.conflict_type}</td>
                   <td className="px-4 py-3 whitespace-nowrap">
@@ -149,7 +185,7 @@ const ConflictResolutionPage: React.FC = () => {
                       onClick={() => handleOpenDialog(conflict)}
                       className="text-indigo-600 hover:text-indigo-900"
                     >
-                      处理
+                      {conflict.status === 'pending' ? '处理' : '查看 / 更新'}
                     </button>
                   </td>
                 </tr>
@@ -177,6 +213,20 @@ const ConflictResolutionPage: React.FC = () => {
               <div>
                 <label className="block text-sm font-medium text-gray-700">剧本</label>
                 <div className="mt-1 text-sm">{scriptName(selectedConflict)}</div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">关联车次</label>
+                <select
+                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"
+                  value={linkedScheduleId}
+                  onChange={(e) => setLinkedScheduleId(e.target.value)}
+                >
+                  <option value="">未关联，选择一个车次</option>
+                  {schedules.map(schedule => (
+                    <option key={schedule.id} value={schedule.id}>{scheduleLabel(schedule)}</option>
+                  ))}
+                </select>
+                {!linkedScheduleId && <p className="mt-1 text-xs text-orange-600">建议先关联车次，否则后期很难判断是哪一车的问题。</p>}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">矛盾描述</label>

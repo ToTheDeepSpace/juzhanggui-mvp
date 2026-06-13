@@ -2,6 +2,25 @@ import { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 import type { Script, ScriptRole, ActorSkill, Role, ScriptTemplate } from '../types';
 
+const SCRIPT_TYPE_OPTIONS = [
+  { value: '', label: '未设置类型' },
+  { value: 'emotional', label: '情感本' },
+  { value: 'comedy', label: '欢乐本' },
+  { value: 'horror', label: '恐怖本' },
+  { value: 'mechanism', label: '机制本' },
+  { value: 'faction', label: '阵营本' },
+];
+
+const DISTRIBUTION_TYPE_OPTIONS = [
+  { value: '', label: '未设置发行形态' },
+  { value: 'city_limited', label: '城限' },
+  { value: 'boxed', label: '盒装' },
+  { value: 'exclusive', label: '独家' },
+];
+
+const scriptTypeLabel = (value?: string | null) => SCRIPT_TYPE_OPTIONS.find(option => option.value === value)?.label || '未设置类型';
+const distributionTypeLabel = (value?: string | null) => DISTRIBUTION_TYPE_OPTIONS.find(option => option.value === value)?.label || '未设置发行形态';
+
 export default function ScriptManager() {
   const { get, post, put, del, loading } = useApi();
   const [scripts, setScripts] = useState<Script[]>([]);
@@ -14,6 +33,8 @@ export default function ScriptManager() {
   const [editingScript, setEditingScript] = useState<Script | null>(null);
   const [formData, setFormData] = useState({
     name: '',
+    scriptType: '',
+    distributionType: '',
     minDuration: '',
     maxDuration: '',
     playerCount: '',
@@ -143,6 +164,8 @@ const handleSubmit = async (e: React.FormEvent) => {
     
     const data = {
       name: formData.name.trim(),
+      scriptType: formData.scriptType || null,
+      distributionType: formData.distributionType || null,
       minDuration: Math.round(parseFloat(formData.minDuration) * 60), // 小时转分钟
       maxDuration: Math.round(parseFloat(formData.maxDuration) * 60), // 小时转分钟
       playerCount: parseInt(formData.playerCount),
@@ -158,7 +181,7 @@ const handleSubmit = async (e: React.FormEvent) => {
     }
 
     if (result.success) {
-      setFormData({ name: '', minDuration: '', maxDuration: '', playerCount: '', playerRoles: [], actorRoles: [] });
+      setFormData({ name: '', scriptType: '', distributionType: '', minDuration: '', maxDuration: '', playerCount: '', playerRoles: [], actorRoles: [] });
       setEditingScript(null);
       setShowForm(false);
       loadScripts();
@@ -227,6 +250,8 @@ const handleSubmit = async (e: React.FormEvent) => {
     
     setFormData({
       name: script.name,
+      scriptType: script.script_type || '',
+      distributionType: script.distribution_type || '',
       minDuration: String(script.min_duration / 60), // 分钟转小时（最短时长）
       maxDuration: String(script.max_duration / 60), // 分钟转小时（最长时长）
       playerCount: String(script.player_count || script.player_roles?.length || ''),
@@ -262,7 +287,7 @@ const handleSubmit = async (e: React.FormEvent) => {
         <button
           onClick={() => {
             setEditingScript(null);
-            setFormData({ name: '', minDuration: '', maxDuration: '', playerCount: '', playerRoles: [], actorRoles: [] });
+            setFormData({ name: '', scriptType: '', distributionType: '', minDuration: '', maxDuration: '', playerCount: '', playerRoles: [], actorRoles: [] });
             setShowForm(true);
           }}
           className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors"
@@ -339,6 +364,26 @@ const handleSubmit = async (e: React.FormEvent) => {
                   placeholder="剧本名称"
                   required
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">剧本类型</label>
+                <select
+                  value={formData.scriptType}
+                  onChange={(e) => setFormData({ ...formData, scriptType: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                >
+                  {SCRIPT_TYPE_OPTIONS.map(option => <option key={option.value || 'blank'} value={option.value}>{option.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">发行形态</label>
+                <select
+                  value={formData.distributionType}
+                  onChange={(e) => setFormData({ ...formData, distributionType: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                >
+                  {DISTRIBUTION_TYPE_OPTIONS.map(option => <option key={option.value || 'blank'} value={option.value}>{option.label}</option>)}
+                </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">最短时长（小时）</label>
@@ -529,6 +574,10 @@ const handleSubmit = async (e: React.FormEvent) => {
             <div className="flex justify-between items-start">
               <div>
                 <h3 className="font-medium text-lg text-gray-800">{script.name}</h3>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  <span className="rounded-full bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700">{scriptTypeLabel(script.script_type)}</span>
+                  <span className="rounded-full bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600">{distributionTypeLabel(script.distribution_type)}</span>
+                </div>
                 <p className="text-sm text-gray-500 mt-1">
                   ⏱️ {formatDuration(script.min_duration, script.max_duration)} · 👤 玩家{script.player_count || 0}人 · 🎭 卡司{script.actor_count || 0}人
                 </p>
@@ -578,7 +627,7 @@ const handleSubmit = async (e: React.FormEvent) => {
               <div>
                 <h3 className="text-lg font-bold">{selectedScript.name}</h3>
                 <p className="text-sm text-gray-500">
-                  ⏱️ {formatDuration(selectedScript.min_duration, selectedScript.max_duration)} · 👤 开本{selectedScript.player_count || 0}人 · 🎲 角色库{selectedScript.role_count || selectedScript.player_roles?.length || 0}个 · 🎭 卡司{selectedScript.actor_count || 0}人
+                  {scriptTypeLabel(selectedScript.script_type)} · {distributionTypeLabel(selectedScript.distribution_type)} · ⏱️ {formatDuration(selectedScript.min_duration, selectedScript.max_duration)} · 👤 开本{selectedScript.player_count || 0}人 · 🎲 角色库{selectedScript.role_count || selectedScript.player_roles?.length || 0}个 · 🎭 卡司{selectedScript.actor_count || 0}人
                 </p>
               </div>
               <button
