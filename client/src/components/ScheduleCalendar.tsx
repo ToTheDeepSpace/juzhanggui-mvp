@@ -702,6 +702,7 @@ export default function ScheduleCalendar() {
     { label: '第一场排期', done: schedules.length > 0 },
   ];
   const onboardingDoneCount = onboardingSteps.filter(step => step.done).length;
+  const showOnboardingCard = onboardingDoneCount < onboardingSteps.length;
   const actionSchedules = schedules.filter(s => !terminalStatuses.includes(s.status) && s.start_time.split('T')[0] <= todayStr);
   const overdueUnfinishedCount = actionSchedules.filter(s => parseISO(s.end_time).getTime() < Date.now()).length;
   const todayActionItems = [
@@ -738,6 +739,13 @@ export default function ScheduleCalendar() {
     free: '免单',
     other: '其他',
     unknown: '未填',
+  };
+  const settlementStatusText: Record<string, string> = {
+    pending: '待结算',
+    unsettled: '待结算',
+    settling: '待结算',
+    settled: '已结清',
+    waived: '已减免',
   };
   const formatMoney = (cents?: number) => `¥${((Number(cents || 0)) / 100).toFixed(0)}`;
 
@@ -926,23 +934,25 @@ export default function ScheduleCalendar() {
       </div>
 
       {!showEnded && (
-        <div className="grid gap-4 lg:grid-cols-[1.1fr,1fr]">
-          <div className="rounded-2xl border border-indigo-100 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-slate-900">新店开通进度</p>
-                <p className="mt-1 text-xs text-slate-500">先补齐基础资料，再开放真实排期会更稳。</p>
-              </div>
-              <span className="rounded-full bg-indigo-50 px-3 py-1 text-sm font-semibold text-indigo-700">{onboardingDoneCount}/{onboardingSteps.length}</span>
-            </div>
-            <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
-              {onboardingSteps.map(step => (
-                <div key={step.label} className={`rounded-lg border px-3 py-2 text-xs ${step.done ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-slate-100 bg-slate-50 text-slate-500'}`}>
-                  <span className="mr-1">{step.done ? '✓' : '·'}</span>{step.label}
+        <div className={`grid gap-4 ${showOnboardingCard ? 'lg:grid-cols-[1.1fr,1fr]' : 'lg:grid-cols-1'}`}>
+          {showOnboardingCard && (
+            <div className="rounded-2xl border border-indigo-100 bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">新店开通进度</p>
+                  <p className="mt-1 text-xs text-slate-500">先补齐基础资料，再开放真实排期会更稳。</p>
                 </div>
-              ))}
+                <span className="rounded-full bg-indigo-50 px-3 py-1 text-sm font-semibold text-indigo-700">{onboardingDoneCount}/{onboardingSteps.length}</span>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3">
+                {onboardingSteps.map(step => (
+                  <div key={step.label} className={`rounded-lg border px-3 py-2 text-xs ${step.done ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-slate-100 bg-slate-50 text-slate-500'}`}>
+                    <span className="mr-1">{step.done ? '✓' : '·'}</span>{step.label}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
           <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -1227,7 +1237,7 @@ export default function ScheduleCalendar() {
               <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-400">时间</p><p className="mt-1 font-medium text-slate-900">{format(parseISO(viewingEndedSchedule.start_time), 'yyyy-MM-dd HH:mm')}</p></div>
               <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-400">房间</p><p className="mt-1 font-medium text-slate-900">{viewingEndedSchedule.room_name || '未指定'}</p></div>
               <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-400">人数</p><p className="mt-1 font-medium text-slate-900">{viewingEndedSchedule.checked_in_count || 0}/{viewingEndedSchedule.player_count || 0}</p></div>
-              <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-400">结算</p><p className="mt-1 font-medium text-slate-900">{settlementStatusText[viewingEndedSchedule.settlement_status || 'pending']}</p></div>
+              <div className="rounded-lg bg-slate-50 p-3"><p className="text-xs text-slate-400">结算</p><p className="mt-1 font-medium text-slate-900">{settlementStatusText[viewingEndedSchedule.settlement_status || 'pending'] || viewingEndedSchedule.settlement_status || '待结算'}</p></div>
               <div className="rounded-lg bg-emerald-50 p-3">
                 <p className="text-xs text-emerald-600">好评记录</p>
                 <p className="mt-1 font-medium text-emerald-900">{viewingEndedSchedule.positive_feedback_count || 0} 条</p>
