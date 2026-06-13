@@ -148,6 +148,90 @@ function sha256(input: string): string { return crypto.createHash('sha256').upda
 function cleanText(input: unknown, max = 120): string {
   return typeof input === 'string' ? input.trim().slice(0, max) : '';
 }
+
+type ModerationPrecheckDecision = 'pass' | 'review' | 'block';
+type ModerationPrecheckMatch = {
+  label: string;
+  severity: ModerationPrecheckDecision;
+  field: string;
+  excerpt: string;
+};
+
+const LOCAL_MODERATION_RULES: Array<{
+  label: string;
+  severity: ModerationPrecheckDecision;
+  pattern: RegExp;
+}> = [
+  { label: 'identity_number', severity: 'block', pattern: /\b[1-9]\d{5}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b/g },
+  { label: 'privacy_or_doxxing', severity: 'block', pattern: /(开盒|人肉|身份证|家庭住址|户籍|泄露隐私|偷拍视频)/g },
+  { label: 'illegal_or_crime', severity: 'block', pattern: /(诈骗|赌博|毒品|枪支|卖淫|嫖娼|性交易|洗钱|套现|伪造证件|网暴|威胁恐吓)/g },
+  { label: 'minor_high_risk', severity: 'block', pattern: /(未成年|小学生|初中生|未满十八|未满18).{0,12}(约|睡|性|黄色|陪睡|裸)/g },
+  { label: 'phone_or_contact', severity: 'review', pattern: /(?:\+?86[-\s]?)?1[3-9]\d{9}/g },
+  { label: 'wechat_or_qq', severity: 'review', pattern: /(微信|VX|vx|V信|企鹅|QQ|qq)[:：\s-]*[A-Za-z0-9_-]{5,}/g },
+  { label: 'abuse_or_attack', severity: 'review', pattern: /(傻逼|煞笔|贱人|死妈|滚蛋|垃圾人|去死|婊子|人渣|烂人|畜生)/g },
+  { label: 'rumor_or_defamation_risk', severity: 'review', pattern: /(听说|据说|群里说|别人说|网传|瓜说|没有证据|纯主观|造谣|挂人)/g },
+  { label: 'sexual_content', severity: 'review', pattern: /(约炮|陪睡|裸聊|口交|做爱|上床|黄色服务|擦边|包夜)/g },
+];
+
+function maskModerationExcerpt(value: string) {
+  return value
+    .replace(/\b([1-9]\d{5})(\d{8})(\d{3}[\dXx])\b/g, '$1********$3')
+    .replace(/(1[3-9])\d{4}(\d{4})/g, '$1****$2')
+    .slice(0, 80);
+}
+
+function moderationDecisionRank(decision: ModerationPrecheckDecision) {
+  return decision === 'block' ? 3 : decision === 'review' ? 2 : 1;
+}
+
+function runLocalModerationPrecheck(input: {
+  scene: string;
+  targetType: string;
+  texts: Record<string, unknown>;
+  allowContact?: boolean;
+}) {
+  const matches: ModerationPrecheckMatch[] = [];
+  for (const [field, value] of Object.entries(input.texts)) {
+    const text = cleanText(value, 6000);
+    if (!text) continue;
+    for (const rule of LOCAL_MODERATION_RULES) {
+      if (input.allowContact && (rule.label === 'phone_or_contact' || rule.label === 'wechat_or_qq')) continue;
+      const found = Array.from(text.matchAll(rule.pattern)).slice(0, 3);
+      for (const item of found) {
+        matches.push({
+          label: rule.label,
+          severity: rule.severity,
+          field,
+          excerpt: maskModerationExcerpt(item[0] || ''),
+        });
+      }
+    }
+  }
+  const decision = matches.reduce<ModerationPrecheckDecision>(
+    (current, item) => moderationDecisionRank(item.severity) > moderationDecisionRank(current) ? item.severity : current,
+    'pass',
+  );
+  const labels = Array.from(new Set(matches.map(item => item.label)));
+  const textForHash = Object.entries(input.texts).map(([field, value]) => `${field}:${cleanText(value, 6000)}`).join('\n');
+  return {
+    version: 'local_rules_v1',
+    provider: 'local',
+    scene: input.scene,
+    target_type: input.targetType,
+    decision,
+    risk_score: Math.min(100, matches.reduce((sum, item) => sum + (item.severity === 'block' ? 40 : 18), 0)),
+    risk_labels: labels,
+    matches: matches.slice(0, 20),
+    summary: decision === 'pass'
+      ? '本地预审未发现明显风险'
+      : decision === 'block'
+        ? '本地预审发现高风险内容，建议人工优先复核'
+        : '本地预审发现需关注内容，建议人工审核时重点查看',
+    checked_at: new Date().toISOString(),
+    text_hash: sha256(textForHash),
+    paid_provider: 'not_enabled',
+  };
+}
 const FEEDBACK_CATEGORIES = ['suggestion', 'bug', 'question', 'complaint', 'report', 'illegal_content', 'security', 'privacy', 'other'];
 function feedbackCategoryValue(input: unknown) {
   const value = cleanText(input, 40) || 'suggestion';
@@ -1789,6 +1873,12 @@ app.post('/api/feedback', async (req: any, res: any) => {
     if (!title) return res.status(400).json(err(new Error('请填写反馈标题')));
     if (!content) return res.status(400).json(err(new Error('请填写反馈内容')));
     const priority = feedbackPriorityFor(category);
+    const moderationPrecheck = runLocalModerationPrecheck({
+      scene: ['complaint', 'report', 'illegal_content', 'security', 'privacy'].includes(category) ? 'complaint_report_submit' : 'feedback_submit',
+      targetType: 'feedback',
+      texts: { category, title, content },
+      allowContact: category === 'security' || category === 'privacy',
+    });
     const { data, error } = await supabase.from('jzg_feedback_messages').insert({
       tenant_id: currentTenantId(req),
       admin_user_id: req.user?.adminUserId || null,
@@ -1796,9 +1886,10 @@ app.post('/api/feedback', async (req: any, res: any) => {
       title,
       content,
       priority,
+      moderation_precheck: moderationPrecheck,
     }).select('*').single();
     if (error) throw error;
-    await logStoreAction(req, 'feedback_submitted', { type: 'feedback', id: data.id, label: title }, { category, priority });
+    await logStoreAction(req, 'feedback_submitted', { type: 'feedback', id: data.id, label: title }, { category, priority, moderation: moderationPrecheck });
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -4221,6 +4312,11 @@ app.post('/api/dm/experience-notes', async (req: any, res: any) => {
       : cleanText(req.body?.tags, 200).split(/[，,\s]+/);
     const tags = uniqueTexts(rawTags, 8);
     const visibility = cleanText(req.body?.visibility, 20) === 'private' ? 'private' : 'internal';
+    const moderationPrecheck = runLocalModerationPrecheck({
+      scene: 'dm_experience_note_submit',
+      targetType: 'dm_experience_note',
+      texts: { scriptName, title, content, tags: tags.join(' ') },
+    });
     const { data, error } = await supabase.from('jzg_dm_experience_notes').insert({
       tenant_id: tenantId,
       actor_id: actorId,
@@ -4231,6 +4327,7 @@ app.post('/api/dm/experience-notes', async (req: any, res: any) => {
       content,
       tags,
       visibility,
+      moderation_precheck: moderationPrecheck,
     }).select().single();
     if (error) throw error;
     res.json(ok(data));

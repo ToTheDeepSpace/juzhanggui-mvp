@@ -277,6 +277,12 @@ interface FeedbackMessageRow {
   category: string;
   title: string;
   content: string;
+  moderation_precheck?: {
+    decision?: 'pass' | 'review' | 'block';
+    risk_score?: number;
+    risk_labels?: string[];
+    summary?: string;
+  } | null;
   status: string;
   priority?: string | null;
   reply?: string | null;
@@ -311,6 +317,26 @@ const feedbackPriorityText: Record<string, string> = {
   normal: '普通',
   low: '低',
 };
+
+function ModerationPrecheckPill({ value }: { value?: FeedbackMessageRow['moderation_precheck'] }) {
+  if (!value) return null;
+  const decision = value.decision || 'pass';
+  const colorClass = decision === 'block'
+    ? 'border-red-200 bg-red-50 text-red-700'
+    : decision === 'review'
+      ? 'border-amber-200 bg-amber-50 text-amber-700'
+      : 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  const label = decision === 'block' ? '建议拦截' : decision === 'review' ? '需关注' : '通过';
+  const tags = Array.isArray(value.risk_labels) ? value.risk_labels.join(' / ') : '';
+  return (
+    <div className={`mt-3 rounded-lg border px-3 py-2 text-xs leading-5 ${colorClass}`}>
+      <span className="font-semibold">本地预审：{label}</span>
+      {typeof value.risk_score === 'number' ? <span> · 风险 {value.risk_score}</span> : null}
+      {tags ? <span> · {tags}</span> : null}
+      {value.summary ? <p className="mt-1">{value.summary}</p> : null}
+    </div>
+  );
+}
 
 function PlatformOverview() {
   const navigate = useNavigate();
@@ -1144,6 +1170,7 @@ function FeedbackInboxPanel() {
                 </select>
               </div>
               <p className="mt-4 whitespace-pre-wrap text-sm text-gray-700">{item.content}</p>
+              <ModerationPrecheckPill value={item.moderation_precheck} />
               {item.reply && (
                 <div className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
                   <p className="font-medium">已回复店家</p>
