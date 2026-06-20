@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import ComplianceFooter, { CONTACT_EMAIL, ICP_RECORD_NO } from '../components/ComplianceFooter';
+import ComplianceFooter, { CONTACT_EMAIL, ICP_RECORD_NO, MPS_RECORD_NO, MPS_RECORD_URL } from '../components/ComplianceFooter';
 import Logo from '../components/Logo';
 
 const BUSINESS_LICENSE_IMAGE = '/legal/business-license-huilan.jpg';
@@ -39,7 +39,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function InfoRows({ rows }: { rows: [string, string][] }) {
+function InfoRows({ rows }: { rows: [string, React.ReactNode][] }) {
   return (
     <div className="divide-y divide-slate-100">
       {rows.map(([label, value]) => (
@@ -50,6 +50,10 @@ function InfoRows({ rows }: { rows: [string, string][] }) {
       ))}
     </div>
   );
+}
+
+function MpsRecordLink() {
+  return <a className="font-semibold text-indigo-600" href={MPS_RECORD_URL} target="_blank" rel="noreferrer">{MPS_RECORD_NO}</a>;
 }
 
 export function TermsPage() {
@@ -142,6 +146,7 @@ export function AiReadablePage() {
           ['运营主体', '河北雄安澜洄娱乐有限公司'],
           ['网站域名', 'jusichen.com'],
           ['ICP备案号', ICP_RECORD_NO],
+          ['公安联网备案', <MpsRecordLink />],
           ['客服邮箱', CONTACT_EMAIL],
         ]} />
       </Section>
@@ -170,7 +175,7 @@ export function PrivacyPage() {
         <p>你可以通过客服邮箱联系我们，申请查询、更正、删除个人信息，或对账号、评价、拼车记录等问题提出申诉。依法或因安全审计需要保留的信息，平台会按法律法规要求处理。</p>
       </Section>
       <Section title="五、联系方式">
-        <p>隐私请求请发送至 <a className="font-semibold text-indigo-600" href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>。ICP备案号：<a className="font-semibold text-indigo-600" href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">{ICP_RECORD_NO}</a>。</p>
+        <p>隐私请求请发送至 <a className="font-semibold text-indigo-600" href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>。ICP备案号：<a className="font-semibold text-indigo-600" href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">{ICP_RECORD_NO}</a>；公安联网备案号：<MpsRecordLink />。</p>
       </Section>
     </LegalLayout>
   );
@@ -229,7 +234,7 @@ export function ContactPage() {
           ['站内工单', '店家后台右侧“投诉举报”入口'],
           ['经营主体', '河北雄安澜洄娱乐有限公司'],
           ['ICP备案号', ICP_RECORD_NO],
-          ['公安联网备案', '办理中，完成后将补充公示'],
+          ['公安联网备案', <MpsRecordLink />],
         ]} />
         <p>邮件或站内工单中请尽量说明问题类型、相关账号、排期/店家/评价 ID、页面链接或截图，以便快速处理。涉及第三方隐私时请先打码。</p>
       </Section>
@@ -252,6 +257,7 @@ export function BusinessLicensePage() {
           ['注册地址', '河北雄安新区容城县容城镇奥威路130号3幢1-076（自主申报）'],
           ['网站域名', 'jusichen.com'],
           ['ICP备案号', ICP_RECORD_NO],
+          ['公安联网备案', <MpsRecordLink />],
           ['客服邮箱', CONTACT_EMAIL],
         ]} />
       </Section>

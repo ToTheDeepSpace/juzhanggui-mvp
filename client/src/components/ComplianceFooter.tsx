@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom';
 
 export const ICP_RECORD_NO = '冀ICP备2026019163号-1';
+export const MPS_RECORD_NO = '冀公网安备13310202000316号';
+export const MPS_RECORD_URL = 'https://beian.mps.gov.cn/#/query/webSearch?code=13310202000316';
 export const CONTACT_EMAIL = 'basara-twenty@foxmail.com';
 
 interface ComplianceFooterProps {
@@ -34,7 +36,9 @@ export default function ComplianceFooter({ variant = 'light' }: ComplianceFooter
           <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer" className={`${link} transition-colors`}>
             {ICP_RECORD_NO}
           </a>
-          <span className={muted}>公安联网备案办理中</span>
+          <a href={MPS_RECORD_URL} target="_blank" rel="noreferrer" className={`${link} transition-colors`}>
+            {MPS_RECORD_NO}
+          </a>
           <span className={muted}>增值电信业务经营许可：如业务形态需要将另行办理并公示</span>
         </div>
 
