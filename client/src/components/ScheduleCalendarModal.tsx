@@ -42,6 +42,53 @@ export default function ScheduleCalendarModal({
   const selectedScript = scripts.find(s => s.id === formData.scriptId);
   const [conflicts, setConflicts] = useState<any[]>([]);
   const selectedActorIds = selectedActors.map(a => a.actorId).filter(Boolean).join(',');
+  const allActorRoleDetails = selectedScript?.actor_role_details?.length
+    ? selectedScript.actor_role_details
+    : (selectedScript?.actor_roles || []).map(name => ({ name, role_kind: 'dm' }));
+  const roleSetKey = (roles: string[]) => roles.slice().map(role => role.trim().toLowerCase()).filter(Boolean).sort().join('|');
+  const boardRoles = (board: any) => (board?.roles || []).map((role: any) => role.role_name).filter(Boolean);
+  const defaultBoard = selectedScript?.boards?.find(board => board.is_default) || selectedScript?.boards?.[0] || null;
+  const fallbackRoleSelection = defaultBoard ? boardRoles(defaultBoard) : allActorRoleDetails.map(role => role.name);
+  const selectedRoleNames = formData.actorRoleSelection.length ? formData.actorRoleSelection : fallbackRoleSelection;
+  const selectedRoleKey = roleSetKey(selectedRoleNames);
+  const matchedBoard = selectedScript?.boards?.find(board => roleSetKey(boardRoles(board)) === selectedRoleKey) || null;
+  const actorRoles = selectedRoleNames.filter(roleName => allActorRoleDetails.some(role => role.name === roleName));
+
+  const rowsForRoles = (roleNames: string[]) => {
+    const existingByRole = new Map(selectedActors.map(row => [row.roleName, row]));
+    return roleNames.map(roleName => ({
+      actorId: existingByRole.get(roleName)?.actorId || '',
+      roleName,
+      startOffset: existingByRole.get(roleName)?.startOffset || 0,
+      duration: existingByRole.get(roleName)?.duration || selectedScript?.duration || 240,
+    }));
+  };
+
+  const selectRoleNames = (roleNames: string[]) => {
+    const nextKey = roleSetKey(roleNames);
+    const board = selectedScript?.boards?.find(item => roleSetKey(boardRoles(item)) === nextKey) || null;
+    onFormDataChange({
+      ...formData,
+      actorRoleSelection: roleNames,
+      scriptBoardId: board?.id || '',
+    });
+    onSelectedActorsChange(rowsForRoles(roleNames));
+  };
+
+  const handleScriptChange = (scriptId: string) => {
+    const script = scripts.find(item => item.id === scriptId);
+    const board = script?.boards?.find(item => item.is_default) || script?.boards?.[0] || null;
+    const roleNames = board
+      ? boardRoles(board)
+      : (script?.actor_role_details?.length ? script.actor_role_details.map(role => role.name) : script?.actor_roles || []);
+    onFormDataChange({
+      ...formData,
+      scriptId,
+      scriptBoardId: board?.id || '',
+      actorRoleSelection: roleNames,
+    });
+    onSelectedActorsChange(roleNames.map(roleName => ({ actorId: '', roleName, startOffset: 0, duration: script?.duration || 240 })));
+  };
 
   // 冲突检测
   useEffect(() => {
@@ -92,7 +139,6 @@ export default function ScheduleCalendarModal({
   };
 
   const playerRoles = selectedScript?.player_roles || [];
-  const actorRoles = selectedScript?.actor_roles || [];
 
   if (!visible) return null;
 
@@ -115,7 +161,7 @@ export default function ScheduleCalendarModal({
               </label>
               <select
                 value={formData.scriptId}
-                onChange={(e) => onFormDataChange({ ...formData, scriptId: e.target.value })}
+                onChange={(e) => handleScriptChange(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 required
               >
@@ -205,16 +251,61 @@ export default function ScheduleCalendarModal({
             </div>
           )}
 
+          {selectedScript && allActorRoleDetails.length > 0 && (
+            <div className="border-t pt-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <label className="block text-sm font-medium text-gray-700">本场演绎角色</label>
+                <span className={`rounded-full px-2 py-1 text-xs ${matchedBoard ? 'bg-purple-50 text-purple-700' : 'bg-gray-100 text-gray-600'}`}>
+                  {matchedBoard ? `已匹配：${matchedBoard.name}` : '自定义组合'}
+                </span>
+              </div>
+              {selectedScript.boards?.length ? (
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {selectedScript.boards.map((board, index) => (
+                    <button
+                      key={board.id || index}
+                      type="button"
+                      onClick={() => selectRoleNames(boardRoles(board))}
+                      className={`rounded-lg border px-3 py-1.5 text-sm ${matchedBoard?.id === board.id ? 'border-purple-300 bg-purple-100 text-purple-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                    >
+                      {board.name || (index === 0 ? '标准版' : `板子${index + 1}`)}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                {allActorRoleDetails.map(role => {
+                  const checked = selectedRoleNames.includes(role.name);
+                  return (
+                    <button
+                      key={role.name}
+                      type="button"
+                      onClick={() => {
+                        const next = checked
+                          ? selectedRoleNames.filter(name => name !== role.name)
+                          : [...selectedRoleNames, role.name];
+                        selectRoleNames(next);
+                      }}
+                      className={`rounded-full border px-3 py-1.5 text-sm ${checked ? 'border-purple-300 bg-purple-100 text-purple-700' : 'border-gray-200 bg-white text-gray-500 hover:border-purple-200'}`}
+                    >
+                      {role.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* 卡司分配 */}
           <div className="border-t pt-4">
             <div className="flex justify-between items-center mb-3">
-              <label className="block text-sm font-medium text-gray-700">卡司分配</label>
+              <label className="block text-sm font-medium text-gray-700">演绎分配</label>
               <button
                 type="button"
                 onClick={addActor}
                 className="text-sm text-blue-500 hover:text-blue-700"
               >
-                + 添加卡司
+                + 添加演绎
               </button>
             </div>
 
@@ -275,7 +366,7 @@ export default function ScheduleCalendarModal({
           {selectedScript && playerRoles.length > 0 && (
             <div className="mt-2">
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                玩家扮演角色 ({playerRoles.length}人)
+                候选玩家角色 ({playerRoles.length}个)
               </label>
               <div className="flex flex-wrap gap-2">
                 {playerRoles.map((role, i) => (

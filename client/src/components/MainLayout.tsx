@@ -13,7 +13,7 @@ import EvaluationManager from './EvaluationManager';
 import ConflictResolutionPage from '../pages/ConflictResolutionPage';
 import StoreManager from './StoreManager';
 import { useApi } from '../hooks/useApi';
-import type { StoreRecord } from '../types';
+import type { ScriptBoard, StoreRecord } from '../types';
 
 type Tab = 'platform' | 'stores' | 'adminUsers' | 'templates' | 'feedbackInbox' | 'auditLogs' | 'rooms' | 'actors' | 'scripts' | 'schedule' | 'evaluations' | 'customers' | 'conflicts' | 'feedback' | 'operationLogs';
 
@@ -246,8 +246,11 @@ interface ScriptTemplateRow {
   duration_minutes?: number;
   min_duration_hours?: number;
   max_duration_hours?: number;
+  player_count?: number;
+  player_selection_rule?: string | null;
   player_roles?: { role_name: string; gender?: string }[];
   actor_roles?: { role_name: string; gender?: string }[];
+  boards?: ScriptBoard[];
   usage_count?: number;
   created_by?: string | null;
   review_status?: 'pending' | 'approved' | 'rejected';
@@ -687,6 +690,12 @@ function TemplateCenterPanel() {
     approved: 'bg-emerald-50 text-emerald-600',
     rejected: 'bg-red-50 text-red-600',
   };
+  const playerSummary = (template: ScriptTemplateRow) => {
+    const players = Number(template.player_count || template.player_roles?.length || 0);
+    const candidates = Number(template.player_roles?.length || 0);
+    const rule = template.player_selection_rule || (players && candidates > players ? `${candidates}选${players}` : '');
+    return { players, candidates, rule };
+  };
 
   return (
     <div className="space-y-6">
@@ -719,7 +728,9 @@ function TemplateCenterPanel() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {visibleTemplates.map(template => (
+        {visibleTemplates.map(template => {
+          const summary = playerSummary(template);
+          return (
           <article key={template.id} className="bg-white rounded-lg shadow p-5 border border-gray-100">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -730,11 +741,13 @@ function TemplateCenterPanel() {
                 {statusText[template.review_status || 'pending'] || template.review_status || '待审核'}
               </span>
             </div>
-            <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs text-gray-500">
+            <div className="mt-4 grid grid-cols-4 gap-2 text-center text-xs text-gray-500">
               <div className="rounded-lg bg-gray-50 p-2"><p className="font-semibold text-gray-900">{template.duration_minutes || 0}</p><p>分钟</p></div>
-              <div className="rounded-lg bg-gray-50 p-2"><p className="font-semibold text-gray-900">{template.player_roles?.length || 0}</p><p>玩家位</p></div>
-              <div className="rounded-lg bg-gray-50 p-2"><p className="font-semibold text-gray-900">{template.actor_roles?.length || 0}</p><p>卡司位</p></div>
+              <div className="rounded-lg bg-gray-50 p-2"><p className="font-semibold text-gray-900">{summary.players}</p><p>开本人数</p></div>
+              <div className="rounded-lg bg-gray-50 p-2"><p className="font-semibold text-gray-900">{summary.candidates}</p><p>候选玩家</p></div>
+              <div className="rounded-lg bg-gray-50 p-2"><p className="font-semibold text-gray-900">{template.boards?.length || 0}</p><p>演绎板子</p></div>
             </div>
+            {summary.rule && <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">开本规则：{summary.rule}</p>}
             {template.reject_reason && (
               <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">驳回原因：{template.reject_reason}</p>
             )}
@@ -751,7 +764,8 @@ function TemplateCenterPanel() {
               </button>
             </div>
           </article>
-        ))}
+          );
+        })}
         {templates.length === 0 && (
           <div className="md:col-span-2 xl:col-span-3 bg-white rounded-lg shadow p-10 text-center text-gray-400">暂无公共剧本模板</div>
         )}
@@ -776,7 +790,7 @@ function TemplateCenterPanel() {
             </div>
 
             <div className="space-y-5 px-6 py-5">
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
                 <div className="rounded-lg bg-gray-50 p-3">
                   <p className="text-xs text-gray-500">审核状态</p>
                   <p className="mt-1 font-semibold text-gray-900">{statusText[selectedTemplate.review_status || 'pending'] || selectedTemplate.review_status || '待审核'}</p>
@@ -788,14 +802,24 @@ function TemplateCenterPanel() {
                   </p>
                 </div>
                 <div className="rounded-lg bg-gray-50 p-3">
-                  <p className="text-xs text-gray-500">玩家位</p>
-                  <p className="mt-1 font-semibold text-gray-900">{selectedTemplate.player_roles?.length || 0}</p>
+                  <p className="text-xs text-gray-500">开本人数</p>
+                  <p className="mt-1 font-semibold text-gray-900">{playerSummary(selectedTemplate).players}</p>
                 </div>
                 <div className="rounded-lg bg-gray-50 p-3">
-                  <p className="text-xs text-gray-500">卡司位</p>
-                  <p className="mt-1 font-semibold text-gray-900">{selectedTemplate.actor_roles?.length || 0}</p>
+                  <p className="text-xs text-gray-500">候选玩家</p>
+                  <p className="mt-1 font-semibold text-gray-900">{playerSummary(selectedTemplate).candidates}</p>
+                </div>
+                <div className="rounded-lg bg-gray-50 p-3">
+                  <p className="text-xs text-gray-500">演绎板子</p>
+                  <p className="mt-1 font-semibold text-gray-900">{selectedTemplate.boards?.length || 0}</p>
                 </div>
               </div>
+
+              {(selectedTemplate.player_selection_rule || playerSummary(selectedTemplate).rule) && (
+                <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+                  开本规则：{selectedTemplate.player_selection_rule || playerSummary(selectedTemplate).rule}
+                </div>
+              )}
 
               {selectedTemplate.reject_reason && (
                 <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -804,7 +828,7 @@ function TemplateCenterPanel() {
               )}
 
               <section>
-                <h4 className="text-sm font-bold text-gray-900">玩家角色</h4>
+                <h4 className="text-sm font-bold text-gray-900">候选玩家角色</h4>
                 {selectedTemplate.player_roles?.length ? (
                   <div className="mt-2 flex flex-wrap gap-2">
                     {selectedTemplate.player_roles.map((role, index) => (
@@ -819,7 +843,7 @@ function TemplateCenterPanel() {
               </section>
 
               <section>
-                <h4 className="text-sm font-bold text-gray-900">卡司角色</h4>
+                <h4 className="text-sm font-bold text-gray-900">演绎角色库</h4>
                 {selectedTemplate.actor_roles?.length ? (
                   <div className="mt-2 flex flex-wrap gap-2">
                     {selectedTemplate.actor_roles.map((role, index) => (
@@ -830,6 +854,32 @@ function TemplateCenterPanel() {
                   </div>
                 ) : (
                   <p className="mt-2 text-sm text-gray-400">暂无卡司角色</p>
+                )}
+              </section>
+
+              <section>
+                <h4 className="text-sm font-bold text-gray-900">演绎板子</h4>
+                {selectedTemplate.boards?.length ? (
+                  <div className="mt-2 space-y-2">
+                    {selectedTemplate.boards.map((board, index) => (
+                      <div key={board.id || index} className="rounded-lg border border-purple-100 bg-purple-50 px-3 py-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-purple-900">{board.name || (index === 0 ? '标准版' : `板子${index + 1}`)}{board.is_default ? ' · 标准' : ''}</p>
+                          <p className="text-xs text-purple-700">{board.roles?.length || 0} 个演绎角色</p>
+                        </div>
+                        {board.notes && <p className="mt-1 text-xs text-purple-700">{board.notes}</p>}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {(board.roles || []).map(role => (
+                            <span key={role.role_name} className="rounded-full bg-white px-2 py-1 text-xs text-purple-700">
+                              {role.role_name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-gray-400">暂无板子配置</p>
                 )}
               </section>
 

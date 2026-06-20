@@ -195,7 +195,7 @@ export default function ScheduleCalendar() {
 
   // 表单状态
   const [formData, setFormData] = useState<ScheduleFormData>({
-    roomId: '', scriptId: '', date: format(new Date(), 'yyyy-MM-dd'),
+    roomId: '', scriptId: '', scriptBoardId: '', actorRoleSelection: [], date: format(new Date(), 'yyyy-MM-dd'),
     startTime: '14:00', customerName: '', customerPhone: '',
     playerCount: '', note: '',
   });
@@ -261,7 +261,7 @@ export default function ScheduleCalendar() {
   const openCreateModal = (dateStr?: string) => {
     setEditingSchedule(null); setIsPendingMode(false);
     setFormData({
-      roomId: '', scriptId: '', date: dateStr || format(new Date(), 'yyyy-MM-dd'),
+      roomId: '', scriptId: '', scriptBoardId: '', actorRoleSelection: [], date: dateStr || format(new Date(), 'yyyy-MM-dd'),
       startTime: '14:00', customerName: '', customerPhone: '', playerCount: '', note: '',
     });
     setSelectedActors([]); setShowModal(true);
@@ -273,6 +273,8 @@ export default function ScheduleCalendar() {
     const startDateTime = parseISO(schedule.start_time);
     setFormData({
       roomId: schedule.room_id || '', scriptId: schedule.script_id,
+      scriptBoardId: schedule.script_board_id || '',
+      actorRoleSelection: (schedule.actor_role_selection || schedule.actor_roles || []).map((role: any) => role.role_name || role.name).filter(Boolean),
       date: format(startDateTime, 'yyyy-MM-dd'), startTime: format(startDateTime, 'HH:mm'),
       customerName: schedule.customer_name || '', customerPhone: schedule.customer_phone || '',
       playerCount: schedule.player_count ? String(schedule.player_count) : '', note: schedule.note || '',
@@ -611,6 +613,8 @@ export default function ScheduleCalendar() {
     const endDateTime = new Date(startDateTime.getTime() + duration * 60000);
     const data = {
       roomId: formData.roomId || undefined, scriptId: formData.scriptId,
+      scriptBoardId: formData.scriptBoardId || undefined,
+      actorRoleSelection: formData.actorRoleSelection,
       startTime: startDateTime.toISOString(), endTime: endDateTime.toISOString(),
       timeStart: formData.startTime, timeEnd: format(endDateTime, 'HH:mm'),
       date: formData.date,
@@ -846,6 +850,11 @@ export default function ScheduleCalendar() {
               {isOverdueUnfinished && (
                 <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700" title={missingSteps.length > 0 ? `待补：${missingSteps.join('、')}` : '这车按时间已开完，但记录未补齐'}>
                   已过时 · 待补记录
+                </span>
+              )}
+              {(s.script_board_name || s.actor_role_selection?.length) && (
+                <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-700">
+                  {s.script_board_name || '自定义组合'}
                 </span>
               )}
             </div>
@@ -1615,7 +1624,7 @@ export default function ScheduleCalendar() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl p-6 max-w-3xl w-full mx-4 max-h-[85vh] overflow-y-auto">
             <h3 className="text-lg font-bold text-gray-900">开本前确认</h3>
-            <p className="mt-1 text-sm text-gray-500">确认玩家角色、卡司角色分配和实际开本时间后，再进入进行中。</p>
+            <p className="mt-1 text-sm text-gray-500">确认玩家角色、演绎角色分配和实际开本时间后，再进入进行中。</p>
             <div className="mt-5 space-y-5">
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-2 block">1. 核对玩家选择的角色</label>
@@ -1631,15 +1640,15 @@ export default function ScheduleCalendar() {
                 </div>
               </div>
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-2 block">2. 确认 DM/卡司扮演的卡司角色</label>
+                <label className="text-sm font-medium text-gray-700 mb-2 block">2. 确认 DM/卡司扮演的演绎角色</label>
                 <div className="space-y-2">
                   {startActors.length === 0 ? (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">这个剧本还没有配置卡司角色。</div>
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">这个剧本还没有配置本场演绎角色。</div>
                   ) : startActors.map((row, index) => (
                     <div key={row.roleName || index} className="grid gap-2 rounded-lg border border-gray-100 bg-white p-3 md:grid-cols-[1fr,2fr] md:items-center">
                       <div>
                         <div className="text-sm font-medium text-gray-900">{row.roleName}</div>
-                        {startingSchedule.requested_dm_role_name === row.roleName && <div className="mt-1 text-xs text-indigo-600">已指定卡司角色</div>}
+                        {startingSchedule.requested_dm_role_name === row.roleName && <div className="mt-1 text-xs text-indigo-600">已指定演绎角色</div>}
                       </div>
                       <select value={row.actorId} onChange={e => setStartActors(startActors.map((item, i) => i === index ? { ...item, actorId: e.target.value } : item))} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
                         <option value="">请选择扮演卡司/DM</option>

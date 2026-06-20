@@ -68,6 +68,7 @@ const RELATIONS: Record<string, Record<string, RelationConfig>> = {
   schedules: {
     scripts: { table: 'scripts', localKey: 'script_id', foreignKey: 'id' },
     rooms: { table: 'rooms', localKey: 'room_id', foreignKey: 'id' },
+    script_boards: { table: 'script_boards', localKey: 'script_board_id', foreignKey: 'id' },
     jzg_stores: { table: 'jzg_stores', localKey: 'tenant_id', foreignKey: 'id' },
   },
   schedule_actors: {
@@ -81,6 +82,10 @@ const RELATIONS: Record<string, Record<string, RelationConfig>> = {
   scripts: {
     script_player_roles: { table: 'script_player_roles', localKey: 'id', foreignKey: 'script_id', many: true },
     script_actor_roles: { table: 'script_actor_roles', localKey: 'id', foreignKey: 'script_id', many: true },
+    script_boards: { table: 'script_boards', localKey: 'id', foreignKey: 'script_id', many: true },
+  },
+  script_boards: {
+    script_board_actor_roles: { table: 'script_board_actor_roles', localKey: 'id', foreignKey: 'board_id', many: true },
   },
   evaluations: {
     schedules: { table: 'schedules', localKey: 'schedule_id', foreignKey: 'id' },

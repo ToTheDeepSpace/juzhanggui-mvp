@@ -59,6 +59,8 @@ export interface ScheduleWithDetails extends Schedule {
 export interface ScheduleFormData {
   roomId: string;
   scriptId: string;
+  scriptBoardId: string;
+  actorRoleSelection: string[];
   date: string;
   startTime: string;
   customerName: string;

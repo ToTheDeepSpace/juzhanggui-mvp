@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
-import type { Script, ScriptRole, ActorSkill, Role, ScriptTemplate } from '../types';
+import type { Script, ScriptRole, ActorSkill, Role, ScriptTemplate, ScriptBoard } from '../types';
 
 const SCRIPT_TYPE_OPTIONS = [
   { value: '', label: '未设置类型' },
@@ -29,6 +29,63 @@ const scriptTypeLabel = (value?: string | null) => SCRIPT_TYPE_OPTIONS.find(opti
 const distributionTypeLabel = (value?: string | null) => DISTRIBUTION_TYPE_OPTIONS.find(option => option.value === value)?.label || '未设置发行形态';
 const roleKindLabel = (value?: string | null) => ROLE_KIND_OPTIONS.find(option => option.value === value)?.label || 'DM';
 
+type BoardForm = {
+  id?: string;
+  name: string;
+  playerCount: string;
+  notes: string;
+  isDefault: boolean;
+  roles: string[];
+};
+
+const standardBoard = (): BoardForm => ({
+  name: '标准版',
+  playerCount: '',
+  notes: '',
+  isDefault: true,
+  roles: [],
+});
+
+const emptyScriptForm = () => ({
+  name: '',
+  scriptType: '',
+  distributionType: '',
+  minDuration: '',
+  maxDuration: '',
+  playerCount: '',
+  playerSelectionRule: '',
+  playerRoles: [] as Role[],
+  actorRoles: [] as Role[],
+  boards: [standardBoard()],
+});
+
+const boardFormsFromScript = (script: Script): BoardForm[] => {
+  const boards = script.boards || [];
+  if (!boards.length) {
+    return [{ ...standardBoard(), playerCount: script.player_count ? String(script.player_count) : '', roles: script.actor_role_details?.map(role => role.name) || script.actor_roles || [] }];
+  }
+  return boards.map((board: ScriptBoard, index) => ({
+    id: board.id,
+    name: board.name || (index === 0 ? '标准版' : `板子${index + 1}`),
+    playerCount: board.player_count ? String(board.player_count) : '',
+    notes: board.notes || '',
+    isDefault: board.is_default === true || index === 0,
+    roles: (board.roles || []).map(role => role.role_name),
+  }));
+};
+
+const scriptPlayerSummary = (script: Pick<Script, 'player_count' | 'role_count' | 'candidate_player_count' | 'player_roles' | 'player_selection_rule' | 'selection_summary'>) => {
+  const players = Number(script.player_count || 0);
+  const candidates = Number(script.candidate_player_count || script.role_count || script.player_roles?.length || 0);
+  const rule = script.player_selection_rule || script.selection_summary || (players && candidates > players ? `${candidates}选${players}` : '');
+  return {
+    players,
+    candidates,
+    rule,
+    text: rule ? `开本${players || '-'}人 · 候选玩家${candidates}个 · ${rule}` : `开本${players || '-'}人 · 候选玩家${candidates}个`,
+  };
+};
+
 export default function ScriptManager() {
   const { get, post, put, del, loading } = useApi();
   const [scripts, setScripts] = useState<Script[]>([]);
@@ -39,16 +96,7 @@ export default function ScriptManager() {
   const [showForm, setShowForm] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
   const [editingScript, setEditingScript] = useState<Script | null>(null);
-  const [formData, setFormData] = useState({
-    name: '',
-    scriptType: '',
-    distributionType: '',
-    minDuration: '',
-    maxDuration: '',
-    playerCount: '',
-    playerRoles: [] as Role[],
-    actorRoles: [] as Role[],
-  });
+  const [formData, setFormData] = useState(emptyScriptForm());
 
 
   const [batchPlayerRoles, setBatchPlayerRoles] = useState('');
@@ -86,10 +134,10 @@ export default function ScriptManager() {
   };
 
   const loadScriptDetail = async (script: Script) => {
-    const result = await get<{ roles: ScriptRole[]; skilledActors: ActorSkill[] }>(`/scripts/${script.id}`);
+    const result = await get<{ roles?: ScriptRole[]; skilledActors?: ActorSkill[]; skilled_actors?: ActorSkill[] }>(`/scripts/${script.id}`);
     if (result.success && result.data) {
-      setScriptRoles(result.data.roles);
-      setSkilledActors(result.data.skilledActors);
+      setScriptRoles(result.data.roles || []);
+      setSkilledActors(result.data.skilledActors || result.data.skilled_actors || []);
     }
   };
 
@@ -102,6 +150,48 @@ export default function ScriptManager() {
     return text.split(separators)
       .map(name => name.trim())
       .filter(name => name.length > 0);
+  };
+
+  const syncBoardsForActorRoles = (boards: BoardForm[], nextActorRoles: Role[], previousActorRoles = formData.actorRoles) => {
+    const nextNames = nextActorRoles.map(role => role.name);
+    const previousNames = previousActorRoles.map(role => role.name);
+    const nextNameSet = new Set(nextNames);
+    const previousAllSelected = (board: BoardForm) => previousNames.length > 0 && board.roles.length === previousNames.length && previousNames.every(name => board.roles.includes(name));
+    const normalizedBoards = (boards.length ? boards : [standardBoard()]).map((board, index) => {
+      const keepAll = board.isDefault && (board.roles.length === 0 || previousAllSelected(board));
+      return {
+        ...board,
+        name: board.name || (index === 0 ? '标准版' : `板子${index + 1}`),
+        roles: keepAll ? nextNames : board.roles.filter(roleName => nextNameSet.has(roleName)),
+      };
+    });
+    if (!normalizedBoards.some(board => board.isDefault) && normalizedBoards.length) normalizedBoards[0].isDefault = true;
+    return normalizedBoards;
+  };
+
+  const actorRoleKindByName = () => new Map(formData.actorRoles.map(role => [role.name, role.role_kind || 'dm']));
+
+  const setDefaultBoard = (index: number) => {
+    setFormData({
+      ...formData,
+      boards: formData.boards.map((board, boardIndex) => ({ ...board, isDefault: boardIndex === index, name: boardIndex === index && !board.name ? '标准版' : board.name })),
+    });
+  };
+
+  const updateBoard = (index: number, patch: Partial<BoardForm>) => {
+    setFormData({
+      ...formData,
+      boards: formData.boards.map((board, boardIndex) => boardIndex === index ? { ...board, ...patch } : board),
+    });
+  };
+
+  const toggleBoardRole = (boardIndex: number, roleName: string) => {
+    const board = formData.boards[boardIndex];
+    if (!board) return;
+    const roles = board.roles.includes(roleName)
+      ? board.roles.filter(name => name !== roleName)
+      : [...board.roles, roleName];
+    updateBoard(boardIndex, { roles });
   };
 
   // 批量添加玩家角色
@@ -131,12 +221,14 @@ export default function ScriptManager() {
     const existingNames = new Set(formData.actorRoles.map(r => r.name));
     const newRoles = names
       .filter(name => !existingNames.has(name))
-      .map(name => ({ name, gender: '未指定' }));
+      .map(name => ({ name, gender: '未指定', role_kind: 'dm' }));
     
     if (newRoles.length > 0) {
+      const nextActorRoles = [...formData.actorRoles, ...newRoles];
       setFormData({
         ...formData,
-        actorRoles: [...formData.actorRoles, ...newRoles]
+        actorRoles: nextActorRoles,
+        boards: syncBoardsForActorRoles(formData.boards, nextActorRoles),
       });
       setBatchActorRoles('');
     }
@@ -169,6 +261,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       alert('请至少添加一个角色（玩家或卡司）');
       return;
     }
+    const roleKindMap = actorRoleKindByName();
     
     const data = {
       name: formData.name.trim(),
@@ -177,8 +270,18 @@ const handleSubmit = async (e: React.FormEvent) => {
       minDuration: Math.round(parseFloat(formData.minDuration) * 60), // 小时转分钟
       maxDuration: Math.round(parseFloat(formData.maxDuration) * 60), // 小时转分钟
       playerCount: parseInt(formData.playerCount),
+      playerSelectionRule: formData.playerSelectionRule.trim() || null,
       playerRoles: formData.playerRoles.map(r => r.gender && r.gender !== '未指定' ? `${r.name}(${r.gender})` : r.name),
       actorRoles: formData.actorRoles.map(r => ({ name: r.name, gender: r.gender || '', role_kind: r.role_kind || 'dm' })),
+      boards: formData.boards.map((board, index) => ({
+        id: board.id,
+        name: board.name.trim() || (index === 0 ? '标准版' : `板子${index + 1}`),
+        player_count: board.playerCount ? parseInt(board.playerCount) : parseInt(formData.playerCount),
+        notes: board.notes.trim() || null,
+        is_default: board.isDefault,
+        sort_order: index,
+        roles: board.roles.map(roleName => ({ role_name: roleName, role_kind: roleKindMap.get(roleName) || 'dm' })),
+      })),
     };
 
     let result;
@@ -189,7 +292,7 @@ const handleSubmit = async (e: React.FormEvent) => {
     }
 
     if (result.success) {
-      setFormData({ name: '', scriptType: '', distributionType: '', minDuration: '', maxDuration: '', playerCount: '', playerRoles: [], actorRoles: [] });
+      setFormData(emptyScriptForm());
       setEditingScript(null);
       setShowForm(false);
       loadScripts();
@@ -264,8 +367,10 @@ const handleSubmit = async (e: React.FormEvent) => {
       minDuration: String(script.min_duration / 60), // 分钟转小时（最短时长）
       maxDuration: String(script.max_duration / 60), // 分钟转小时（最长时长）
       playerCount: String(script.player_count || script.player_roles?.length || ''),
+      playerSelectionRule: script.player_selection_rule || '',
       playerRoles: parseRoles(script.player_roles || []),
       actorRoles: parseRoles(script.actor_roles || [], script.actor_role_details),
+      boards: boardFormsFromScript(script),
     });
     setShowForm(true);
   };
@@ -286,7 +391,8 @@ const handleSubmit = async (e: React.FormEvent) => {
     !script.min_duration && !script.max_duration ? '时长' : '',
     !script.player_count ? '开本人数' : '',
     !(script.role_count || script.player_roles?.length) ? '玩家角色库' : '',
-    !(script.actor_count || script.actor_roles?.length) ? '卡司角色' : '',
+    !(script.actor_count || script.actor_roles?.length) ? '演绎角色库' : '',
+    !(script.boards?.length) ? '演绎板子' : '',
   ].filter(Boolean);
 
   return (
@@ -296,7 +402,7 @@ const handleSubmit = async (e: React.FormEvent) => {
         <button
           onClick={() => {
             setEditingScript(null);
-            setFormData({ name: '', scriptType: '', distributionType: '', minDuration: '', maxDuration: '', playerCount: '', playerRoles: [], actorRoles: [] });
+            setFormData(emptyScriptForm());
             setShowForm(true);
           }}
           className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors"
@@ -342,7 +448,7 @@ const handleSubmit = async (e: React.FormEvent) => {
                   <div>
                     <h4 className="font-semibold text-gray-800">{template.name}</h4>
                     <p className="text-xs text-gray-500 mt-1">
-                      {template.min_duration_hours}~{template.max_duration_hours}小时 · 角色库{template.player_roles?.length || 0} · 卡司{template.actor_roles?.length || 0} · 已导入{template.usage_count || 0}次
+                      {template.min_duration_hours}~{template.max_duration_hours}小时 · 开本{template.player_count || template.player_roles?.length || 0}人 · 候选玩家{template.player_roles?.length || 0}个 · 演绎板子{template.boards?.length || 0}套 · 已导入{template.usage_count || 0}次
                     </p>
                   </div>
                   <button
@@ -431,12 +537,22 @@ const handleSubmit = async (e: React.FormEvent) => {
                 />
                 <p className="mt-1 text-xs text-gray-500">角色库可以多于开本人数，例如 8 个可选角色里开 6 人。</p>
               </div>
+              <div className="col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">开本/选角规则</label>
+                <input
+                  type="text"
+                  value={formData.playerSelectionRule}
+                  onChange={(e) => setFormData({ ...formData, playerSelectionRule: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                  placeholder="例如：8 个候选角色，任意开 6 人，2 个不上车"
+                />
+              </div>
             </div>
 
             {/* 玩家扮演角色 */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                玩家扮演角色 <span className="text-orange-500 font-bold">({formData.playerRoles.length}人)</span>
+                候选玩家角色 <span className="text-orange-500 font-bold">({formData.playerRoles.length}个)</span>
               </label>
               
               {/* 批量输入 */}
@@ -462,7 +578,7 @@ const handleSubmit = async (e: React.FormEvent) => {
               {/* 角色列表 - 可设置性别 */}
               <div className="space-y-2">
                 {formData.playerRoles.length === 0 ? (
-                  <p className="text-gray-400 text-sm italic">暂无玩家角色</p>
+                  <p className="text-gray-400 text-sm italic">暂无候选玩家角色</p>
                 ) : (
                   formData.playerRoles.map((role, index) => (
                     <div key={index} className="flex items-center gap-2 p-2 bg-blue-50 rounded">
@@ -499,10 +615,10 @@ const handleSubmit = async (e: React.FormEvent) => {
               </div>
             </div>
 
-            {/* 卡司扮演角色 */}
+            {/* 演绎角色库 */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                卡司扮演角色 <span className="text-purple-500 font-bold">({formData.actorRoles.length}人)</span>
+                演绎角色库 <span className="text-purple-500 font-bold">({formData.actorRoles.length}个)</span>
               </label>
               
               {/* 批量输入 */}
@@ -528,7 +644,7 @@ const handleSubmit = async (e: React.FormEvent) => {
               {/* 角色列表 - 可设置性别 */}
               <div className="space-y-2">
                 {formData.actorRoles.length === 0 ? (
-                  <p className="text-gray-400 text-sm italic">暂无卡司角色</p>
+                  <p className="text-gray-400 text-sm italic">暂无演绎角色</p>
                 ) : (
                   formData.actorRoles.map((role, index) => (
                     <div key={index} className="flex flex-wrap items-center gap-2 p-2 bg-purple-50 rounded">
@@ -547,9 +663,11 @@ const handleSubmit = async (e: React.FormEvent) => {
                       <button
                         type="button"
                         onClick={() => {
+                          const nextActorRoles = formData.actorRoles.filter((_, i) => i !== index);
                           setFormData({
                             ...formData,
-                            actorRoles: formData.actorRoles.filter((_, i) => i !== index)
+                            actorRoles: nextActorRoles,
+                            boards: syncBoardsForActorRoles(formData.boards, nextActorRoles),
                           });
                         }}
                         className="text-red-500 hover:text-red-700 text-sm"
@@ -560,6 +678,108 @@ const handleSubmit = async (e: React.FormEvent) => {
                   ))
                 )}
               </div>
+            </div>
+
+            <div className="rounded-lg border border-purple-100 bg-white p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">演绎板子</label>
+                  <p className="mt-1 text-xs text-gray-500">标准版默认存在；每个板子只勾本场实际需要的 DM/场控/NPC/助演角色。</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFormData({
+                    ...formData,
+                    boards: [
+                      ...formData.boards,
+                      {
+                        name: `板子${formData.boards.length + 1}`,
+                        playerCount: formData.playerCount,
+                        notes: '',
+                        isDefault: false,
+                        roles: formData.actorRoles.map(role => role.name),
+                      },
+                    ],
+                  })}
+                  className="px-3 py-1.5 rounded-lg border border-purple-200 text-sm text-purple-700 hover:bg-purple-50"
+                >
+                  + 添加板子
+                </button>
+              </div>
+              {formData.actorRoles.length === 0 ? (
+                <p className="text-sm text-gray-400">先添加演绎角色，再配置板子。</p>
+              ) : (
+                <div className="space-y-3">
+                  {formData.boards.map((board, boardIndex) => (
+                    <div key={`${board.id || 'new'}-${boardIndex}`} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_120px_auto]">
+                        <input
+                          type="text"
+                          value={board.name}
+                          onChange={(e) => updateBoard(boardIndex, { name: e.target.value })}
+                          className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                          placeholder={boardIndex === 0 ? '标准版' : '板子名称'}
+                        />
+                        <input
+                          type="number"
+                          min="1"
+                          value={board.playerCount}
+                          onChange={(e) => updateBoard(boardIndex, { playerCount: e.target.value })}
+                          className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                          placeholder={formData.playerCount || '人数'}
+                        />
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setDefaultBoard(boardIndex)}
+                            className={`px-3 py-2 rounded-lg text-sm ${board.isDefault ? 'bg-purple-600 text-white' : 'border border-gray-200 text-gray-600 hover:bg-white'}`}
+                          >
+                            {board.isDefault ? '标准' : '设标准'}
+                          </button>
+                          {formData.boards.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => setFormData({
+                                ...formData,
+                                boards: formData.boards.filter((_, index) => index !== boardIndex).map((item, index) => ({
+                                  ...item,
+                                  isDefault: item.isDefault || (board.isDefault && index === 0),
+                                })),
+                              })}
+                              className="px-3 py-2 rounded-lg border border-red-200 text-sm text-red-600 hover:bg-red-50"
+                            >
+                              删除
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <textarea
+                        value={board.notes}
+                        onChange={(e) => updateBoard(boardIndex, { notes: e.target.value })}
+                        className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        rows={2}
+                        placeholder="备注，例如：双 DM 标准开法 / 单 DM 精简开法"
+                      />
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {formData.actorRoles.map(role => {
+                          const checked = board.roles.includes(role.name);
+                          return (
+                            <button
+                              key={`${boardIndex}-${role.name}`}
+                              type="button"
+                              onClick={() => toggleBoardRole(boardIndex, role.name)}
+                              className={`rounded-full border px-3 py-1 text-sm ${checked ? 'border-purple-300 bg-purple-100 text-purple-700' : 'border-gray-200 bg-white text-gray-500 hover:border-purple-200'}`}
+                            >
+                              {role.name} · {roleKindLabel(role.role_kind)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-2 text-xs text-gray-500">本板子需要 {board.roles.length} 个演绎角色</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="flex gap-2 justify-end">
@@ -585,6 +805,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {scripts.map((script) => {
           const missingItems = scriptMissingItems(script);
+          const playerSummary = scriptPlayerSummary(script);
           return (
           <div
             key={script.id}
@@ -599,11 +820,11 @@ const handleSubmit = async (e: React.FormEvent) => {
                   <span className="rounded-full bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600">{distributionTypeLabel(script.distribution_type)}</span>
                 </div>
                 <p className="text-sm text-gray-500 mt-1">
-                  ⏱️ {formatDuration(script.min_duration, script.max_duration)} · 👤 玩家{script.player_count || 0}人 · 🎭 卡司{script.actor_count || 0}人
+                  ⏱️ {formatDuration(script.min_duration, script.max_duration)} · 👤 {playerSummary.text} · 🎭 演绎角色库{script.actor_count || 0}个 · 板子{script.boards?.length || 0}套
                 </p>
                 {(script.actor_role_details || []).length > 0 && (
                   <p className="mt-1 text-xs text-gray-500">
-                    演绎：{(script.actor_role_details || []).slice(0, 4).map(role => `${role.name}/${roleKindLabel(role.role_kind)}`).join('、')}
+                    演绎角色库：{(script.actor_role_details || []).slice(0, 4).map(role => `${role.name}/${roleKindLabel(role.role_kind)}`).join('、')}
                   </p>
                 )}
                 {missingItems.length > 0 ? (
@@ -652,7 +873,7 @@ const handleSubmit = async (e: React.FormEvent) => {
               <div>
                 <h3 className="text-lg font-bold">{selectedScript.name}</h3>
                 <p className="text-sm text-gray-500">
-                  {scriptTypeLabel(selectedScript.script_type)} · {distributionTypeLabel(selectedScript.distribution_type)} · ⏱️ {formatDuration(selectedScript.min_duration, selectedScript.max_duration)} · 👤 开本{selectedScript.player_count || 0}人 · 🎲 角色库{selectedScript.role_count || selectedScript.player_roles?.length || 0}个 · 🎭 卡司{selectedScript.actor_count || 0}人
+                  {scriptTypeLabel(selectedScript.script_type)} · {distributionTypeLabel(selectedScript.distribution_type)} · ⏱️ {formatDuration(selectedScript.min_duration, selectedScript.max_duration)} · 👤 {scriptPlayerSummary(selectedScript).text} · 🎭 演绎角色库{selectedScript.actor_count || 0}个
                 </p>
               </div>
               <button
@@ -661,6 +882,37 @@ const handleSubmit = async (e: React.FormEvent) => {
               >
                 ✕
               </button>
+            </div>
+
+            <div className="mb-6 rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+              <h4 className="font-medium mb-2">开本规则</h4>
+              <p className="text-sm text-blue-700">{scriptPlayerSummary(selectedScript).text}</p>
+            </div>
+
+            <div className="mb-6">
+              <h4 className="font-medium mb-3">演绎板子 ({selectedScript.boards?.length || 0})</h4>
+              {selectedScript.boards?.length ? (
+                <div className="space-y-2">
+                  {selectedScript.boards.map((board, index) => (
+                    <div key={board.id || index} className="rounded-lg border border-purple-100 bg-purple-50/60 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-medium text-purple-900">{board.name || (index === 0 ? '标准版' : `板子${index + 1}`)}{board.is_default ? ' · 标准' : ''}</p>
+                        <span className="text-xs text-purple-700">{board.roles?.length || 0} 个演绎角色</span>
+                      </div>
+                      {board.notes && <p className="mt-1 text-xs text-purple-700">{board.notes}</p>}
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {(board.roles || []).map(role => (
+                          <span key={role.role_name} className="rounded-full border border-purple-100 bg-white px-2 py-1 text-xs text-purple-700">
+                            {role.role_name} · {roleKindLabel(role.role_kind)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-500 text-sm">暂无板子配置</p>
+              )}
             </div>
 
             {/* 角色配置 */}

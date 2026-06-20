@@ -4,6 +4,21 @@ export interface Role {
   role_kind?: 'dm' | 'field_control' | 'npc' | 'assistant' | 'other' | string;
 }
 
+export interface ScriptBoardRole {
+  role_name: string;
+  role_kind?: string;
+}
+
+export interface ScriptBoard {
+  id?: string;
+  name: string;
+  player_count?: number | null;
+  notes?: string | null;
+  is_default?: boolean;
+  sort_order?: number;
+  roles: ScriptBoardRole[];
+}
+
 export interface Room {
   id: string;
   name: string;
@@ -33,6 +48,10 @@ export interface Script {
   player_count?: number;
   role_count?: number;
   actor_count?: number;
+  candidate_player_count?: number;
+  player_selection_rule?: string | null;
+  selection_summary?: string;
+  boards?: ScriptBoard[];
 }
 
 export interface StoreRecord {
@@ -60,8 +79,11 @@ export interface ScriptTemplate {
   duration_minutes: number;
   min_duration_hours: number;
   max_duration_hours: number;
+  player_count?: number;
+  player_selection_rule?: string | null;
   player_roles: { role_name: string; gender?: string }[];
   actor_roles: { role_name: string; gender?: string; role_kind?: string }[];
+  boards?: ScriptBoard[];
   usage_count: number;
   created_by?: string | null;
   review_status?: 'pending' | 'approved' | 'rejected';
@@ -95,6 +117,9 @@ export interface Schedule {
   room_name: string;
   script_id: string;
   script_name: string;
+  script_board_id?: string | null;
+  script_board_name?: string | null;
+  actor_role_selection?: ScriptBoardRole[];
   script_duration: number;
   start_time: string;
   end_time: string;

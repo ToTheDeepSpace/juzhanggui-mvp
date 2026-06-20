@@ -1113,6 +1113,230 @@ function serializeRoles(rows: any[] | null | undefined) {
   }));
 }
 
+function roleNameKey(name: any) {
+  return cleanText(name, 120).toLowerCase();
+}
+
+function roleSetKey(roles: any[] | null | undefined) {
+  return (roles || [])
+    .map((role: any) => roleNameKey(typeof role === 'string' ? role : role?.role_name || role?.name))
+    .filter(Boolean)
+    .sort()
+    .join('|');
+}
+
+function serializeBoards(rows: any[] | null | undefined) {
+  const source = Array.isArray(rows) ? rows : [];
+  return source
+    .slice()
+    .sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0))
+    .map((board: any, index: number) => ({
+      id: board.id,
+      name: cleanText(board.name, 80) || (index === 0 ? '标准版' : `板子${index + 1}`),
+      player_count: board.player_count === null || board.player_count === undefined ? null : Number(board.player_count),
+      notes: cleanText(board.notes, 500) || '',
+      is_default: board.is_default === true,
+      sort_order: Number(board.sort_order || index),
+      roles: (board.script_board_actor_roles || board.roles || [])
+        .slice()
+        .sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0))
+        .map((role: any) => ({
+          role_name: cleanText(role.role_name || role.name, 120),
+          role_kind: roleKindValue(role.role_kind || role.kind),
+        }))
+        .filter((role: any) => role.role_name),
+    }));
+}
+
+function playerSelectionSummary(script: any, candidateCount?: number) {
+  const rule = cleanText(script?.player_selection_rule, 300);
+  if (rule) return rule;
+  const players = Number(script?.player_count || 0);
+  const candidates = Number(candidateCount || script?.role_count || 0);
+  if (players && candidates > players) return `${candidates}选${players}`;
+  if (players) return `${players}人本`;
+  return '';
+}
+
+function normalizeScriptApiRecord(script: any) {
+  const playerRows = script.script_player_roles || [];
+  const actorRows = script.script_actor_roles || [];
+  const roleCount = playerRows.length || Number(script.role_count || 0);
+  const playerCount = Number(script.player_count || roleCount || 0);
+  const boards = serializeBoards(script.script_boards);
+  script.player_roles = playerRows.map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
+  script.actor_role_details = actorRows.map((r: any) => ({ name: r.role_name, gender: r.gender || '', role_kind: r.role_kind || 'dm' }));
+  script.actor_roles = actorRows.map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
+  script.role_count = roleCount;
+  script.candidate_player_count = roleCount;
+  script.player_count = playerCount;
+  script.actor_count = actorRows.length || Number(script.actor_count || 0);
+  script.selection_summary = playerSelectionSummary(script, roleCount);
+  script.boards = boards.length ? boards : [{
+    name: '标准版',
+    player_count: playerCount || null,
+    notes: '',
+    is_default: true,
+    sort_order: 0,
+    roles: actorRows.map((role: any) => ({ role_name: role.role_name, role_kind: roleKindValue(role.role_kind) })),
+  }];
+  script.duration = script.duration_minutes || 0;
+  script.min_duration = script.min_duration_hours ? Math.round(script.min_duration_hours * 60) : 0;
+  script.max_duration = script.max_duration_hours ? Math.round(script.max_duration_hours * 60) : 0;
+  delete script.script_player_roles;
+  delete script.script_actor_roles;
+  delete script.script_boards;
+  return script;
+}
+
+function normalizeBoardPayload(boards: any[] | null | undefined, actorRoles: any[] | null | undefined, playerCount: number) {
+  let boardSource = boards;
+  if (!Array.isArray(boardSource) && typeof boardSource === 'string') {
+    try { boardSource = JSON.parse(boardSource); } catch { boardSource = []; }
+  }
+  const actorRows = (actorRoles || []).map(parseRole).filter((role: any) => role.role_name);
+  const roleKindByName = new Map(actorRows.map((role: any) => [roleNameKey(role.role_name), roleKindValue(role.role_kind)]));
+  const source = Array.isArray(boardSource) && boardSource.length
+    ? boardSource
+    : [{ name: '标准版', player_count: playerCount || null, is_default: true, roles: actorRows }];
+  const normalized = source.map((board: any, index: number) => {
+    const rawRoles = Array.isArray(board?.roles) ? board.roles : [];
+    const roles = rawRoles
+      .map((role: any) => {
+        const roleName = cleanText(typeof role === 'string' ? role : role?.role_name || role?.name, 120);
+        if (!roleName) return null;
+        const key = roleNameKey(roleName);
+        if (roleKindByName.size && !roleKindByName.has(key)) return null;
+        return {
+          role_name: roleName,
+          role_kind: roleKindValue((typeof role === 'object' ? role.role_kind || role.kind : '') || roleKindByName.get(key)),
+        };
+      })
+      .filter(Boolean) as { role_name: string; role_kind: string }[];
+    const fallbackRoles = index === 0 && !roles.length ? actorRows.map((role: any) => ({ role_name: role.role_name, role_kind: roleKindValue(role.role_kind) })) : roles;
+    return {
+      id: cleanText(board?.id, 80) || null,
+      name: cleanText(board?.name, 80) || (index === 0 ? '标准版' : `板子${index + 1}`),
+      player_count: board?.player_count ?? board?.playerCount ?? playerCount ?? null,
+      notes: cleanText(board?.notes, 500) || null,
+      is_default: board?.is_default === true || board?.isDefault === true,
+      sort_order: Number(board?.sort_order ?? board?.sortOrder ?? index),
+      roles: fallbackRoles,
+    };
+  });
+  if (normalized.length && !normalized.some(board => board.is_default)) normalized[0].is_default = true;
+  let hasDefault = false;
+  for (const board of normalized) {
+    if (board.is_default && !hasDefault) {
+      hasDefault = true;
+    } else if (board.is_default) {
+      board.is_default = false;
+    }
+  }
+  return normalized;
+}
+
+async function fetchScriptBoards(scriptId: string) {
+  const { data, error } = await supabase.from('script_boards')
+    .select('id, name, player_count, notes, is_default, sort_order, script_board_actor_roles(role_name, role_kind, sort_order)')
+    .eq('script_id', scriptId)
+    .order('sort_order');
+  if (error) throw error;
+  return serializeBoards(data || []);
+}
+
+async function saveScriptBoards(scriptId: string, boards: any[] | null | undefined, actorRoles: any[] | null | undefined, playerCount: number) {
+  const normalizedBoards = normalizeBoardPayload(boards, actorRoles, playerCount);
+  const { data: existingBoards } = await supabase.from('script_boards').select('id').eq('script_id', scriptId);
+  const existingIds = new Set((existingBoards || []).map((board: any) => board.id));
+  const incomingIds = new Set(normalizedBoards.map(board => board.id).filter(Boolean));
+  for (const board of existingBoards || []) {
+    if (!incomingIds.has(board.id)) await supabase.from('script_boards').delete().eq('id', board.id).eq('script_id', scriptId);
+  }
+  await supabase.from('script_boards').update({ is_default: false, updated_at: new Date().toISOString() }).eq('script_id', scriptId);
+  const savedBoards = [];
+  for (const [index, board] of normalizedBoards.entries()) {
+    const payload = {
+      script_id: scriptId,
+      name: board.name,
+      player_count: board.player_count ? Number(board.player_count) : null,
+      notes: board.notes || null,
+      is_default: board.is_default === true,
+      sort_order: Number(board.sort_order || index),
+      updated_at: new Date().toISOString(),
+    };
+    let saved: any = null;
+    if (board.id && existingIds.has(board.id)) {
+      const { data, error } = await supabase.from('script_boards')
+        .update(payload)
+        .eq('id', board.id)
+        .eq('script_id', scriptId)
+        .select()
+        .single();
+      if (error) throw error;
+      saved = data;
+    } else {
+      const { data, error } = await supabase.from('script_boards')
+        .insert(payload)
+        .select()
+        .single();
+      if (error) throw error;
+      saved = data;
+    }
+    await supabase.from('script_board_actor_roles').delete().eq('board_id', saved.id);
+    if (board.roles.length) {
+      await supabase.from('script_board_actor_roles').insert(board.roles.map((role: any, roleIndex: number) => ({
+        board_id: saved.id,
+        role_name: role.role_name,
+        role_kind: roleKindValue(role.role_kind),
+        sort_order: roleIndex,
+      })));
+    }
+    savedBoards.push({ ...saved, roles: board.roles });
+  }
+  return savedBoards;
+}
+
+function normalizeActorRoleSelectionInput(input: any[] | null | undefined, actorRoleRows: any[] | null | undefined) {
+  let source = input;
+  if (!Array.isArray(source) && typeof source === 'string') {
+    try { source = JSON.parse(source); } catch { source = []; }
+  }
+  const roleKindByName = new Map((actorRoleRows || []).map((role: any) => [roleNameKey(role.role_name || role.name), roleKindValue(role.role_kind)]));
+  return (Array.isArray(source) ? source : [])
+    .map((role: any) => {
+      const roleName = cleanText(typeof role === 'string' ? role : role?.role_name || role?.name, 120);
+      if (!roleName) return null;
+      const key = roleNameKey(roleName);
+      if (roleKindByName.size && !roleKindByName.has(key)) return null;
+      return { role_name: roleName, role_kind: roleKindValue((typeof role === 'object' ? role.role_kind || role.kind : '') || roleKindByName.get(key)) };
+    })
+    .filter(Boolean) as { role_name: string; role_kind: string }[];
+}
+
+async function resolveScheduleRoleSelection(scriptId: string, requestedBoardId?: string | null, requestedRoles?: any[] | null) {
+  const { data: actorRows, error: actorErr } = await supabase.from('script_actor_roles')
+    .select('role_name, gender, role_kind')
+    .eq('script_id', scriptId);
+  if (actorErr) throw actorErr;
+  const actorRoles = actorRows || [];
+  const boards = await fetchScriptBoards(scriptId);
+  let selection = normalizeActorRoleSelectionInput(requestedRoles || [], actorRoles);
+  let board = requestedBoardId ? boards.find(item => item.id === requestedBoardId) || null : null;
+  if (!selection.length && board) selection = board.roles.map(role => ({ role_name: role.role_name, role_kind: roleKindValue(role.role_kind) }));
+  if (!selection.length) {
+    board = boards.find(item => item.is_default) || boards[0] || null;
+    if (board) selection = board.roles.map(role => ({ role_name: role.role_name, role_kind: roleKindValue(role.role_kind) }));
+  }
+  if (!selection.length) selection = actorRoles.map((role: any) => ({ role_name: role.role_name, role_kind: roleKindValue(role.role_kind) }));
+  const selectionKey = roleSetKey(selection);
+  const matchedBoard = boards.find(item => roleSetKey(item.roles) === selectionKey) || board;
+  return {
+    board: matchedBoard || null,
+    roles: selection,
+  };
+}
+
 async function publishScriptRowsAsTemplates(scripts: any[], createdBy: string, reviewStatus: 'pending' | 'approved' = 'pending', reviewedBy?: string | null) {
   const now = new Date().toISOString();
   const rows = (scripts || []).map((s: any) => ({
@@ -1123,8 +1347,11 @@ async function publishScriptRowsAsTemplates(scripts: any[], createdBy: string, r
     min_duration_hours: s.min_duration_hours || ((s.min_duration || s.duration_minutes || 240) / 60),
     max_duration_hours: s.max_duration_hours || ((s.max_duration || s.duration_minutes || 240) / 60),
     dm_gender: s.dm_gender || '未指定',
+    player_count: Number(s.player_count || s.script_player_roles?.length || 0),
+    player_selection_rule: cleanText(s.player_selection_rule, 300) || null,
     player_roles: serializeRoles(s.script_player_roles),
     actor_roles: serializeRoles(s.script_actor_roles),
+    boards: serializeBoards(s.script_boards),
     created_by: createdBy,
     review_status: reviewStatus,
     reviewed_at: reviewStatus === 'approved' ? now : null,
@@ -1695,7 +1922,7 @@ app.post('/api/platform/script-templates/sync-existing', async (req: any, res: a
   try {
     if (!requireSuperAdmin(req, res)) return;
     const { data: scripts, error } = await supabase.from('scripts')
-      .select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender, role_kind)')
+      .select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender, role_kind), script_boards(id, name, player_count, notes, is_default, sort_order, script_board_actor_roles(role_name, role_kind, sort_order))')
       .order('created_at', { ascending: false });
     if (error) throw error;
     const templates = await publishScriptRowsAsTemplates(scripts || [], '超级管理员同步', 'approved', req.user?.adminUserId || null);
@@ -1913,7 +2140,7 @@ app.post('/api/scripts/:id/publish-template', async (req: any, res: any) => {
   try {
     const tenantId = currentTenantId(req);
     const { data: s, error: scriptErr } = await supabase.from('scripts')
-      .select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender, role_kind)')
+      .select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender, role_kind), script_boards(id, name, player_count, notes, is_default, sort_order, script_board_actor_roles(role_name, role_kind, sort_order))')
       .eq('id', req.params.id)
       .eq('tenant_id', tenantId)
       .single();
@@ -1944,6 +2171,8 @@ app.post('/api/script-templates/:id/import', async (req: any, res: any) => {
       duration_minutes: t.duration_minutes || 240,
       min_duration_hours: t.min_duration_hours || 4,
       max_duration_hours: t.max_duration_hours || 4,
+      player_count: Number(t.player_count || (Array.isArray(t.player_roles) ? t.player_roles.length : 0) || 1),
+      player_selection_rule: cleanText(t.player_selection_rule, 300) || null,
       tenant_id: tenantId,
     }).select().single();
     if (scriptErr) throw scriptErr;
@@ -1965,6 +2194,7 @@ app.post('/api/script-templates/:id/import', async (req: any, res: any) => {
         role_kind: roleKindValue(r.role_kind),
       })));
     }
+    await saveScriptBoards(script!.id, Array.isArray(t.boards) ? t.boards : [], actorRoles, Number(t.player_count || playerRoles.length || 1));
     await supabase.from('jzg_script_templates').update({
       usage_count: (t.usage_count || 0) + 1,
       updated_at: new Date().toISOString(),
@@ -2218,40 +2448,30 @@ app.post('/api/actors/:id/assessments', async (req: any, res: any) => {
 // ===== Scripts =====
 app.get('/api/scripts', async (req: any, res: any) => {
   try {
-    const { data: scripts } = await supabase.from('scripts').select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender, role_kind)').eq('tenant_id', currentTenantId(req)).order('name');
+    const { data: scripts } = await supabase.from('scripts')
+      .select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender, role_kind), script_boards(id, name, player_count, notes, is_default, sort_order, script_board_actor_roles(role_name, role_kind, sort_order))')
+      .eq('tenant_id', currentTenantId(req))
+      .order('name');
     for (const s of scripts || []) {
-      s.player_roles = (s.script_player_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
-      s.actor_role_details = (s.script_actor_roles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '', role_kind: r.role_kind || 'dm' }));
-      s.actor_roles = (s.script_actor_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
-      s.role_count = s.script_player_roles?.length || 0;
-      s.player_count = Number(s.player_count || s.role_count || 0);
-      s.actor_count = s.script_actor_roles?.length || 0;
-      s.duration = s.duration_minutes || 0;
-      s.min_duration = s.min_duration_hours ? Math.round(s.min_duration_hours * 60) : 0;
-      s.max_duration = s.max_duration_hours ? Math.round(s.max_duration_hours * 60) : 0;
-      delete s.script_player_roles;
-      delete s.script_actor_roles;
+      normalizeScriptApiRecord(s);
     }
     res.json(ok(scripts || []));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.get('/api/scripts/:id', async (req: any, res: any) => {
   try {
-    const { data: s } = await supabase.from('scripts').select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender, role_kind)').eq('id', req.params.id).eq('tenant_id', currentTenantId(req)).single();
+    const { data: s } = await supabase.from('scripts')
+      .select('*, script_player_roles(role_name, gender), script_actor_roles(role_name, gender, role_kind), script_boards(id, name, player_count, notes, is_default, sort_order, script_board_actor_roles(role_name, role_kind, sort_order))')
+      .eq('id', req.params.id)
+      .eq('tenant_id', currentTenantId(req))
+      .single();
     if (!s) return res.status(404).json(err(new Error('不存在')));
     const { data: skills } = await supabase.from('actor_skills').select('*, actors(name)').eq('script_id', s.id);
-    s.player_roles = (s.script_player_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
-    s.actor_role_details = (s.script_actor_roles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '', role_kind: r.role_kind || 'dm' }));
-    s.actor_roles = (s.script_actor_roles || []).map((r: any) => r.gender ? `${r.role_name}(${r.gender})` : r.role_name);
+    const { data: roles } = await supabase.from('script_roles').select('*').eq('script_id', s.id);
     s.skilled_actors = skills || [];
-    s.role_count = s.script_player_roles?.length || 0;
-    s.player_count = Number(s.player_count || s.role_count || 0);
-    s.actor_count = s.script_actor_roles?.length || 0;
-    s.duration = s.duration_minutes || 0;
-    s.min_duration = s.min_duration_hours ? Math.round(s.min_duration_hours * 60) : 0;
-    s.max_duration = s.max_duration_hours ? Math.round(s.max_duration_hours * 60) : 0;
-    delete s.script_player_roles;
-    delete s.script_actor_roles;
+    s.roles = roles || [];
+    s.skilledActors = skills || [];
+    normalizeScriptApiRecord(s);
     res.json(ok(s));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -2268,6 +2488,7 @@ app.post('/api/scripts', async (req: any, res: any) => {
       min_duration_hours: (minDuration || 0) / 60,
       max_duration_hours: (maxDuration || 0) / 60,
       player_count: playerCount,
+      player_selection_rule: cleanText(req.body.playerSelectionRule || req.body.player_selection_rule, 300) || null,
       tenant_id: currentTenantId(req)
     }).select().single();
     for (const r of playerRoles || []) {
@@ -2277,11 +2498,14 @@ app.post('/api/scripts', async (req: any, res: any) => {
       const parsed = parseRole(r);
       await supabase.from('script_actor_roles').insert({ script_id: data!.id, ...parsed, role_kind: roleKindValue(parsed.role_kind) });
     }
+    const savedBoards = await saveScriptBoards(data!.id, req.body.boards, actorRoles || [], playerCount);
     await publishScriptRowsAsTemplates([{
       ...data,
       tenant_id: currentTenantId(req),
+      player_selection_rule: cleanText(req.body.playerSelectionRule || req.body.player_selection_rule, 300) || null,
       script_player_roles: (playerRoles || []).map(parseRole),
       script_actor_roles: (actorRoles || []).map(parseRole),
+      script_boards: savedBoards.map((board: any) => ({ ...board, script_board_actor_roles: board.roles })),
     }], req.user?.displayName || req.user?.email || '剧司辰后台', 'pending');
     res.json(ok({ id: data?.id }));
   } catch (e) { res.status(500).json(err(e)); }
@@ -2301,6 +2525,7 @@ app.put('/api/scripts/:id', async (req: any, res: any) => {
       min_duration_hours: (minDuration || 0) / 60,
       max_duration_hours: (maxDuration || 0) / 60,
       player_count: playerCount,
+      player_selection_rule: cleanText(req.body.playerSelectionRule || req.body.player_selection_rule, 300) || null,
     }).eq('id', req.params.id).eq('tenant_id', tenantId);
     await supabase.from('script_player_roles').delete().eq('script_id', req.params.id);
     await supabase.from('script_actor_roles').delete().eq('script_id', req.params.id);
@@ -2311,6 +2536,7 @@ app.put('/api/scripts/:id', async (req: any, res: any) => {
       const parsed = parseRole(r);
       await supabase.from('script_actor_roles').insert({ script_id: req.params.id, ...parsed, role_kind: roleKindValue(parsed.role_kind) });
     }
+    await saveScriptBoards(req.params.id, req.body.boards, actorRoles || [], playerCount);
     res.json(ok());
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -2322,7 +2548,7 @@ app.delete('/api/scripts/:id', async (req: any, res: any) => {
 // ===== Schedules =====
 app.get('/api/schedules', async (req: any, res: any) => {
   try {
-    let q = supabase.from('schedules').select('*, scripts(name), rooms(name)').eq('tenant_id', currentTenantId(req)).order('scheduled_date');
+    let q = supabase.from('schedules').select('*, scripts(name), rooms(name), script_boards(name)').eq('tenant_id', currentTenantId(req)).order('scheduled_date');
     if (req.query.startDate) q = q.gte('scheduled_date', req.query.startDate);
     if (req.query.endDate) q = q.lte('scheduled_date', req.query.endDate);
     const { data } = await q;
@@ -2334,7 +2560,7 @@ app.get('/api/schedules', async (req: any, res: any) => {
       const customerMap = new Map<string, any>((customers || []).map((c: any) => [c.id, c]));
       const checkinsWithCustomer = (checkins || []).map((c: any) => ({ ...c, customer: customerMap.get(c.customer_id) || null, lock_dm_credits: customerMap.get(c.customer_id)?.lock_dm_credits || 0 }));
       const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
-      const { data: actorRoles } = await supabase.from('script_actor_roles').select('role_name, gender, role_kind').eq('script_id', s.script_id);
+      const selectedActorRoles = await resolveScheduleRoleSelection(s.script_id, s.script_board_id, s.actor_role_selection);
       const { data: evaluations } = await supabase.from('evaluations').select('rating, comment').eq('schedule_id', s.id);
       const { count: positiveFeedbackCount } = await supabase.from('jzg_positive_feedbacks')
         .select('*', { count: 'exact', head: true })
@@ -2345,9 +2571,12 @@ app.get('/api/schedules', async (req: any, res: any) => {
         .eq('schedule_id', s.id)
         .eq('status', 'pending');
       const normalizedPlayerRoles = (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
-      const normalizedActorRoles = (actorRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '', role_kind: r.role_kind || 'dm' }));
+      const normalizedActorRoles = selectedActorRoles.roles.map((r: any) => ({ name: r.role_name, gender: r.gender || '', role_kind: r.role_kind || 'dm' }));
       return {
         ...s, script_name: s.scripts?.name, room_name: s.rooms?.name,
+        script_board_name: s.script_boards?.name || selectedActorRoles.board?.name || null,
+        script_board_id: selectedActorRoles.board?.id || s.script_board_id || null,
+        actor_role_selection: selectedActorRoles.roles,
         start_time: `${s.scheduled_date}T${s.start_time}`,
         end_time: `${s.scheduled_date}T${s.end_time}`,
         checkins: checkinsWithCustomer,
@@ -2363,7 +2592,7 @@ app.get('/api/schedules', async (req: any, res: any) => {
 });
 app.get('/api/schedules/:id', async (req: any, res: any) => {
   try {
-    const { data: s } = await supabase.from('schedules').select('*, scripts(name), rooms(name)').eq('id', req.params.id).eq('tenant_id', currentTenantId(req)).single();
+    const { data: s } = await supabase.from('schedules').select('*, scripts(name), rooms(name), script_boards(name)').eq('id', req.params.id).eq('tenant_id', currentTenantId(req)).single();
     if (!s) return res.status(404).json(err(new Error('不存在')));
     const { data: actors } = await supabase.from('schedule_actors').select('*, actors(name)').eq('schedule_id', req.params.id);
     const { data: checkins } = await supabase.from('checkins').select('*').eq('schedule_id', req.params.id);
@@ -2372,16 +2601,19 @@ app.get('/api/schedules/:id', async (req: any, res: any) => {
     const customerMap = new Map<string, any>((customers || []).map((c: any) => [c.id, c]));
     const checkinsWithCustomer = (checkins || []).map((c: any) => ({ ...c, customer: customerMap.get(c.customer_id) || null, lock_dm_credits: customerMap.get(c.customer_id)?.lock_dm_credits || 0 }));
     const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
-    const { data: actorRoles } = await supabase.from('script_actor_roles').select('role_name, gender, role_kind').eq('script_id', s.script_id);
+    const selectedActorRoles = await resolveScheduleRoleSelection(s.script_id, s.script_board_id, s.actor_role_selection);
     const { data: evaluations } = await supabase.from('evaluations').select('rating, comment').eq('schedule_id', req.params.id);
     const { count: positiveFeedbackCount } = await supabase.from('jzg_positive_feedbacks')
       .select('*', { count: 'exact', head: true })
       .eq('schedule_id', req.params.id)
       .eq('tenant_id', currentTenantId(req));
     const normalizedPlayerRoles = (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
-    const normalizedActorRoles = (actorRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '', role_kind: r.role_kind || 'dm' }));
+    const normalizedActorRoles = selectedActorRoles.roles.map((r: any) => ({ name: r.role_name, gender: r.gender || '', role_kind: r.role_kind || 'dm' }));
     res.json(ok({
       ...s, script_name: s.scripts?.name, room_name: s.rooms?.name, actors: actors || [],
+      script_board_name: s.script_boards?.name || selectedActorRoles.board?.name || null,
+      script_board_id: selectedActorRoles.board?.id || s.script_board_id || null,
+      actor_role_selection: selectedActorRoles.roles,
       checkins: checkinsWithCustomer,
       player_roles: normalizedPlayerRoles,
       actor_roles: normalizedActorRoles,
@@ -2439,6 +2671,11 @@ app.post('/api/schedules', async (req: any, res: any) => {
     const endTimeStr = d.timeEnd || (d.endTime ? d.endTime.split('T')[1]?.substring(0, 5) : '17:00');
     const { data: script } = await supabase.from('scripts').select('id,name,player_count').eq('id', d.scriptId).eq('tenant_id', tenantId).maybeSingle();
     if (!script) return res.status(404).json(err(new Error('剧本不存在')));
+    const roleSelection = await resolveScheduleRoleSelection(
+      d.scriptId,
+      cleanText(d.scriptBoardId || d.script_board_id, 80) || null,
+      Array.isArray(d.actorRoleSelection) ? d.actorRoleSelection : d.actor_role_selection,
+    );
     if (d.roomId) {
       const { data: room } = await supabase.from('rooms').select('id').eq('id', d.roomId).eq('tenant_id', tenantId).maybeSingle();
       if (!room) return res.status(404).json(err(new Error('房间不存在')));
@@ -2446,9 +2683,18 @@ app.post('/api/schedules', async (req: any, res: any) => {
     if (d.actors?.length) {
       const actorsValid = await validateTenantActors(req, res, d.actors.map((a: any) => a.actorId));
       if (!actorsValid) return;
+      const validRoleKeys = new Set(roleSelection.roles.map(role => roleNameKey(role.role_name)));
+      for (const actorRow of d.actors) {
+        const roleName = cleanText(actorRow?.roleName, 120);
+        if (roleName && validRoleKeys.size && !validRoleKeys.has(roleNameKey(roleName))) {
+          return res.status(400).json(err(new Error(`卡司角色“${roleName}”不在本场选择的演绎角色里`)));
+        }
+      }
     }
     const { data } = await supabase.from('schedules').insert({
       script_id: d.scriptId, room_id: d.roomId || null,
+      script_board_id: roleSelection.board?.id || null,
+      actor_role_selection: roleSelection.roles,
       scheduled_date: dateStr, start_time: startTimeStr, end_time: endTimeStr,
       status: d.status || 'pending', player_count: Number(d.playerCount || script.player_count || 0),
       customer_name: d.customerName || null,
@@ -2471,7 +2717,7 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
   try {
     const d = req.body;
     const tenantId = currentTenantId(req);
-    const { data: owned } = await supabase.from('schedules').select('id, status').eq('id', req.params.id).eq('tenant_id', tenantId).maybeSingle();
+    const { data: owned } = await supabase.from('schedules').select('id, status, script_id, script_board_id, actor_role_selection').eq('id', req.params.id).eq('tenant_id', tenantId).maybeSingle();
     if (!owned) return res.status(404).json(err(new Error('排期不存在')));
     if (['completed', 'cancelled', 'bombed', 'issue'].includes(owned.status)) return res.status(400).json(err(new Error('历史记录已归档，不能修改车次核心信息')));
     const fields: any = {};
@@ -2479,6 +2725,20 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
       const { data: script } = await supabase.from('scripts').select('id').eq('id', d.scriptId).eq('tenant_id', tenantId).maybeSingle();
       if (!script) return res.status(404).json(err(new Error('剧本不存在')));
       fields.script_id = d.scriptId;
+    }
+    const nextScriptId = fields.script_id || owned.script_id;
+    const roleSelection = await resolveScheduleRoleSelection(
+      nextScriptId,
+      d.scriptBoardId !== undefined || d.script_board_id !== undefined
+        ? cleanText(d.scriptBoardId || d.script_board_id, 80) || null
+        : owned.script_board_id,
+      d.actorRoleSelection !== undefined || d.actor_role_selection !== undefined
+        ? (Array.isArray(d.actorRoleSelection) ? d.actorRoleSelection : d.actor_role_selection)
+        : owned.actor_role_selection,
+    );
+    if (d.scriptId !== undefined || d.scriptBoardId !== undefined || d.script_board_id !== undefined || d.actorRoleSelection !== undefined || d.actor_role_selection !== undefined) {
+      fields.script_board_id = roleSelection.board?.id || null;
+      fields.actor_role_selection = roleSelection.roles;
     }
     if (d.roomId !== undefined) {
       if (d.roomId) {
@@ -2506,6 +2766,13 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
     if (d.actors) {
       const actorsValid = await validateTenantActors(req, res, d.actors.map((a: any) => a.actorId));
       if (!actorsValid) return;
+      const validRoleKeys = new Set(roleSelection.roles.map(role => roleNameKey(role.role_name)));
+      for (const actorRow of d.actors) {
+        const roleName = cleanText(actorRow?.roleName, 120);
+        if (roleName && validRoleKeys.size && !validRoleKeys.has(roleNameKey(roleName))) {
+          return res.status(400).json(err(new Error(`卡司角色“${roleName}”不在本场选择的演绎角色里`)));
+        }
+      }
       await supabase.from('schedule_actors').delete().eq('schedule_id', req.params.id);
       if (d.actors.length) await supabase.from('schedule_actors').insert(d.actors.map((a: any) => ({ schedule_id: req.params.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime })));
     }
@@ -2623,14 +2890,14 @@ app.post('/api/schedules/:id/dm-start', async (req: any, res: any) => {
     if (Number.isNaN(actualStartedAt.getTime())) return res.status(400).json(err(new Error('开本时间无效')));
     const actorRows = Array.isArray(req.body?.actors) ? req.body.actors : [];
     const { data: schedule } = await supabase.from('schedules')
-      .select('id, tenant_id, script_id, status, scripts(duration_minutes)')
+      .select('id, tenant_id, script_id, script_board_id, actor_role_selection, status, scripts(duration_minutes)')
       .eq('id', req.params.id)
       .eq('tenant_id', tenantId)
       .maybeSingle();
     if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
     if (!['locked', 'confirmed', 'ongoing'].includes(schedule.status)) return res.status(400).json(err(new Error('当前状态不能确认开本')));
-    const { data: actorRoles } = await supabase.from('script_actor_roles').select('role_name, role_kind').eq('script_id', schedule.script_id);
-    const validRoleNames = new Set((actorRoles || []).map((role: any) => cleanText(role.role_name, 120)).filter(Boolean));
+    const selectedActorRoles = await resolveScheduleRoleSelection(schedule.script_id, schedule.script_board_id, schedule.actor_role_selection);
+    const validRoleNames = new Set((selectedActorRoles.roles || []).map((role: any) => cleanText(role.role_name, 120)).filter(Boolean));
     if (validRoleNames.size > 0) {
       for (const roleName of validRoleNames) {
         if (!actorRows.some((row: any) => cleanText(row?.roleName, 120) === roleName && cleanText(row?.actorId, 80))) {
@@ -2866,7 +3133,7 @@ app.put('/api/schedules/:id/dm-assignment', async (req: any, res: any) => {
     const customerId = cleanText(req.body?.customerId, 80);
     const roleName = cleanText(req.body?.roleName, 120);
     const { data: schedule } = await supabase.from('schedules')
-      .select('id, tenant_id, status, script_id, dm_lock_customer_id, requested_dm_actor_id, requested_dm_role_name, dm_lock_status, dm_lock_credit_transaction_id')
+      .select('id, tenant_id, status, script_id, script_board_id, actor_role_selection, dm_lock_customer_id, requested_dm_actor_id, requested_dm_role_name, dm_lock_status, dm_lock_credit_transaction_id')
       .eq('id', req.params.id)
       .eq('tenant_id', tenantId)
       .maybeSingle();
@@ -2923,12 +3190,10 @@ app.put('/api/schedules/:id/dm-assignment', async (req: any, res: any) => {
 
     const { data: actor } = await supabase.from('actors').select('id').eq('id', actorId).eq('tenant_id', tenantId).maybeSingle();
     if (!actor) return res.status(404).json(err(new Error('卡司/DM 不存在')));
-    const { data: role } = await supabase.from('script_actor_roles')
-      .select('id, role_name, role_kind')
-      .eq('script_id', schedule.script_id)
-      .eq('role_name', roleName)
-      .maybeSingle();
-    if (!role) return res.status(400).json(err(new Error('这个卡司角色不属于当前剧本')));
+    const selectedActorRoles = await resolveScheduleRoleSelection(schedule.script_id, schedule.script_board_id, schedule.actor_role_selection);
+    if (!selectedActorRoles.roles.some((role: any) => roleNameKey(role.role_name) === roleNameKey(roleName))) {
+      return res.status(400).json(err(new Error('这个卡司角色不属于本场选择的演绎角色')));
+    }
     const { data: checkin } = await supabase.from('checkins')
       .select('id, customer_id, guest_name')
       .eq('schedule_id', schedule.id)

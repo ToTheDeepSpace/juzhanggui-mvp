@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS scripts (
   min_duration INTEGER DEFAULT 0,
   max_duration INTEGER DEFAULT 0,
   dm_gender TEXT DEFAULT '未指定',
+  player_selection_rule TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -44,7 +45,32 @@ CREATE TABLE IF NOT EXISTS script_actor_roles (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   script_id UUID NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
   role_name TEXT NOT NULL,
-  gender TEXT DEFAULT ''
+  gender TEXT DEFAULT '',
+  role_kind TEXT DEFAULT 'dm'
+);
+
+-- 剧本演绎板子表
+CREATE TABLE IF NOT EXISTS script_boards (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  script_id UUID NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
+  name TEXT NOT NULL DEFAULT '标准版',
+  player_count INTEGER,
+  notes TEXT,
+  is_default BOOLEAN NOT NULL DEFAULT false,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 板子包含的演绎角色
+CREATE TABLE IF NOT EXISTS script_board_actor_roles (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  board_id UUID NOT NULL REFERENCES script_boards(id) ON DELETE CASCADE,
+  role_name TEXT NOT NULL,
+  role_kind TEXT DEFAULT 'dm',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(board_id, role_name)
 );
 
 -- 卡司技能表
@@ -73,6 +99,8 @@ CREATE TABLE IF NOT EXISTS schedules (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   room_id UUID REFERENCES rooms(id) ON DELETE SET NULL,
   script_id UUID NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
+  script_board_id UUID REFERENCES script_boards(id) ON DELETE SET NULL,
+  actor_role_selection JSONB NOT NULL DEFAULT '[]'::jsonb,
   start_time TIMESTAMPTZ NOT NULL,
   end_time TIMESTAMPTZ NOT NULL,
   status TEXT DEFAULT 'pending',
@@ -198,6 +226,8 @@ CREATE INDEX IF NOT EXISTS idx_schedules_start_time ON schedules(start_time);
 CREATE INDEX IF NOT EXISTS idx_schedules_end_time ON schedules(end_time);
 CREATE INDEX IF NOT EXISTS idx_schedules_room ON schedules(room_id);
 CREATE INDEX IF NOT EXISTS idx_schedules_script ON schedules(script_id);
+CREATE INDEX IF NOT EXISTS idx_script_boards_script ON script_boards(script_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_script_board_actor_roles_board ON script_board_actor_roles(board_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_checkins_schedule ON checkins(schedule_id);
 CREATE INDEX IF NOT EXISTS idx_evaluations_schedule ON evaluations(schedule_id);
 CREATE INDEX IF NOT EXISTS idx_reminders_schedule ON reminders(schedule_id);
@@ -211,6 +241,8 @@ ALTER TABLE actors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE scripts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE script_player_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE script_actor_roles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE script_boards ENABLE ROW LEVEL SECURITY;
+ALTER TABLE script_board_actor_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE actor_skills ENABLE ROW LEVEL SECURITY;
 ALTER TABLE script_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE schedules ENABLE ROW LEVEL SECURITY;
