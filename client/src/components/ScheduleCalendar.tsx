@@ -195,7 +195,7 @@ export default function ScheduleCalendar() {
 
   // 表单状态
   const [formData, setFormData] = useState<ScheduleFormData>({
-    roomId: '', scriptId: '', scriptBoardId: '', actorRoleSelection: [], date: format(new Date(), 'yyyy-MM-dd'),
+    roomId: '', scriptId: '', scriptBoardId: '', actorRoleSelection: [], playerRoleSelection: [], date: format(new Date(), 'yyyy-MM-dd'),
     startTime: '14:00', customerName: '', customerPhone: '',
     playerCount: '', note: '',
   });
@@ -261,7 +261,7 @@ export default function ScheduleCalendar() {
   const openCreateModal = (dateStr?: string) => {
     setEditingSchedule(null); setIsPendingMode(false);
     setFormData({
-      roomId: '', scriptId: '', scriptBoardId: '', actorRoleSelection: [], date: dateStr || format(new Date(), 'yyyy-MM-dd'),
+      roomId: '', scriptId: '', scriptBoardId: '', actorRoleSelection: [], playerRoleSelection: [], date: dateStr || format(new Date(), 'yyyy-MM-dd'),
       startTime: '14:00', customerName: '', customerPhone: '', playerCount: '', note: '',
     });
     setSelectedActors([]); setShowModal(true);
@@ -274,7 +274,19 @@ export default function ScheduleCalendar() {
     setFormData({
       roomId: schedule.room_id || '', scriptId: schedule.script_id,
       scriptBoardId: schedule.script_board_id || '',
-      actorRoleSelection: (schedule.actor_role_selection || schedule.actor_roles || []).map((role: any) => role.role_name || role.name).filter(Boolean),
+      actorRoleSelection: (schedule.actor_role_selection || schedule.actor_roles || [])
+        .map((role: any) => ({
+          role_name: role.role_name || role.name,
+          gender: role.gender || '',
+          role_kind: role.role_kind,
+        }))
+        .filter((role: any) => role.role_name),
+      playerRoleSelection: (schedule.player_role_selection || [])
+        .map((role: any) => ({
+          role_name: role.role_name || role.name,
+          gender: role.gender || '',
+        }))
+        .filter((role: any) => role.role_name),
       date: format(startDateTime, 'yyyy-MM-dd'), startTime: format(startDateTime, 'HH:mm'),
       customerName: schedule.customer_name || '', customerPhone: schedule.customer_phone || '',
       playerCount: schedule.player_count ? String(schedule.player_count) : '', note: schedule.note || '',
@@ -615,6 +627,7 @@ export default function ScheduleCalendar() {
       roomId: formData.roomId || undefined, scriptId: formData.scriptId,
       scriptBoardId: formData.scriptBoardId || undefined,
       actorRoleSelection: formData.actorRoleSelection,
+      playerRoleSelection: formData.playerRoleSelection,
       startTime: startDateTime.toISOString(), endTime: endDateTime.toISOString(),
       timeStart: formData.startTime, timeEnd: format(endDateTime, 'HH:mm'),
       date: formData.date,
@@ -853,7 +866,10 @@ export default function ScheduleCalendar() {
                 </span>
               )}
               {(s.script_board_name || s.actor_role_selection?.length) && (
-                <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-700">
+                <span
+                  className="rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-700"
+                  title={(s.player_role_selection || []).length ? `玩家条件：${(s.player_role_selection || []).map(role => `${role.role_name}${role.gender ? `(${role.gender})` : ''}`).join('、')}` : undefined}
+                >
                   {s.script_board_name || '自定义组合'}
                 </span>
               )}

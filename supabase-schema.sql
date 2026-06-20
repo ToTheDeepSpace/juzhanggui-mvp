@@ -67,7 +67,19 @@ CREATE TABLE IF NOT EXISTS script_board_actor_roles (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   board_id UUID NOT NULL REFERENCES script_boards(id) ON DELETE CASCADE,
   role_name TEXT NOT NULL,
+  gender TEXT DEFAULT '',
   role_kind TEXT DEFAULT 'dm',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(board_id, role_name)
+);
+
+-- 板子绑定的玩家角色条件
+CREATE TABLE IF NOT EXISTS script_board_player_roles (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  board_id UUID NOT NULL REFERENCES script_boards(id) ON DELETE CASCADE,
+  role_name TEXT NOT NULL,
+  gender TEXT DEFAULT '',
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT now(),
   UNIQUE(board_id, role_name)
@@ -101,6 +113,7 @@ CREATE TABLE IF NOT EXISTS schedules (
   script_id UUID NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
   script_board_id UUID REFERENCES script_boards(id) ON DELETE SET NULL,
   actor_role_selection JSONB NOT NULL DEFAULT '[]'::jsonb,
+  player_role_selection JSONB NOT NULL DEFAULT '[]'::jsonb,
   start_time TIMESTAMPTZ NOT NULL,
   end_time TIMESTAMPTZ NOT NULL,
   status TEXT DEFAULT 'pending',
@@ -228,6 +241,7 @@ CREATE INDEX IF NOT EXISTS idx_schedules_room ON schedules(room_id);
 CREATE INDEX IF NOT EXISTS idx_schedules_script ON schedules(script_id);
 CREATE INDEX IF NOT EXISTS idx_script_boards_script ON script_boards(script_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_script_board_actor_roles_board ON script_board_actor_roles(board_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_script_board_player_roles_board ON script_board_player_roles(board_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_checkins_schedule ON checkins(schedule_id);
 CREATE INDEX IF NOT EXISTS idx_evaluations_schedule ON evaluations(schedule_id);
 CREATE INDEX IF NOT EXISTS idx_reminders_schedule ON reminders(schedule_id);
@@ -243,6 +257,7 @@ ALTER TABLE script_player_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE script_actor_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE script_boards ENABLE ROW LEVEL SECURITY;
 ALTER TABLE script_board_actor_roles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE script_board_player_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE actor_skills ENABLE ROW LEVEL SECURITY;
 ALTER TABLE script_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE schedules ENABLE ROW LEVEL SECURITY;

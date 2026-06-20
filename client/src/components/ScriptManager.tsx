@@ -24,6 +24,7 @@ const ROLE_KIND_OPTIONS = [
   { value: 'assistant', label: '助演' },
   { value: 'other', label: '其他' },
 ];
+const GENDER_OPTIONS = ['未指定', '男', '女', '可男可女', '其他'];
 
 const scriptTypeLabel = (value?: string | null) => SCRIPT_TYPE_OPTIONS.find(option => option.value === value)?.label || '未设置类型';
 const distributionTypeLabel = (value?: string | null) => DISTRIBUTION_TYPE_OPTIONS.find(option => option.value === value)?.label || '未设置发行形态';
@@ -36,6 +37,9 @@ type BoardForm = {
   notes: string;
   isDefault: boolean;
   roles: string[];
+  actorRoleGenders: Record<string, string>;
+  playerRoles: string[];
+  playerRoleGenders: Record<string, string>;
 };
 
 const standardBoard = (): BoardForm => ({
@@ -44,6 +48,9 @@ const standardBoard = (): BoardForm => ({
   notes: '',
   isDefault: true,
   roles: [],
+  actorRoleGenders: {},
+  playerRoles: [],
+  playerRoleGenders: {},
 });
 
 const emptyScriptForm = () => ({
@@ -62,7 +69,15 @@ const emptyScriptForm = () => ({
 const boardFormsFromScript = (script: Script): BoardForm[] => {
   const boards = script.boards || [];
   if (!boards.length) {
-    return [{ ...standardBoard(), playerCount: script.player_count ? String(script.player_count) : '', roles: script.actor_role_details?.map(role => role.name) || script.actor_roles || [] }];
+    const actorRoles = script.actor_role_details?.map(role => role.name) || script.actor_roles || [];
+    const playerRoles = script.player_roles || [];
+    return [{
+      ...standardBoard(),
+      playerCount: script.player_count ? String(script.player_count) : '',
+      roles: actorRoles,
+      actorRoleGenders: Object.fromEntries((script.actor_role_details || []).map(role => [role.name, role.gender || ''])),
+      playerRoles,
+    }];
   }
   return boards.map((board: ScriptBoard, index) => ({
     id: board.id,
@@ -71,6 +86,9 @@ const boardFormsFromScript = (script: Script): BoardForm[] => {
     notes: board.notes || '',
     isDefault: board.is_default === true || index === 0,
     roles: (board.roles || []).map(role => role.role_name),
+    actorRoleGenders: Object.fromEntries((board.roles || []).map(role => [role.role_name, role.gender || ''])),
+    playerRoles: (board.player_roles || []).map(role => role.role_name),
+    playerRoleGenders: Object.fromEntries((board.player_roles || []).map(role => [role.role_name, role.gender || ''])),
   }));
 };
 
@@ -163,13 +181,36 @@ export default function ScriptManager() {
         ...board,
         name: board.name || (index === 0 ? '标准版' : `板子${index + 1}`),
         roles: keepAll ? nextNames : board.roles.filter(roleName => nextNameSet.has(roleName)),
+        actorRoleGenders: Object.fromEntries(
+          Object.entries(board.actorRoleGenders || {}).filter(([roleName]) => nextNameSet.has(roleName))
+        ),
       };
     });
     if (!normalizedBoards.some(board => board.isDefault) && normalizedBoards.length) normalizedBoards[0].isDefault = true;
     return normalizedBoards;
   };
 
+  const syncBoardsForPlayerRoles = (boards: BoardForm[], nextPlayerRoles: Role[], previousPlayerRoles = formData.playerRoles) => {
+    const nextNames = nextPlayerRoles.map(role => role.name);
+    const previousNames = previousPlayerRoles.map(role => role.name);
+    const nextNameSet = new Set(nextNames);
+    const previousAllSelected = (board: BoardForm) => previousNames.length > 0 && board.playerRoles.length === previousNames.length && previousNames.every(name => board.playerRoles.includes(name));
+    return (boards.length ? boards : [standardBoard()]).map((board, index) => {
+      const keepAll = board.isDefault && (board.playerRoles.length === 0 || previousAllSelected(board));
+      return {
+        ...board,
+        name: board.name || (index === 0 ? '标准版' : `板子${index + 1}`),
+        playerRoles: keepAll ? nextNames : board.playerRoles.filter(roleName => nextNameSet.has(roleName)),
+        playerRoleGenders: Object.fromEntries(
+          Object.entries(board.playerRoleGenders || {}).filter(([roleName]) => nextNameSet.has(roleName))
+        ),
+      };
+    });
+  };
+
   const actorRoleKindByName = () => new Map(formData.actorRoles.map(role => [role.name, role.role_kind || 'dm']));
+  const actorRoleGenderByName = () => new Map(formData.actorRoles.map(role => [role.name, role.gender || '']));
+  const playerRoleGenderByName = () => new Map(formData.playerRoles.map(role => [role.name, role.gender || '']));
 
   const setDefaultBoard = (index: number) => {
     setFormData({
@@ -188,10 +229,33 @@ export default function ScriptManager() {
   const toggleBoardRole = (boardIndex: number, roleName: string) => {
     const board = formData.boards[boardIndex];
     if (!board) return;
-    const roles = board.roles.includes(roleName)
-      ? board.roles.filter(name => name !== roleName)
-      : [...board.roles, roleName];
-    updateBoard(boardIndex, { roles });
+    const checked = board.roles.includes(roleName);
+    const roles = checked ? board.roles.filter(name => name !== roleName) : [...board.roles, roleName];
+    const actorRoleGenders = { ...(board.actorRoleGenders || {}) };
+    if (checked) delete actorRoleGenders[roleName];
+    updateBoard(boardIndex, { roles, actorRoleGenders });
+  };
+
+  const updateBoardActorGender = (boardIndex: number, roleName: string, gender: string) => {
+    const board = formData.boards[boardIndex];
+    if (!board) return;
+    updateBoard(boardIndex, { actorRoleGenders: { ...(board.actorRoleGenders || {}), [roleName]: gender } });
+  };
+
+  const toggleBoardPlayerRole = (boardIndex: number, roleName: string) => {
+    const board = formData.boards[boardIndex];
+    if (!board) return;
+    const checked = board.playerRoles.includes(roleName);
+    const playerRoles = checked ? board.playerRoles.filter(name => name !== roleName) : [...board.playerRoles, roleName];
+    const playerRoleGenders = { ...(board.playerRoleGenders || {}) };
+    if (checked) delete playerRoleGenders[roleName];
+    updateBoard(boardIndex, { playerRoles, playerRoleGenders });
+  };
+
+  const updateBoardPlayerGender = (boardIndex: number, roleName: string, gender: string) => {
+    const board = formData.boards[boardIndex];
+    if (!board) return;
+    updateBoard(boardIndex, { playerRoleGenders: { ...(board.playerRoleGenders || {}), [roleName]: gender } });
   };
 
   // 批量添加玩家角色
@@ -205,9 +269,11 @@ export default function ScriptManager() {
       .map(name => ({ name, gender: '未指定', role_kind: 'dm' }));
     
     if (newRoles.length > 0) {
+      const nextPlayerRoles = [...formData.playerRoles, ...newRoles];
       setFormData({
         ...formData,
-        playerRoles: [...formData.playerRoles, ...newRoles]
+        playerRoles: nextPlayerRoles,
+        boards: syncBoardsForPlayerRoles(formData.boards, nextPlayerRoles),
       });
       setBatchPlayerRoles('');
     }
@@ -262,6 +328,8 @@ const handleSubmit = async (e: React.FormEvent) => {
       return;
     }
     const roleKindMap = actorRoleKindByName();
+    const actorGenderMap = actorRoleGenderByName();
+    const playerGenderMap = playerRoleGenderByName();
     
     const data = {
       name: formData.name.trim(),
@@ -280,7 +348,15 @@ const handleSubmit = async (e: React.FormEvent) => {
         notes: board.notes.trim() || null,
         is_default: board.isDefault,
         sort_order: index,
-        roles: board.roles.map(roleName => ({ role_name: roleName, role_kind: roleKindMap.get(roleName) || 'dm' })),
+        roles: board.roles.map(roleName => ({
+          role_name: roleName,
+          gender: board.actorRoleGenders?.[roleName] || actorGenderMap.get(roleName) || '',
+          role_kind: roleKindMap.get(roleName) || 'dm',
+        })),
+        player_roles: board.playerRoles.map(roleName => ({
+          role_name: roleName,
+          gender: board.playerRoleGenders?.[roleName] || playerGenderMap.get(roleName) || '',
+        })),
       })),
     };
 
@@ -592,17 +668,16 @@ const handleSubmit = async (e: React.FormEvent) => {
                         }}
                         className="px-2 py-1 border border-gray-300 rounded text-sm"
                       >
-                        <option value="未指定">未指定</option>
-                        <option value="男">男</option>
-                        <option value="女">女</option>
-                        <option value="其他">其他</option>
+                        {GENDER_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
                       </select>
                       <button
                         type="button"
                         onClick={() => {
+                          const nextPlayerRoles = formData.playerRoles.filter((_, i) => i !== index);
                           setFormData({
                             ...formData,
-                            playerRoles: formData.playerRoles.filter((_, i) => i !== index)
+                            playerRoles: nextPlayerRoles,
+                            boards: syncBoardsForPlayerRoles(formData.boards, nextPlayerRoles),
                           });
                         }}
                         className="text-red-500 hover:text-red-700 text-sm"
@@ -660,6 +735,17 @@ const handleSubmit = async (e: React.FormEvent) => {
                       >
                         {ROLE_KIND_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
                       </select>
+                      <select
+                        value={role.gender || '未指定'}
+                        onChange={(e) => {
+                          const newRoles = [...formData.actorRoles];
+                          newRoles[index] = { ...role, gender: e.target.value };
+                          setFormData({ ...formData, actorRoles: newRoles });
+                        }}
+                        className="px-2 py-1 border border-gray-300 rounded text-sm"
+                      >
+                        {GENDER_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
+                      </select>
                       <button
                         type="button"
                         onClick={() => {
@@ -698,6 +784,9 @@ const handleSubmit = async (e: React.FormEvent) => {
                         notes: '',
                         isDefault: false,
                         roles: formData.actorRoles.map(role => role.name),
+                        actorRoleGenders: {},
+                        playerRoles: formData.playerRoles.map(role => role.name),
+                        playerRoleGenders: {},
                       },
                     ],
                   })}
@@ -760,22 +849,67 @@ const handleSubmit = async (e: React.FormEvent) => {
                         rows={2}
                         placeholder="备注，例如：双 DM 标准开法 / 单 DM 精简开法"
                       />
-                      <div className="mt-3 flex flex-wrap gap-2">
+                      <div className="mt-3">
+                        <p className="mb-2 text-xs font-medium text-purple-700">本板子演绎角色版本</p>
+                        <div className="flex flex-wrap gap-2">
                         {formData.actorRoles.map(role => {
                           const checked = board.roles.includes(role.name);
                           return (
-                            <button
+                            <span
                               key={`${boardIndex}-${role.name}`}
-                              type="button"
-                              onClick={() => toggleBoardRole(boardIndex, role.name)}
-                              className={`rounded-full border px-3 py-1 text-sm ${checked ? 'border-purple-300 bg-purple-100 text-purple-700' : 'border-gray-200 bg-white text-gray-500 hover:border-purple-200'}`}
+                              className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-sm ${checked ? 'border-purple-300 bg-purple-100 text-purple-700' : 'border-gray-200 bg-white text-gray-500 hover:border-purple-200'}`}
                             >
-                              {role.name} · {roleKindLabel(role.role_kind)}
-                            </button>
+                              <button type="button" onClick={() => toggleBoardRole(boardIndex, role.name)}>
+                                {role.name} · {roleKindLabel(role.role_kind)}
+                              </button>
+                              {checked && (
+                                <select
+                                  value={board.actorRoleGenders?.[role.name] || role.gender || '未指定'}
+                                  onChange={(e) => updateBoardActorGender(boardIndex, role.name, e.target.value)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="rounded border border-purple-200 bg-white px-1 py-0.5 text-xs text-purple-700"
+                                >
+                                  {GENDER_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
+                                </select>
+                              )}
+                            </span>
                           );
                         })}
+                        </div>
                       </div>
-                      <p className="mt-2 text-xs text-gray-500">本板子需要 {board.roles.length} 个演绎角色</p>
+                      <div className="mt-3">
+                        <p className="mb-2 text-xs font-medium text-blue-700">本板子玩家角色条件</p>
+                        {formData.playerRoles.length === 0 ? (
+                          <p className="text-xs text-gray-400">先添加候选玩家角色，再配置玩家条件。</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-2">
+                            {formData.playerRoles.map(role => {
+                              const checked = board.playerRoles.includes(role.name);
+                              return (
+                                <span
+                                  key={`${boardIndex}-player-${role.name}`}
+                                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-sm ${checked ? 'border-blue-300 bg-blue-100 text-blue-700' : 'border-gray-200 bg-white text-gray-500 hover:border-blue-200'}`}
+                                >
+                                  <button type="button" onClick={() => toggleBoardPlayerRole(boardIndex, role.name)}>
+                                    {role.name}
+                                  </button>
+                                  {checked && (
+                                    <select
+                                      value={board.playerRoleGenders?.[role.name] || role.gender || '未指定'}
+                                      onChange={(e) => updateBoardPlayerGender(boardIndex, role.name, e.target.value)}
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="rounded border border-blue-200 bg-white px-1 py-0.5 text-xs text-blue-700"
+                                    >
+                                      {GENDER_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
+                                    </select>
+                                  )}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                      <p className="mt-2 text-xs text-gray-500">本板子需要 {board.roles.length} 个演绎角色；玩家条件 {board.playerRoles.length} 个</p>
                     </div>
                   ))}
                 </div>
@@ -897,16 +1031,27 @@ const handleSubmit = async (e: React.FormEvent) => {
                     <div key={board.id || index} className="rounded-lg border border-purple-100 bg-purple-50/60 p-3">
                       <div className="flex items-center justify-between gap-3">
                         <p className="font-medium text-purple-900">{board.name || (index === 0 ? '标准版' : `板子${index + 1}`)}{board.is_default ? ' · 标准' : ''}</p>
-                        <span className="text-xs text-purple-700">{board.roles?.length || 0} 个演绎角色</span>
+                        <span className="text-xs text-purple-700">
+                          开本{board.player_count || selectedScript.player_count || '-'}人 · {board.roles?.length || 0} 个演绎角色
+                        </span>
                       </div>
                       {board.notes && <p className="mt-1 text-xs text-purple-700">{board.notes}</p>}
                       <div className="mt-2 flex flex-wrap gap-2">
                         {(board.roles || []).map(role => (
                           <span key={role.role_name} className="rounded-full border border-purple-100 bg-white px-2 py-1 text-xs text-purple-700">
-                            {role.role_name} · {roleKindLabel(role.role_kind)}
+                            {role.role_name}{role.gender && role.gender !== '未指定' ? `(${role.gender})` : ''} · {roleKindLabel(role.role_kind)}
                           </span>
                         ))}
                       </div>
+                      {(board.player_roles || []).length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {(board.player_roles || []).map(role => (
+                            <span key={`player-${role.role_name}`} className="rounded-full border border-blue-100 bg-white px-2 py-1 text-xs text-blue-700">
+                              玩家：{role.role_name}{role.gender && role.gender !== '未指定' ? `(${role.gender})` : ''}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

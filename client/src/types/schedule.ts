@@ -1,4 +1,4 @@
-import type { Schedule, ScheduleActor } from '../types';
+import type { Schedule, ScheduleActor, ScriptBoardRole } from '../types';
 
 /** 角色信息 */
 export interface RoleInfo {
@@ -60,7 +60,8 @@ export interface ScheduleFormData {
   roomId: string;
   scriptId: string;
   scriptBoardId: string;
-  actorRoleSelection: string[];
+  actorRoleSelection: ScriptBoardRole[];
+  playerRoleSelection: ScriptBoardRole[];
   date: string;
   startTime: string;
   customerName: string;

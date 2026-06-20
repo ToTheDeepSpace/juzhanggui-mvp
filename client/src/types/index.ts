@@ -6,6 +6,7 @@ export interface Role {
 
 export interface ScriptBoardRole {
   role_name: string;
+  gender?: string;
   role_kind?: string;
 }
 
@@ -17,6 +18,7 @@ export interface ScriptBoard {
   is_default?: boolean;
   sort_order?: number;
   roles: ScriptBoardRole[];
+  player_roles?: ScriptBoardRole[];
 }
 
 export interface Room {
@@ -120,6 +122,7 @@ export interface Schedule {
   script_board_id?: string | null;
   script_board_name?: string | null;
   actor_role_selection?: ScriptBoardRole[];
+  player_role_selection?: ScriptBoardRole[];
   script_duration: number;
   start_time: string;
   end_time: string;

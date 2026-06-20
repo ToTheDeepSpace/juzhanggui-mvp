@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { ScheduleWithDetails, ScheduleFormData, SelectedActor } from '../types/schedule';
-import type { Script, Actor, Room } from '../types';
+import type { Script, Actor, Room, ScriptBoardRole } from '../types';
 import CheckInRoles from './CheckInRoles';
 
 interface ScheduleCalendarModalProps {
@@ -45,49 +45,87 @@ export default function ScheduleCalendarModal({
   const allActorRoleDetails = selectedScript?.actor_role_details?.length
     ? selectedScript.actor_role_details
     : (selectedScript?.actor_roles || []).map(name => ({ name, role_kind: 'dm' }));
-  const roleSetKey = (roles: string[]) => roles.slice().map(role => role.trim().toLowerCase()).filter(Boolean).sort().join('|');
-  const boardRoles = (board: any) => (board?.roles || []).map((role: any) => role.role_name).filter(Boolean);
+  const parseDisplayRole = (roleText: string): ScriptBoardRole => {
+    const match = String(roleText || '').match(/^(.+?)\s*\((.*?)\)$/);
+    return {
+      role_name: match ? match[1].trim() : String(roleText || '').trim(),
+      gender: match?.[2]?.trim() || '',
+    };
+  };
+  const normalizeRoleVersion = (role: any): ScriptBoardRole => ({
+    role_name: String(typeof role === 'string' ? role : role?.role_name || role?.name || '').trim(),
+    gender: typeof role === 'string' ? '' : role?.gender || '',
+    role_kind: typeof role === 'string' ? undefined : role?.role_kind || role?.kind,
+  });
+  const roleVersionLabel = (role: ScriptBoardRole) => `${role.role_name}${role.gender && role.gender !== '未指定' ? `(${role.gender})` : ''}`;
+  const roleSetKey = (roles: any[]) => roles
+    .map(normalizeRoleVersion)
+    .filter(role => role.role_name)
+    .map(role => `${role.role_name.trim().toLowerCase()}@${role.gender || ''}`)
+    .sort()
+    .join('|');
+  const boardRoles = (board: any) => (board?.roles || []).map(normalizeRoleVersion).filter(role => role.role_name);
+  const boardPlayerRoles = (board: any) => (board?.player_roles || []).map(normalizeRoleVersion).filter(role => role.role_name);
   const defaultBoard = selectedScript?.boards?.find(board => board.is_default) || selectedScript?.boards?.[0] || null;
-  const fallbackRoleSelection = defaultBoard ? boardRoles(defaultBoard) : allActorRoleDetails.map(role => role.name);
-  const selectedRoleNames = formData.actorRoleSelection.length ? formData.actorRoleSelection : fallbackRoleSelection;
-  const selectedRoleKey = roleSetKey(selectedRoleNames);
-  const matchedBoard = selectedScript?.boards?.find(board => roleSetKey(boardRoles(board)) === selectedRoleKey) || null;
-  const actorRoles = selectedRoleNames.filter(roleName => allActorRoleDetails.some(role => role.name === roleName));
+  const allPlayerRoleDetails = (selectedScript?.player_roles || []).map(parseDisplayRole).filter(role => role.role_name);
+  const fallbackActorRoleSelection = defaultBoard
+    ? boardRoles(defaultBoard)
+    : allActorRoleDetails.map(role => ({ role_name: role.name, gender: role.gender || '', role_kind: role.role_kind || 'dm' }));
+  const fallbackPlayerRoleSelection = defaultBoard ? boardPlayerRoles(defaultBoard) : allPlayerRoleDetails;
+  const selectedActorRoleVersions = (formData.actorRoleSelection || []).length
+    ? formData.actorRoleSelection.map(normalizeRoleVersion).filter(role => role.role_name)
+    : fallbackActorRoleSelection;
+  const selectedPlayerRoleVersions = (formData.playerRoleSelection || []).length
+    ? formData.playerRoleSelection.map(normalizeRoleVersion).filter(role => role.role_name)
+    : fallbackPlayerRoleSelection;
+  const selectedRoleKey = roleSetKey(selectedActorRoleVersions);
+  const selectedPlayerRoleKey = roleSetKey(selectedPlayerRoleVersions);
+  const matchedBoard = selectedScript?.boards?.find(board => roleSetKey(boardRoles(board)) === selectedRoleKey && roleSetKey(boardPlayerRoles(board)) === selectedPlayerRoleKey) || null;
+  const actorRoles = selectedActorRoleVersions.map(role => role.role_name).filter(roleName => allActorRoleDetails.some(role => role.name === roleName));
+  const actorVersionByName = new Map(selectedActorRoleVersions.map(role => [role.role_name, role]));
 
-  const rowsForRoles = (roleNames: string[]) => {
+  const rowsForRoles = (roleVersions: ScriptBoardRole[]) => {
     const existingByRole = new Map(selectedActors.map(row => [row.roleName, row]));
-    return roleNames.map(roleName => ({
-      actorId: existingByRole.get(roleName)?.actorId || '',
-      roleName,
-      startOffset: existingByRole.get(roleName)?.startOffset || 0,
-      duration: existingByRole.get(roleName)?.duration || selectedScript?.duration || 240,
+    return roleVersions.map(role => ({
+      actorId: existingByRole.get(role.role_name)?.actorId || '',
+      roleName: role.role_name,
+      startOffset: existingByRole.get(role.role_name)?.startOffset || 0,
+      duration: existingByRole.get(role.role_name)?.duration || selectedScript?.duration || 240,
     }));
   };
 
-  const selectRoleNames = (roleNames: string[]) => {
-    const nextKey = roleSetKey(roleNames);
-    const board = selectedScript?.boards?.find(item => roleSetKey(boardRoles(item)) === nextKey) || null;
+  const selectRoleVersions = (roleVersions: ScriptBoardRole[], playerRoleVersions = selectedPlayerRoleVersions) => {
+    const normalizedActorRoles = roleVersions.map(normalizeRoleVersion).filter(role => role.role_name);
+    const normalizedPlayerRoles = playerRoleVersions.map(normalizeRoleVersion).filter(role => role.role_name);
+    const nextKey = roleSetKey(normalizedActorRoles);
+    const nextPlayerKey = roleSetKey(normalizedPlayerRoles);
+    const board = selectedScript?.boards?.find(item => roleSetKey(boardRoles(item)) === nextKey && roleSetKey(boardPlayerRoles(item)) === nextPlayerKey) || null;
     onFormDataChange({
       ...formData,
-      actorRoleSelection: roleNames,
+      actorRoleSelection: normalizedActorRoles,
+      playerRoleSelection: normalizedPlayerRoles,
       scriptBoardId: board?.id || '',
     });
-    onSelectedActorsChange(rowsForRoles(roleNames));
+    onSelectedActorsChange(rowsForRoles(normalizedActorRoles));
   };
 
   const handleScriptChange = (scriptId: string) => {
     const script = scripts.find(item => item.id === scriptId);
     const board = script?.boards?.find(item => item.is_default) || script?.boards?.[0] || null;
-    const roleNames = board
+    const roleVersions = board
       ? boardRoles(board)
-      : (script?.actor_role_details?.length ? script.actor_role_details.map(role => role.name) : script?.actor_roles || []);
+      : (script?.actor_role_details?.length
+        ? script.actor_role_details.map(role => ({ role_name: role.name, gender: role.gender || '', role_kind: role.role_kind || 'dm' }))
+        : (script?.actor_roles || []).map(parseDisplayRole));
+    const playerRoleVersions = board ? boardPlayerRoles(board) : (script?.player_roles || []).map(parseDisplayRole);
     onFormDataChange({
       ...formData,
       scriptId,
       scriptBoardId: board?.id || '',
-      actorRoleSelection: roleNames,
+      actorRoleSelection: roleVersions,
+      playerRoleSelection: playerRoleVersions,
     });
-    onSelectedActorsChange(roleNames.map(roleName => ({ actorId: '', roleName, startOffset: 0, duration: script?.duration || 240 })));
+    onSelectedActorsChange(roleVersions.map(role => ({ actorId: '', roleName: role.role_name, startOffset: 0, duration: script?.duration || 240 })));
   };
 
   // 冲突检测
@@ -265,30 +303,42 @@ export default function ScheduleCalendarModal({
                     <button
                       key={board.id || index}
                       type="button"
-                      onClick={() => selectRoleNames(boardRoles(board))}
+                      onClick={() => selectRoleVersions(boardRoles(board), boardPlayerRoles(board))}
                       className={`rounded-lg border px-3 py-1.5 text-sm ${matchedBoard?.id === board.id ? 'border-purple-300 bg-purple-100 text-purple-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
                     >
-                      {board.name || (index === 0 ? '标准版' : `板子${index + 1}`)}
+                      {board.name || (index === 0 ? '标准版' : `板子${index + 1}`)} · 开本{board.player_count || selectedScript.player_count || '-'}人
                     </button>
                   ))}
                 </div>
               ) : null}
+              {selectedPlayerRoleVersions.length > 0 && (
+                <div className="mb-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
+                  <p className="mb-1 text-xs font-medium text-blue-700">本板子玩家角色条件</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedPlayerRoleVersions.map(role => (
+                      <span key={`${role.role_name}-${role.gender || ''}`} className="rounded-full bg-white px-2 py-0.5 text-xs text-blue-700">
+                        {roleVersionLabel(role)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="flex flex-wrap gap-2">
                 {allActorRoleDetails.map(role => {
-                  const checked = selectedRoleNames.includes(role.name);
+                  const checked = selectedActorRoleVersions.some(selectedRole => selectedRole.role_name === role.name);
                   return (
                     <button
                       key={role.name}
                       type="button"
                       onClick={() => {
                         const next = checked
-                          ? selectedRoleNames.filter(name => name !== role.name)
-                          : [...selectedRoleNames, role.name];
-                        selectRoleNames(next);
+                          ? selectedActorRoleVersions.filter(selectedRole => selectedRole.role_name !== role.name)
+                          : [...selectedActorRoleVersions, { role_name: role.name, gender: role.gender || '', role_kind: role.role_kind || 'dm' }];
+                        selectRoleVersions(next);
                       }}
                       className={`rounded-full border px-3 py-1.5 text-sm ${checked ? 'border-purple-300 bg-purple-100 text-purple-700' : 'border-gray-200 bg-white text-gray-500 hover:border-purple-200'}`}
                     >
-                      {role.name}
+                      {role.name}{role.gender && role.gender !== '未指定' ? `(${role.gender})` : ''}
                     </button>
                   );
                 })}
@@ -347,7 +397,7 @@ export default function ScheduleCalendarModal({
                         : '请先选择剧本'}
                     </option>
                     {availableRoles.map((role) => (
-                      <option key={role} value={role}>{role}</option>
+                      <option key={role} value={role}>{roleVersionLabel(actorVersionByName.get(role) || { role_name: role })}</option>
                     ))}
                   </select>
                   <button

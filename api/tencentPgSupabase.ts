@@ -86,6 +86,7 @@ const RELATIONS: Record<string, Record<string, RelationConfig>> = {
   },
   script_boards: {
     script_board_actor_roles: { table: 'script_board_actor_roles', localKey: 'id', foreignKey: 'board_id', many: true },
+    script_board_player_roles: { table: 'script_board_player_roles', localKey: 'id', foreignKey: 'board_id', many: true },
   },
   evaluations: {
     schedules: { table: 'schedules', localKey: 'schedule_id', foreignKey: 'id' },

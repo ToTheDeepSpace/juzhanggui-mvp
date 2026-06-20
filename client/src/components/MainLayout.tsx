@@ -865,16 +865,25 @@ function TemplateCenterPanel() {
                       <div key={board.id || index} className="rounded-lg border border-purple-100 bg-purple-50 px-3 py-2">
                         <div className="flex items-center justify-between gap-3">
                           <p className="text-sm font-semibold text-purple-900">{board.name || (index === 0 ? '标准版' : `板子${index + 1}`)}{board.is_default ? ' · 标准' : ''}</p>
-                          <p className="text-xs text-purple-700">{board.roles?.length || 0} 个演绎角色</p>
+                          <p className="text-xs text-purple-700">开本{board.player_count || selectedTemplate.player_count || '-'}人 · {board.roles?.length || 0} 个演绎角色</p>
                         </div>
                         {board.notes && <p className="mt-1 text-xs text-purple-700">{board.notes}</p>}
                         <div className="mt-2 flex flex-wrap gap-2">
                           {(board.roles || []).map(role => (
                             <span key={role.role_name} className="rounded-full bg-white px-2 py-1 text-xs text-purple-700">
-                              {role.role_name}
+                              {role.role_name}{role.gender && role.gender !== '未指定' ? `(${role.gender})` : ''}
                             </span>
                           ))}
                         </div>
+                        {(board.player_roles || []).length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {(board.player_roles || []).map(role => (
+                              <span key={`player-${role.role_name}`} className="rounded-full bg-white px-2 py-1 text-xs text-blue-700">
+                                玩家：{role.role_name}{role.gender && role.gender !== '未指定' ? `(${role.gender})` : ''}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
