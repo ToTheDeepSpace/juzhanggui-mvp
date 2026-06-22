@@ -11,11 +11,17 @@ interface PublicSchedule {
   store_name?: string;
   store_city?: string;
   room_name?: string;
+  room_photo_url?: string | null;
   start_time: string;
   end_time: string;
   status: string;
+  computed_car_sequence?: number | null;
   note?: string | null;
   player_roles?: { name: string; gender?: string }[];
+  actors?: { actor_name: string; actor_photo_url?: string | null; role_name?: string | null }[];
+  external_npcs?: { role_name: string; provided_by?: string | null; note?: string | null; photo_url?: string | null; count_as_player?: boolean }[];
+  lingqi_commissions?: { display_name: string; avatar_url?: string | null; role_name?: string | null; service_type?: string; status?: string }[];
+  rating_summary?: { carRating: number | null; carEvaluationCount: number; scriptAvgRating: number | null; scriptEvaluationCount: number };
   taken_roles?: string[];
   pending_request_count?: number;
 }
@@ -48,6 +54,13 @@ function getPlayerToken() {
   if (!localStorage.getItem('player_info')) return '';
   return localStorage.getItem('player_auth_token') || '';
 }
+
+const serviceTypeText: Record<string, string> = {
+  experience_support: '体验协助',
+  npc_support: 'NPC 协助',
+  review_support: '复盘协助',
+  host_support: '主持辅助',
+};
 
 export default function PlayerJoinSchedulePage() {
   const { scheduleId } = useParams();
@@ -218,13 +231,85 @@ export default function PlayerJoinSchedulePage() {
           <h1 className="mt-2 text-2xl font-bold text-slate-900">{schedule?.script_name || '排期加载中'}</h1>
           {schedule && (
             <div className="mt-4 space-y-2 text-sm text-slate-600">
+              {schedule.room_photo_url && (
+                <img src={schedule.room_photo_url} alt="" className="mb-3 h-40 w-full rounded-xl object-cover border border-slate-100" />
+              )}
               <p>{schedule.store_name || '店家'}{schedule.store_city ? ` · ${schedule.store_city}` : ''}</p>
               <p>{format(parseISO(schedule.start_time), 'yyyy年M月d日 EEEE HH:mm', { locale: zhCN })}</p>
               <p>{schedule.room_name || '房间待定'} · {schedule.status}</p>
+              {schedule.computed_car_sequence ? <p>本店同本第 {schedule.computed_car_sequence} 车</p> : null}
+              {schedule.rating_summary && (
+                <p>
+                  本车评分 {schedule.rating_summary.carRating ?? '暂无'}（{schedule.rating_summary.carEvaluationCount} 条）
+                  · 本剧本总评分 {schedule.rating_summary.scriptAvgRating ?? '暂无'}（{schedule.rating_summary.scriptEvaluationCount} 条）
+                </p>
+              )}
               {schedule.pending_request_count ? <p>已有 {schedule.pending_request_count} 个申请等待确认</p> : null}
             </div>
           )}
         </section>
+
+        {schedule && ((schedule.actors?.length || 0) > 0 || (schedule.external_npcs?.length || 0) > 0 || (schedule.lingqi_commissions?.length || 0) > 0) && (
+          <section className="rounded-2xl bg-white shadow-sm border border-slate-100 p-5 space-y-4">
+            {(schedule.actors?.length || 0) > 0 && (
+              <div>
+                <h2 className="font-bold text-slate-900">本车演绎</h2>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  {schedule.actors?.map((actor, index) => (
+                    <div key={`${actor.actor_name}-${index}`} className="flex items-center gap-2 rounded-xl bg-slate-50 p-2">
+                      {actor.actor_photo_url ? (
+                        <img src={actor.actor_photo_url} alt="" className="h-10 w-10 rounded-full object-cover" />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-50 text-sm font-bold text-indigo-600">{actor.actor_name.slice(0, 1)}</div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-slate-900">{actor.actor_name}</p>
+                        {actor.role_name && <p className="truncate text-xs text-slate-500">{actor.role_name}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(schedule.external_npcs?.length || 0) > 0 && (
+              <div>
+                <h2 className="font-bold text-slate-900">外带 NPC</h2>
+                <div className="mt-3 space-y-2">
+                  {schedule.external_npcs?.map((npc, index) => (
+                    <div key={`${npc.role_name}-${index}`} className="flex items-center gap-3 rounded-xl bg-amber-50 p-3">
+                      {npc.photo_url && <img src={npc.photo_url} alt="" className="h-12 w-12 rounded-lg object-cover" />}
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{npc.role_name}</p>
+                        <p className="text-xs text-amber-700">{npc.provided_by ? `${npc.provided_by} 自带` : '玩家自带'}{npc.count_as_player ? ' · 计入人数' : ''}</p>
+                        {npc.note && <p className="mt-1 text-xs text-slate-500">{npc.note}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {(schedule.lingqi_commissions?.length || 0) > 0 && (
+              <div>
+                <h2 className="font-bold text-slate-900">本车灵契师</h2>
+                <div className="mt-3 space-y-2">
+                  {schedule.lingqi_commissions?.map((master, index) => (
+                    <div key={`${master.display_name}-${index}`} className="flex items-center gap-3 rounded-xl bg-indigo-50 p-3">
+                      {master.avatar_url ? (
+                        <img src={master.avatar_url} alt="" className="h-12 w-12 rounded-full object-cover" />
+                      ) : (
+                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-sm font-bold text-indigo-600">{master.display_name.slice(0, 1)}</div>
+                      )}
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{master.display_name}</p>
+                        <p className="text-xs text-indigo-700">{serviceTypeText[master.service_type || 'experience_support'] || '体验协助'}{master.role_name ? ` · ${master.role_name}` : ''}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
 
         <section className="rounded-2xl bg-white shadow-sm border border-slate-100 p-5 space-y-4">
           <div>

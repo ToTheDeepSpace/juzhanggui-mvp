@@ -25,6 +25,7 @@ export interface Room {
   id: string;
   name: string;
   capacity: number;
+  photo_url?: string | null;
 }
 
 export interface Actor {
@@ -32,7 +33,8 @@ export interface Actor {
   name: string;
   phone?: string;
   gender?: '男' | '女' | '可男可女' | string | null;
-  lc_profile?: { id: string; display_name: string; role_type?: string; identity_roles?: string[]; verified_dm?: boolean } | null;
+  photo_url?: string | null;
+  lc_profile?: { id: string; display_name: string; role_type?: string; identity_roles?: string[]; verified_dm?: boolean; avatar?: string | null } | null;
 }
 
 export interface Script {
@@ -117,12 +119,15 @@ export interface Schedule {
   id: string;
   room_id: string;
   room_name: string;
+  room_photo_url?: string | null;
   script_id: string;
   script_name: string;
   script_board_id?: string | null;
   script_board_name?: string | null;
   actor_role_selection?: ScriptBoardRole[];
   player_role_selection?: ScriptBoardRole[];
+  store_car_sequence?: number | null;
+  computed_car_sequence?: number | null;
   script_duration: number;
   start_time: string;
   end_time: string;
@@ -152,6 +157,7 @@ export interface ScheduleActor {
   schedule_id: string;
   actor_id: string;
   actor_name: string;
+  actor_photo_url?: string | null;
   role_name: string;
   start_time: string;
   end_time: string;

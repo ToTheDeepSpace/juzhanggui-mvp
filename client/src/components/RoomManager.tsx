@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 import type { Room } from '../types';
+import { uploadImageFile } from '../utils/imageUpload';
 
 export default function RoomManager() {
   const { get, post, put, del, loading } = useApi();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [editingRoom, setEditingRoom] = useState<Room | null>(null);
-  const [formData, setFormData] = useState({ name: '', capacity: '' });
+  const [formData, setFormData] = useState({ name: '', capacity: '', photoUrl: '' });
   const [showForm, setShowForm] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     loadRooms();
@@ -27,6 +29,7 @@ export default function RoomManager() {
     const data = {
       name: formData.name,
       capacity: parseInt(formData.capacity) || 0,
+      photoUrl: formData.photoUrl || null,
     };
 
     let result;
@@ -41,7 +44,7 @@ export default function RoomManager() {
       return;
     }
 
-    setFormData({ name: '', capacity: '' });
+    setFormData({ name: '', capacity: '', photoUrl: '' });
     setEditingRoom(null);
     setShowForm(false);
     loadRooms();
@@ -49,8 +52,22 @@ export default function RoomManager() {
 
   const handleEdit = (room: Room) => {
     setEditingRoom(room);
-    setFormData({ name: room.name, capacity: String(room.capacity) });
+    setFormData({ name: room.name, capacity: String(room.capacity), photoUrl: room.photo_url || '' });
     setShowForm(true);
+  };
+
+  const handleUpload = async (file?: File | null) => {
+    if (!file) return;
+    setUploading(true);
+    setErrorMsg(null);
+    try {
+      const url = await uploadImageFile(file, 'room');
+      setFormData(data => ({ ...data, photoUrl: url }));
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : '图片上传失败');
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -67,7 +84,7 @@ export default function RoomManager() {
         <button
           onClick={() => {
             setEditingRoom(null);
-            setFormData({ name: '', capacity: '' });
+            setFormData({ name: '', capacity: '', photoUrl: '' });
             setShowForm(true);
           }}
           className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors"
@@ -85,7 +102,7 @@ export default function RoomManager() {
       {showForm && (
         <div className="mb-6 p-4 bg-gray-50 rounded-lg">
           <h3 className="font-medium mb-4">{editingRoom ? '编辑房间' : '添加房间'}</h3>
-          <form onSubmit={handleSubmit} className="flex gap-4 items-end">
+          <form onSubmit={handleSubmit} className="flex flex-wrap gap-4 items-end">
             <div className="flex-1">
               <label className="block text-sm font-medium text-gray-700 mb-1">房间名称</label>
               <input
@@ -106,6 +123,20 @@ export default function RoomManager() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 placeholder="8"
               />
+            </div>
+            <div className="w-48">
+              <label className="block text-sm font-medium text-gray-700 mb-1">房间照片</label>
+              <div className="flex items-center gap-2">
+                {formData.photoUrl ? (
+                  <img src={formData.photoUrl} alt="" className="h-10 w-14 rounded object-cover border border-gray-200" />
+                ) : (
+                  <div className="h-10 w-14 rounded border border-dashed border-gray-300 bg-white" />
+                )}
+                <label className="cursor-pointer rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                  {uploading ? '上传中' : '上传'}
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => handleUpload(e.target.files?.[0])} disabled={uploading} />
+                </label>
+              </div>
             </div>
             <div className="flex gap-2">
               <button
@@ -130,6 +161,9 @@ export default function RoomManager() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {rooms.map((room) => (
           <div key={room.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+            {room.photo_url && (
+              <img src={room.photo_url} alt="" className="mb-3 h-32 w-full rounded-lg object-cover border border-gray-100" />
+            )}
             <div className="flex justify-between items-start">
               <div>
                 <h3 className="font-medium text-lg text-gray-800">{room.name}</h3>

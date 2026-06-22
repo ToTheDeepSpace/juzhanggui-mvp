@@ -465,6 +465,162 @@ function clockTime(input: unknown, fallback: string): string {
   return /^\d{2}:\d{2}$/.test(value) ? value : fallback;
 }
 
+function boolValue(input: unknown): boolean {
+  return input === true || input === 'true' || input === 1 || input === '1';
+}
+
+function saveUploadDataUrl(dataUrl: unknown, folder: string) {
+  const value = cleanText(dataUrl, 25 * 1024 * 1024);
+  const match = value.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) throw new Error('请上传 png、jpg 或 webp 图片');
+  const contentType = match[1] === 'image/jpg' ? 'image/jpeg' : match[1];
+  const ext = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
+  const buffer = Buffer.from(match[2], 'base64');
+  if (buffer.length > 8 * 1024 * 1024) throw new Error('图片不能超过 8MB');
+  const safeFolder = cleanText(folder, 80).replace(/[^a-z0-9/_-]/gi, '') || 'misc';
+  const day = new Date().toISOString().slice(0, 10);
+  const dir = path.join(LOCAL_UPLOAD_ROOT, safeFolder, day);
+  fs.mkdirSync(dir, { recursive: true });
+  const name = `${Date.now()}-${crypto.randomUUID()}.${ext}`;
+  fs.writeFileSync(path.join(dir, name), buffer);
+  return `/uploads/${safeFolder}/${day}/${name}`;
+}
+
+function scheduleSortKey(row: any) {
+  return `${row.scheduled_date || ''}T${row.start_time || '00:00'}#${row.created_at || ''}#${row.id || ''}`;
+}
+
+async function computeCarSequenceMap(tenantId: string, scheduleRows: any[]) {
+  const scriptIds = Array.from(new Set(scheduleRows.map(row => cleanText(row?.script_id, 80)).filter(Boolean)));
+  const map = new Map<string, number>();
+  if (!scriptIds.length) return map;
+  const { data } = await supabase.from('schedules')
+    .select('id, script_id, scheduled_date, start_time, created_at, store_car_sequence')
+    .eq('tenant_id', tenantId)
+    .in('script_id', scriptIds);
+  const byScript = new Map<string, any[]>();
+  for (const row of data || []) {
+    const list = byScript.get(row.script_id) || [];
+    list.push(row);
+    byScript.set(row.script_id, list);
+  }
+  for (const list of byScript.values()) {
+    list.sort((a, b) => scheduleSortKey(a).localeCompare(scheduleSortKey(b)));
+    list.forEach((row, index) => {
+      map.set(row.id, Number(row.store_car_sequence || 0) || index + 1);
+    });
+  }
+  return map;
+}
+
+async function loadScheduleExternalData(tenantId: string, scheduleIds: string[]) {
+  const empty = { npcMap: new Map<string, any[]>(), commissionMap: new Map<string, any[]>() };
+  if (!scheduleIds.length) return empty;
+  const [{ data: npcs }, { data: commissions }] = await Promise.all([
+    supabase.from('schedule_external_npcs').select('*').eq('tenant_id', tenantId).in('schedule_id', scheduleIds).order('created_at', { ascending: true }),
+    supabase.from('schedule_lingqi_commissions').select('*').eq('tenant_id', tenantId).in('schedule_id', scheduleIds).order('created_at', { ascending: true }),
+  ]);
+  const npcMap = new Map<string, any[]>();
+  const commissionMap = new Map<string, any[]>();
+  for (const row of npcs || []) {
+    const list = npcMap.get(row.schedule_id) || [];
+    list.push(row);
+    npcMap.set(row.schedule_id, list);
+  }
+  for (const row of commissions || []) {
+    const list = commissionMap.get(row.schedule_id) || [];
+    list.push(row);
+    commissionMap.set(row.schedule_id, list);
+  }
+  return { npcMap, commissionMap };
+}
+
+async function buildScheduleRatingSummary(tenantId: string, schedule: any) {
+  const { data: scriptSchedules } = await supabase.from('schedules')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('script_id', schedule.script_id);
+  const scheduleIds = (scriptSchedules || []).map((row: any) => row.id);
+  if (!scheduleIds.length) return { carRating: null, carEvaluationCount: 0, scriptAvgRating: null, scriptEvaluationCount: 0 };
+  const { data: allEvaluations } = await supabase.from('evaluations')
+    .select('schedule_id, rating')
+    .in('schedule_id', scheduleIds);
+  const carRatings = (allEvaluations || [])
+    .filter((row: any) => row.schedule_id === schedule.id)
+    .map((row: any) => Number(row.rating || 0))
+    .filter((rating: number) => rating > 0);
+  const scriptRatings = (allEvaluations || [])
+    .map((row: any) => Number(row.rating || 0))
+    .filter((rating: number) => rating > 0);
+  const avg = (ratings: number[]) => ratings.length ? Math.round((ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length) * 10) / 10 : null;
+  return {
+    carRating: avg(carRatings),
+    carEvaluationCount: carRatings.length,
+    scriptAvgRating: avg(scriptRatings),
+    scriptEvaluationCount: scriptRatings.length,
+  };
+}
+
+function externalNpcPayload(row: any) {
+  return {
+    role_name: cleanText(row?.role_name, 120),
+    provided_by: cleanText(row?.provided_by, 120) || null,
+    note: cleanText(row?.note, 500) || null,
+    photo_url: cleanText(row?.photo_url || row?.photoUrl, 500) || null,
+    count_as_player: boolValue(row?.count_as_player ?? row?.countAsPlayer),
+    count_in_settlement: boolValue(row?.count_in_settlement ?? row?.countInSettlement),
+  };
+}
+
+function lingqiCommissionPayload(row: any) {
+  return {
+    lc_profile_id: cleanText(row?.lc_profile_id || row?.lcProfileId, 80) || null,
+    display_name: cleanText(row?.display_name || row?.displayName, 120),
+    avatar_url: cleanText(row?.avatar_url || row?.avatarUrl, 500) || null,
+    role_name: cleanText(row?.role_name || row?.roleName, 120) || null,
+    service_type: cleanText(row?.service_type || row?.serviceType, 40) || 'experience_support',
+    status: ['pending', 'invited', 'accepted', 'confirmed', 'cancelled'].includes(cleanText(row?.status, 30)) ? cleanText(row?.status, 30) : 'pending',
+    note: cleanText(row?.note, 500) || null,
+  };
+}
+
+async function saveScheduleExternalData(req: any, scheduleId: string, tenantId: string, body: any) {
+  if (Array.isArray(body.externalNpcs) || Array.isArray(body.external_npcs)) {
+    const source = Array.isArray(body.externalNpcs) ? body.externalNpcs : body.external_npcs;
+    await supabase.from('schedule_external_npcs').delete().eq('tenant_id', tenantId).eq('schedule_id', scheduleId);
+    const rows = source
+      .map(externalNpcPayload)
+      .filter((row: any) => row.role_name)
+      .map((row: any) => ({ ...row, tenant_id: tenantId, schedule_id: scheduleId }));
+    if (rows.length) await supabase.from('schedule_external_npcs').insert(rows);
+  }
+
+  if (Array.isArray(body.lingqiCommissions) || Array.isArray(body.lingqi_commissions)) {
+    const source = Array.isArray(body.lingqiCommissions) ? body.lingqiCommissions : body.lingqi_commissions;
+    await supabase.from('schedule_lingqi_commissions').delete().eq('tenant_id', tenantId).eq('schedule_id', scheduleId);
+    const profileIds = source.map((row: any) => cleanText(row?.lc_profile_id || row?.lcProfileId, 80)).filter(Boolean);
+    const profilesById = new Map<string, any>();
+    if (profileIds.length) {
+      const { data: profiles } = await supabase.from('lc_profiles')
+        .select('id, display_name, avatar, role_type, identity_roles, verified_dm, is_visible, is_banned')
+        .in('id', profileIds);
+      for (const profile of profiles || []) profilesById.set(profile.id, profile);
+    }
+    const rows = source.map((raw: any) => {
+      const row = lingqiCommissionPayload(raw);
+      const profile = row.lc_profile_id ? profilesById.get(row.lc_profile_id) : null;
+      return {
+        ...row,
+        display_name: row.display_name || profile?.display_name || '灵契师',
+        avatar_url: row.avatar_url || profile?.avatar || null,
+        tenant_id: tenantId,
+        schedule_id: scheduleId,
+      };
+    }).filter((row: any) => row.display_name);
+    if (rows.length) await supabase.from('schedule_lingqi_commissions').insert(rows);
+  }
+}
+
 function signedMoneyCents(input: unknown): number {
   const value = Number(input || 0);
   if (!Number.isFinite(value)) return 0;
@@ -2306,6 +2462,21 @@ app.post('/api/script-templates/:id/import', async (req: any, res: any) => {
   } catch (e) { res.status(500).json(err(e)); }
 });
 
+app.post('/api/uploads/images', async (req: any, res: any) => {
+  try {
+    const kind = cleanText(req.body?.kind, 40);
+    const allowedFolders: Record<string, string> = {
+      room: 'rooms',
+      actor: 'actors',
+      external_npc: 'external-npcs',
+      positive_feedback: 'positive-feedback',
+    };
+    const folder = allowedFolders[kind] || 'misc';
+    const url = saveUploadDataUrl(req.body?.dataUrl, folder);
+    res.json(ok({ url }));
+  } catch (e) { res.status(400).json(err(e)); }
+});
+
 // ===== Rooms =====
 app.get('/api/rooms', async (req: any, res: any) => {
   try {
@@ -2319,7 +2490,13 @@ app.post('/api/rooms', async (req: any, res: any) => {
     const { name, capacity } = req.body;
     if (!name) return res.status(400).json(err(new Error('请填写房间名称')));
     const tenantId = currentTenantId(req);
-    const [data] = await db.insert(rooms).values({ name, capacity: capacity || 0, tenant_id: tenantId, status: 'active' }).returning();
+    const [data] = await db.insert(rooms).values({
+      name,
+      capacity: capacity || 0,
+      photo_url: cleanText(req.body?.photoUrl || req.body?.photo_url, 500) || null,
+      tenant_id: tenantId,
+      status: 'active',
+    }).returning();
     res.json(ok({ id: data?.id }));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -2328,6 +2505,7 @@ app.put('/api/rooms/:id', async (req: any, res: any) => {
     const fields: any = {};
     if (req.body.name !== undefined) fields.name = cleanText(req.body.name, 80);
     if (req.body.capacity !== undefined) fields.capacity = parseInt(req.body.capacity, 10) || 0;
+    if (req.body.photoUrl !== undefined || req.body.photo_url !== undefined) fields.photo_url = cleanText(req.body.photoUrl || req.body.photo_url, 500) || null;
     if (req.body.status !== undefined) fields.status = cleanText(req.body.status, 30);
     if (!Object.keys(fields).length) return res.json(ok());
     await db.update(rooms).set(fields).where(and(eq(rooms.id, req.params.id), eq(rooms.tenant_id, currentTenantId(req))));
@@ -2364,14 +2542,25 @@ app.post('/api/actors', async (req: any, res: any) => {
   try {
     const { name, phone } = req.body;
     if (!name) return res.status(400).json(err(new Error('请填写卡司姓名')));
-    const { data } = await supabase.from('actors').insert({ name, phone: phone || null, gender: actorGender(req.body?.gender), tenant_id: currentTenantId(req) }).select().single();
+    const { data } = await supabase.from('actors').insert({
+      name,
+      phone: phone || null,
+      gender: actorGender(req.body?.gender),
+      photo_url: cleanText(req.body?.photoUrl || req.body?.photo_url, 500) || null,
+      tenant_id: currentTenantId(req),
+    }).select().single();
     const lcProfile = await ensureLingqiDmProfileForActor(data || { name, phone });
     res.json(ok({ id: data?.id, lc_profile: lcProfile }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 app.put('/api/actors/:id', async (req: any, res: any) => {
   try {
-    await supabase.from('actors').update({ name: req.body.name, phone: req.body.phone || null, gender: actorGender(req.body?.gender) }).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
+    const fields: any = {};
+    if (req.body.name !== undefined) fields.name = cleanText(req.body.name, 80);
+    if (req.body.phone !== undefined) fields.phone = cleanText(req.body.phone, 40) || null;
+    if (req.body.gender !== undefined) fields.gender = actorGender(req.body?.gender);
+    if (req.body.photoUrl !== undefined || req.body.photo_url !== undefined) fields.photo_url = cleanText(req.body.photoUrl || req.body.photo_url, 500) || null;
+    await supabase.from('actors').update(fields).eq('id', req.params.id).eq('tenant_id', currentTenantId(req));
     const lcProfile = await ensureLingqiDmProfileForActor({ name: req.body.name, phone: req.body.phone });
     res.json(ok({ lc_profile: lcProfile }));
   }
@@ -2648,16 +2837,65 @@ app.delete('/api/scripts/:id', async (req: any, res: any) => {
   catch (e) { res.status(500).json(err(e)); }
 });
 
+app.get('/api/lingqi/commission-masters', async (req: any, res: any) => {
+  try {
+    const q = cleanText(req.query.q, 80).toLowerCase();
+    const { data: serviceRows, error: serviceErr } = await supabase.from('lc_services')
+      .select('creator_id')
+      .eq('is_active', true);
+    if (serviceErr && isMissingRelationError(serviceErr, 'lc_services')) return res.json(ok([]));
+    if (serviceErr) throw serviceErr;
+    const profileIds = Array.from(new Set((serviceRows || []).map((row: any) => row.creator_id).filter(Boolean)));
+    if (!profileIds.length) return res.json(ok([]));
+    const { data: profiles, error } = await supabase.from('lc_profiles')
+      .select('id, display_name, avatar, city, available_cities, role_type, identity_roles, verified_dm, is_visible, is_banned')
+      .in('id', profileIds)
+      .eq('is_visible', true)
+      .order('verified_dm', { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    const items = (profiles || [])
+      .filter((profile: any) => !profile.is_banned)
+      .filter((profile: any) => {
+        if (!q) return true;
+        const text = [
+          profile.display_name,
+          profile.city,
+          ...(Array.isArray(profile.available_cities) ? profile.available_cities : []),
+          profile.role_type,
+          ...(Array.isArray(profile.identity_roles) ? profile.identity_roles : []),
+        ].join(' ').toLowerCase();
+        return text.includes(q);
+      })
+      .map((profile: any) => ({
+        id: profile.id,
+        display_name: profile.display_name || '灵契师',
+        avatar: profile.avatar || null,
+        city: profile.city || null,
+        available_cities: Array.isArray(profile.available_cities) ? profile.available_cities : [],
+        role_type: profile.role_type || null,
+        identity_roles: Array.isArray(profile.identity_roles) ? profile.identity_roles : [],
+        verified_dm: Boolean(profile.verified_dm),
+      }));
+    res.json(ok(items));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
 // ===== Schedules =====
 app.get('/api/schedules', async (req: any, res: any) => {
   try {
-    let q = supabase.from('schedules').select('*, scripts(name), rooms(name), script_boards(name)').eq('tenant_id', currentTenantId(req)).order('scheduled_date');
+    const tenantId = currentTenantId(req);
+    let q = supabase.from('schedules').select('*, scripts(name), rooms(name, photo_url), script_boards(name)').eq('tenant_id', tenantId).order('scheduled_date');
     if (req.query.startDate) q = q.gte('scheduled_date', req.query.startDate);
     if (req.query.endDate) q = q.lte('scheduled_date', req.query.endDate);
     const { data } = await q;
+    const scheduleRows = data || [];
+    const sequenceMap = await computeCarSequenceMap(tenantId, scheduleRows);
+    const externalData = await loadScheduleExternalData(tenantId, scheduleRows.map((row: any) => row.id));
     // 获取每个排期的上车、定金、结算和评价摘要
-    const schedulesWithCheckins = await Promise.all((data || []).map(async (s: any) => {
+    const schedulesWithCheckins = await Promise.all(scheduleRows.map(async (s: any) => {
       const { data: checkins } = await supabase.from('checkins').select('*').eq('schedule_id', s.id);
+      const { data: actors } = await supabase.from('schedule_actors').select('*, actors(name, photo_url)').eq('schedule_id', s.id);
       const customerIds = Array.from(new Set((checkins || []).map((c: any) => c.customer_id).filter(Boolean)));
       const { data: customers } = customerIds.length ? await supabase.from('customers').select('id, name, phone, lock_dm_credits').in('id', customerIds).eq('tenant_id', currentTenantId(req)) : { data: [] as any[] };
       const customerMap = new Map<string, any>((customers || []).map((c: any) => [c.id, c]));
@@ -2676,7 +2914,8 @@ app.get('/api/schedules', async (req: any, res: any) => {
       const normalizedPlayerRoles = (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
       const normalizedActorRoles = selectedActorRoles.roles.map((r: any) => ({ name: r.role_name, gender: r.gender || '', role_kind: r.role_kind || 'dm' }));
       return {
-        ...s, script_name: s.scripts?.name, room_name: s.rooms?.name,
+        ...s, script_name: s.scripts?.name, room_name: s.rooms?.name, room_photo_url: s.rooms?.photo_url || null,
+        computed_car_sequence: sequenceMap.get(s.id) || null,
         script_board_name: s.script_boards?.name || selectedActorRoles.board?.name || null,
         script_board_id: selectedActorRoles.board?.id || s.script_board_id || null,
         actor_role_selection: selectedActorRoles.roles,
@@ -2684,8 +2923,15 @@ app.get('/api/schedules', async (req: any, res: any) => {
         start_time: `${s.scheduled_date}T${s.start_time}`,
         end_time: `${s.scheduled_date}T${s.end_time}`,
         checkins: checkinsWithCustomer,
+        actors: (actors || []).map((row: any) => ({
+          ...row,
+          actor_name: row.actors?.name || row.actor_name,
+          actor_photo_url: row.actors?.photo_url || null,
+        })),
         player_roles: normalizedPlayerRoles,
         actor_roles: normalizedActorRoles,
+        external_npcs: externalData.npcMap.get(s.id) || [],
+        lingqi_commissions: externalData.commissionMap.get(s.id) || [],
         pending_request_count: pendingRequestCount || 0,
         positive_feedback_count: positiveFeedbackCount || 0,
         progress_summary: buildScheduleProgress(s, checkinsWithCustomer, normalizedPlayerRoles, evaluations || []),
@@ -2696,12 +2942,13 @@ app.get('/api/schedules', async (req: any, res: any) => {
 });
 app.get('/api/schedules/:id', async (req: any, res: any) => {
   try {
-    const { data: s } = await supabase.from('schedules').select('*, scripts(name), rooms(name), script_boards(name)').eq('id', req.params.id).eq('tenant_id', currentTenantId(req)).single();
+    const tenantId = currentTenantId(req);
+    const { data: s } = await supabase.from('schedules').select('*, scripts(name), rooms(name, photo_url), script_boards(name)').eq('id', req.params.id).eq('tenant_id', tenantId).single();
     if (!s) return res.status(404).json(err(new Error('不存在')));
-    const { data: actors } = await supabase.from('schedule_actors').select('*, actors(name)').eq('schedule_id', req.params.id);
+    const { data: actors } = await supabase.from('schedule_actors').select('*, actors(name, photo_url)').eq('schedule_id', req.params.id);
     const { data: checkins } = await supabase.from('checkins').select('*').eq('schedule_id', req.params.id);
     const customerIds = Array.from(new Set((checkins || []).map((c: any) => c.customer_id).filter(Boolean)));
-    const { data: customers } = customerIds.length ? await supabase.from('customers').select('id, name, phone, lock_dm_credits').in('id', customerIds).eq('tenant_id', currentTenantId(req)) : { data: [] as any[] };
+    const { data: customers } = customerIds.length ? await supabase.from('customers').select('id, name, phone, lock_dm_credits').in('id', customerIds).eq('tenant_id', tenantId) : { data: [] as any[] };
     const customerMap = new Map<string, any>((customers || []).map((c: any) => [c.id, c]));
     const checkinsWithCustomer = (checkins || []).map((c: any) => ({ ...c, customer: customerMap.get(c.customer_id) || null, lock_dm_credits: customerMap.get(c.customer_id)?.lock_dm_credits || 0 }));
     const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
@@ -2710,11 +2957,22 @@ app.get('/api/schedules/:id', async (req: any, res: any) => {
     const { count: positiveFeedbackCount } = await supabase.from('jzg_positive_feedbacks')
       .select('*', { count: 'exact', head: true })
       .eq('schedule_id', req.params.id)
-      .eq('tenant_id', currentTenantId(req));
+      .eq('tenant_id', tenantId);
+    const sequenceMap = await computeCarSequenceMap(tenantId, [s]);
+    const externalData = await loadScheduleExternalData(tenantId, [s.id]);
     const normalizedPlayerRoles = (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' }));
     const normalizedActorRoles = selectedActorRoles.roles.map((r: any) => ({ name: r.role_name, gender: r.gender || '', role_kind: r.role_kind || 'dm' }));
     res.json(ok({
-      ...s, script_name: s.scripts?.name, room_name: s.rooms?.name, actors: actors || [],
+      ...s,
+      script_name: s.scripts?.name,
+      room_name: s.rooms?.name,
+      room_photo_url: s.rooms?.photo_url || null,
+      computed_car_sequence: sequenceMap.get(s.id) || null,
+      actors: (actors || []).map((row: any) => ({
+        ...row,
+        actor_name: row.actors?.name || row.actor_name,
+        actor_photo_url: row.actors?.photo_url || null,
+      })),
       script_board_name: s.script_boards?.name || selectedActorRoles.board?.name || null,
       script_board_id: selectedActorRoles.board?.id || s.script_board_id || null,
       actor_role_selection: selectedActorRoles.roles,
@@ -2722,6 +2980,8 @@ app.get('/api/schedules/:id', async (req: any, res: any) => {
       checkins: checkinsWithCustomer,
       player_roles: normalizedPlayerRoles,
       actor_roles: normalizedActorRoles,
+      external_npcs: externalData.npcMap.get(s.id) || [],
+      lingqi_commissions: externalData.commissionMap.get(s.id) || [],
       positive_feedback_count: positiveFeedbackCount || 0,
       progress_summary: buildScheduleProgress(s, checkinsWithCustomer, normalizedPlayerRoles, evaluations || []),
       start_time: `${s.scheduled_date}T${s.start_time}`,
@@ -2732,7 +2992,7 @@ app.get('/api/schedules/:id', async (req: any, res: any) => {
 app.get('/api/schedules/:id/public', async (req: any, res: any) => {
   try {
     const { data: s } = await supabase.from('schedules')
-      .select('id,tenant_id,script_id,room_id,scheduled_date,start_time,end_time,status,player_count,scripts(name),rooms(name)')
+      .select('id,tenant_id,script_id,room_id,scheduled_date,start_time,end_time,status,player_count,store_car_sequence,created_at,scripts(name),rooms(name, photo_url)')
       .eq('id', req.params.id)
       .single();
     if (!s) return res.status(404).json(err(new Error('不存在')));
@@ -2740,10 +3000,30 @@ app.get('/api/schedules/:id/public', async (req: any, res: any) => {
     const { data: roles } = await supabase.from('script_roles').select('role_name, gender, start_offset, end_offset').eq('script_id', s.script_id).order('start_offset');
     const { data: playerRoles } = await supabase.from('script_player_roles').select('role_name, gender').eq('script_id', s.script_id);
     const { data: checkins } = await supabase.from('checkins').select('role').eq('schedule_id', req.params.id).not('role', 'is', null);
+    const { data: actors } = await supabase.from('schedule_actors').select('role_name, actors(name, photo_url)').eq('schedule_id', req.params.id);
     const { count: pendingRequestCount } = await supabase.from('jzg_carpool_join_requests')
       .select('*', { count: 'exact', head: true })
       .eq('schedule_id', req.params.id)
       .eq('status', 'pending');
+    const sequenceMap = await computeCarSequenceMap(s.tenant_id, [s]);
+    const externalData = await loadScheduleExternalData(s.tenant_id, [s.id]);
+    const ratingSummary = await buildScheduleRatingSummary(s.tenant_id, s);
+    const publicNpcs = (externalData.npcMap.get(s.id) || []).map((row: any) => ({
+      role_name: row.role_name,
+      provided_by: row.provided_by || null,
+      note: row.note || null,
+      photo_url: row.photo_url || null,
+      count_as_player: !!row.count_as_player,
+    }));
+    const commissions = (externalData.commissionMap.get(s.id) || [])
+      .filter((row: any) => ['accepted', 'confirmed'].includes(cleanText(row.status, 30)))
+      .map((row: any) => ({
+        display_name: row.display_name,
+        avatar_url: row.avatar_url || null,
+        role_name: row.role_name || null,
+        service_type: row.service_type || 'experience_support',
+        status: row.status,
+      }));
     res.json(ok({
       id: s.id,
       script_id: s.script_id,
@@ -2751,13 +3031,24 @@ app.get('/api/schedules/:id/public', async (req: any, res: any) => {
       scheduled_date: s.scheduled_date,
       status: publicScheduleStatus(s.status),
       player_count: s.player_count,
+      store_car_sequence: s.store_car_sequence || null,
+      computed_car_sequence: sequenceMap.get(s.id) || null,
       note: null,
       script_name: s.scripts?.name,
       room_name: s.rooms?.name,
+      room_photo_url: s.rooms?.photo_url || null,
       store_name: store?.name,
       store_city: store?.city,
       roles: roles || [],
       player_roles: (playerRoles || []).map((r: any) => ({ name: r.role_name, gender: r.gender || '' })),
+      actors: (actors || []).map((row: any) => ({
+        role_name: row.role_name,
+        actor_name: row.actors?.name || '卡司',
+        actor_photo_url: row.actors?.photo_url || null,
+      })),
+      external_npcs: publicNpcs,
+      lingqi_commissions: commissions,
+      rating_summary: ratingSummary,
       taken_roles: (checkins || []).map((c: any) => c.role),
       checkins: (checkins || []).map((c: any) => ({ role: c.role, gender: '' })),
       pending_request_count: pendingRequestCount || 0,
@@ -2803,6 +3094,7 @@ app.post('/api/schedules', async (req: any, res: any) => {
       actor_role_selection: roleSelection.roles,
       player_role_selection: roleSelection.playerRoles,
       scheduled_date: dateStr, start_time: startTimeStr, end_time: endTimeStr,
+      store_car_sequence: Number(d.storeCarSequence || d.store_car_sequence || 0) || null,
       status: d.status || 'pending', player_count: Number(d.playerCount || script.player_count || 0),
       customer_name: d.customerName || null,
       customer_phone: d.customerPhone || null,
@@ -2810,6 +3102,7 @@ app.post('/api/schedules', async (req: any, res: any) => {
       tenant_id: tenantId
     }).select().single();
     if (d.actors && d.actors.length) await supabase.from('schedule_actors').insert(d.actors.map((a: any) => ({ schedule_id: data!.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime })));
+    await saveScheduleExternalData(req, data!.id, tenantId, d);
     let lingqiSync: any = { ok: true, skipped: true, reason: 'not_carpool' };
     try {
       lingqiSync = await syncScheduleToLingqiCarpool(data!.id, tenantId);
@@ -2873,6 +3166,7 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
     if (d.customerPhone !== undefined) fields.customer_phone = d.customerPhone;
     if (d.playerCount !== undefined) fields.player_count = d.playerCount;
     if (d.note !== undefined) fields.note = d.note;
+    if (d.storeCarSequence !== undefined || d.store_car_sequence !== undefined) fields.store_car_sequence = Number(d.storeCarSequence || d.store_car_sequence || 0) || null;
     await supabase.from('schedules').update(fields).eq('id', req.params.id).eq('tenant_id', tenantId);
     if (d.actors) {
       const actorsValid = await validateTenantActors(req, res, d.actors.map((a: any) => a.actorId));
@@ -2887,6 +3181,7 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
       await supabase.from('schedule_actors').delete().eq('schedule_id', req.params.id);
       if (d.actors.length) await supabase.from('schedule_actors').insert(d.actors.map((a: any) => ({ schedule_id: req.params.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime })));
     }
+    await saveScheduleExternalData(req, req.params.id, tenantId, d);
     let lingqiSync: any = { ok: true, skipped: true, reason: 'not_carpool' };
     try {
       lingqiSync = await syncScheduleToLingqiCarpool(req.params.id, tenantId);
@@ -3893,17 +4188,18 @@ app.get('/api/evaluations', async (req: any, res: any) => {
   try {
     const tenantId = currentTenantId(req);
     const { data: schedules, error: scheduleErr } = await supabase.from('schedules')
-      .select('id, script_id, room_id, scheduled_date, start_time, end_time, status')
+      .select('id, script_id, room_id, scheduled_date, start_time, end_time, status, store_car_sequence, created_at')
       .eq('tenant_id', tenantId)
       .order('scheduled_date', { ascending: false })
       .limit(500);
     if (scheduleErr) throw scheduleErr;
     const scheduleRows = schedules || [];
-    if (!scheduleRows.length) return res.json(ok({ evaluations: [], stats: { total: 0, avgRating: null }, scriptStats: [] }));
+    if (!scheduleRows.length) return res.json(ok({ evaluations: [], stats: { total: 0, avgRating: null }, scriptStats: [], carStats: [] }));
 
     const scheduleIds = scheduleRows.map((schedule: any) => schedule.id);
     const scriptIds = Array.from(new Set(scheduleRows.map((schedule: any) => cleanText(schedule.script_id, 80)).filter(Boolean)));
     const roomIds = Array.from(new Set(scheduleRows.map((schedule: any) => cleanText(schedule.room_id, 80)).filter(Boolean)));
+    const sequenceMap = await computeCarSequenceMap(tenantId, scheduleRows);
 
     const [{ data: evaluations, error: evalErr }, { data: scripts, error: scriptErr }, { data: rooms, error: roomErr }] = await Promise.all([
       supabase.from('evaluations').select('*').in('schedule_id', scheduleIds).order('created_at', { ascending: false }).limit(500),
@@ -3928,6 +4224,7 @@ app.get('/api/evaluations', async (req: any, res: any) => {
           startTime: `${schedule.scheduled_date}T${schedule.start_time}`,
           endTime: `${schedule.scheduled_date}T${schedule.end_time}`,
           status: schedule.status,
+          computedCarSequence: sequenceMap.get(schedule.id) || null,
           scriptName: script?.name || '未知剧本',
           roomName: room?.name || null,
         } : null,
@@ -3948,6 +4245,31 @@ app.get('/api/evaluations', async (req: any, res: any) => {
       count: item.count,
       avgRating: item.ratings.length ? Math.round((item.ratings.reduce((a, b) => a + b, 0) / item.ratings.length) * 10) / 10 : null,
     })).sort((a, b) => b.count - a.count);
+    const byCar = new Map<string, { scheduleId: string; scriptName: string; roomName?: string | null; carSequence: number | null; startTime: string; ratings: number[]; count: number }>();
+    for (const item of rows) {
+      if (!item.schedule?.id) continue;
+      const current = byCar.get(item.schedule.id) || {
+        scheduleId: item.schedule.id,
+        scriptName: item.schedule.scriptName || '未知剧本',
+        roomName: item.schedule.roomName || null,
+        carSequence: item.schedule.computedCarSequence || null,
+        startTime: item.schedule.startTime,
+        ratings: [],
+        count: 0,
+      };
+      current.count += 1;
+      if (Number(item.rating) > 0) current.ratings.push(Number(item.rating));
+      byCar.set(item.schedule.id, current);
+    }
+    const carStats = Array.from(byCar.values()).map(item => ({
+      scheduleId: item.scheduleId,
+      scriptName: item.scriptName,
+      roomName: item.roomName,
+      carSequence: item.carSequence,
+      startTime: item.startTime,
+      count: item.count,
+      avgRating: item.ratings.length ? Math.round((item.ratings.reduce((a, b) => a + b, 0) / item.ratings.length) * 10) / 10 : null,
+    })).sort((a, b) => String(b.startTime || '').localeCompare(String(a.startTime || '')));
 
     res.json(ok({
       evaluations: rows,
@@ -3956,6 +4278,7 @@ app.get('/api/evaluations', async (req: any, res: any) => {
         avgRating: ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10 : null,
       },
       scriptStats,
+      carStats,
     }));
   } catch (e) { res.status(500).json(err(e)); }
 });

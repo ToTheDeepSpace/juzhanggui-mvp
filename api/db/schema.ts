@@ -26,6 +26,7 @@ export const rooms = pgTable('rooms', {
   name: text('name'),
   capacity: integer('capacity'),
   hourly_cost: numeric('hourly_cost'),
+  photo_url: text('photo_url'),
   status: text('status'),
   created_at: timestamp('created_at', { withTimezone: true }),
 });

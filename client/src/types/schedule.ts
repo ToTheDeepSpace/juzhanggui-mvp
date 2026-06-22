@@ -48,6 +48,8 @@ export interface ScheduleWithDetails extends Schedule {
   actors?: ScheduleActor[];
   player_roles?: RoleInfo[];
   actor_roles?: RoleInfo[];
+  external_npcs?: ScheduleExternalNpc[];
+  lingqi_commissions?: ScheduleLingqiCommission[];
   checkin_count?: number;
   checkins?: CheckinInfo[];
   pending_request_count?: number;
@@ -60,6 +62,7 @@ export interface ScheduleFormData {
   roomId: string;
   scriptId: string;
   scriptBoardId: string;
+  storeCarSequence: string;
   actorRoleSelection: ScriptBoardRole[];
   playerRoleSelection: ScriptBoardRole[];
   date: string;
@@ -68,6 +71,8 @@ export interface ScheduleFormData {
   customerPhone: string;
   playerCount: string;
   note: string;
+  externalNpcs: ScheduleExternalNpc[];
+  lingqiCommissions: ScheduleLingqiCommission[];
 }
 
 /** 已选卡司行 */
@@ -76,6 +81,38 @@ export interface SelectedActor {
   roleName: string;
   startOffset: number;
   duration: number;
+}
+
+export interface ScheduleExternalNpc {
+  id?: string;
+  role_name: string;
+  provided_by?: string | null;
+  note?: string | null;
+  photo_url?: string | null;
+  count_as_player?: boolean;
+  count_in_settlement?: boolean;
+}
+
+export interface ScheduleLingqiCommission {
+  id?: string;
+  lc_profile_id?: string | null;
+  display_name: string;
+  avatar_url?: string | null;
+  role_name?: string | null;
+  service_type?: string;
+  status?: 'pending' | 'invited' | 'accepted' | 'confirmed' | 'cancelled' | string;
+  note?: string | null;
+}
+
+export interface LingqiCommissionMaster {
+  id: string;
+  display_name: string;
+  avatar?: string | null;
+  city?: string | null;
+  available_cities?: string[];
+  role_type?: string | null;
+  identity_roles?: string[];
+  verified_dm?: boolean;
 }
 
 /** 签到角色 */

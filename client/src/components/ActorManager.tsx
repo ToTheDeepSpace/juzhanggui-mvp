@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 import type { Actor, Script, ActorSkill } from '../types';
+import { uploadImageFile } from '../utils/imageUpload';
 
 const LINGQI_SITE_URL = (import.meta.env.VITE_LINGQI_SITE_URL || 'https://lingqi.jusichen.com').replace(/\/$/, '');
 const ROLE_KIND_LABEL: Record<string, string> = {
@@ -29,8 +30,9 @@ export default function ActorManager() {
   const [actorSkills, setActorSkills] = useState<ActorSkill[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [showSkillModal, setShowSkillModal] = useState(false);
-  const [formData, setFormData] = useState({ name: '', phone: '', gender: '' });
+  const [formData, setFormData] = useState({ name: '', phone: '', gender: '', photoUrl: '' });
   const [editingActor, setEditingActor] = useState<Actor | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [selectedScript, setSelectedScript] = useState('');
   const [selectedRole, setSelectedRole] = useState('');
   const [selectedRoleType, setSelectedRoleType] = useState('dm');
@@ -77,21 +79,34 @@ export default function ActorManager() {
     } else {
       await post('/actors', formData);
     }
-    setFormData({ name: '', phone: '', gender: '' });
+    setFormData({ name: '', phone: '', gender: '', photoUrl: '' });
     setShowForm(false);
     loadActors();
   };
 
   const handleEdit = (actor: Actor) => {
     setEditingActor(actor);
-    setFormData({ name: actor.name, phone: actor.phone || '', gender: actor.gender || '' });
+    setFormData({ name: actor.name, phone: actor.phone || '', gender: actor.gender || '', photoUrl: actor.photo_url || actor.lc_profile?.avatar || '' });
     setShowForm(true);
   };
 
   const handleCancelEdit = () => {
     setEditingActor(null);
-    setFormData({ name: '', phone: '', gender: '' });
+    setFormData({ name: '', phone: '', gender: '', photoUrl: '' });
     setShowForm(false);
+  };
+
+  const handleUpload = async (file?: File | null) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const url = await uploadImageFile(file, 'actor');
+      setFormData(data => ({ ...data, photoUrl: url }));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '图片上传失败');
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -186,7 +201,7 @@ export default function ActorManager() {
         <button
           onClick={() => {
             setEditingActor(null);
-            setFormData({ name: '', phone: '', gender: '' });
+            setFormData({ name: '', phone: '', gender: '', photoUrl: '' });
             setShowForm(true);
           }}
           className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors"
@@ -198,7 +213,7 @@ export default function ActorManager() {
       {showForm && (
         <div className="mb-6 p-4 bg-gray-50 rounded-lg">
           <h3 className="font-medium mb-4">{editingActor ? '编辑卡司' : '添加卡司'}</h3>
-          <form onSubmit={handleSubmit} className="flex gap-4 items-end">
+          <form onSubmit={handleSubmit} className="flex flex-wrap gap-4 items-end">
             <div className="flex-1">
               <label className="block text-sm font-medium text-gray-700 mb-1">姓名</label>
               <input
@@ -233,6 +248,20 @@ export default function ActorManager() {
                 <option value="可男可女">可男可女</option>
               </select>
             </div>
+            <div className="w-48">
+              <label className="block text-sm font-medium text-gray-700 mb-1">照片</label>
+              <div className="flex items-center gap-2">
+                {formData.photoUrl ? (
+                  <img src={formData.photoUrl} alt="" className="h-10 w-10 rounded-full object-cover border border-gray-200" />
+                ) : (
+                  <div className="h-10 w-10 rounded-full border border-dashed border-gray-300 bg-white" />
+                )}
+                <label className="cursor-pointer rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                  {uploading ? '上传中' : '上传'}
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => handleUpload(e.target.files?.[0])} disabled={uploading} />
+                </label>
+              </div>
+            </div>
             <div className="flex gap-2">
               <button
                 type="submit"
@@ -257,7 +286,15 @@ export default function ActorManager() {
         {actors.map((actor) => (
           <div key={actor.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
             <div className="flex justify-between items-start">
-              <div>
+              <div className="flex gap-3">
+                {(actor.photo_url || actor.lc_profile?.avatar) ? (
+                  <img src={actor.photo_url || actor.lc_profile?.avatar || ''} alt="" className="h-12 w-12 rounded-full object-cover border border-gray-100" />
+                ) : (
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-purple-50 text-sm font-bold text-purple-600">
+                    {actor.name.slice(0, 1)}
+                  </div>
+                )}
+                <div>
                 <h3 className="font-medium text-lg text-gray-800">{actor.name}</h3>
                 {actor.gender && (
                   <span className="mt-1 inline-flex rounded-full bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700">{actor.gender}</span>
@@ -278,6 +315,7 @@ export default function ActorManager() {
                     邀请入驻灵契
                   </a>
                 )}
+                </div>
               </div>
               <div className="flex gap-2">
                 <button

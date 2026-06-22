@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 import type { Room, Actor, Script, StoreRecord } from '../types';
-import type { ScheduleWithDetails, ScheduleFormData, SelectedActor } from '../types/schedule';
+import type { ScheduleWithDetails, ScheduleFormData, SelectedActor, LingqiCommissionMaster } from '../types/schedule';
 import { format, addDays, parseISO } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 
@@ -135,6 +135,7 @@ export default function ScheduleCalendar() {
   const [scripts, setScripts] = useState<Script[]>([]);
   const [schedules, setSchedules] = useState<ScheduleWithDetails[]>([]);
   const [stores, setStores] = useState<StoreRecord[]>([]);
+  const [lingqiMasters, setLingqiMasters] = useState<LingqiCommissionMaster[]>([]);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [defaultDepositDraft, setDefaultDepositDraft] = useState('100');
   const [depositSettingMsg, setDepositSettingMsg] = useState('');
@@ -197,7 +198,7 @@ export default function ScheduleCalendar() {
   const [formData, setFormData] = useState<ScheduleFormData>({
     roomId: '', scriptId: '', scriptBoardId: '', actorRoleSelection: [], playerRoleSelection: [], date: format(new Date(), 'yyyy-MM-dd'),
     startTime: '14:00', customerName: '', customerPhone: '',
-    playerCount: '', note: '',
+    playerCount: '', note: '', storeCarSequence: '', externalNpcs: [], lingqiCommissions: [],
   });
   const [selectedActors, setSelectedActors] = useState<SelectedActor[]>([]);
 
@@ -218,15 +219,17 @@ export default function ScheduleCalendar() {
   }, []);
 
   const loadData = async () => {
-    const [roomsRes, actorsRes, scriptsRes, schedulesRes, storesRes] = await Promise.all([
+    const [roomsRes, actorsRes, scriptsRes, schedulesRes, storesRes, mastersRes] = await Promise.all([
       get<Room[]>('/rooms'), get<Actor[]>('/actors'),
       get<Script[]>('/scripts'), get<ScheduleWithDetails[]>('/schedules'),
       get<StoreRecord[]>('/stores'),
+      get<LingqiCommissionMaster[]>('/lingqi/commission-masters'),
     ]);
     if (roomsRes.success) setRooms(roomsRes.data || []);
     if (actorsRes.success) setActors(actorsRes.data || []);
     if (scriptsRes.success) setScripts(scriptsRes.data || []);
     if (schedulesRes.success) setSchedules(schedulesRes.data || []);
+    if (mastersRes.success) setLingqiMasters(mastersRes.data || []);
     if (storesRes.success) {
       const nextStores = storesRes.data || [];
       setStores(nextStores);
@@ -262,7 +265,7 @@ export default function ScheduleCalendar() {
     setEditingSchedule(null); setIsPendingMode(false);
     setFormData({
       roomId: '', scriptId: '', scriptBoardId: '', actorRoleSelection: [], playerRoleSelection: [], date: dateStr || format(new Date(), 'yyyy-MM-dd'),
-      startTime: '14:00', customerName: '', customerPhone: '', playerCount: '', note: '',
+      startTime: '14:00', customerName: '', customerPhone: '', playerCount: '', note: '', storeCarSequence: '', externalNpcs: [], lingqiCommissions: [],
     });
     setSelectedActors([]); setShowModal(true);
   };
@@ -290,6 +293,9 @@ export default function ScheduleCalendar() {
       date: format(startDateTime, 'yyyy-MM-dd'), startTime: format(startDateTime, 'HH:mm'),
       customerName: schedule.customer_name || '', customerPhone: schedule.customer_phone || '',
       playerCount: schedule.player_count ? String(schedule.player_count) : '', note: schedule.note || '',
+      storeCarSequence: schedule.store_car_sequence ? String(schedule.store_car_sequence) : '',
+      externalNpcs: schedule.external_npcs || [],
+      lingqiCommissions: schedule.lingqi_commissions || [],
     });
     setSelectedActors((schedule.actors || []).map(a => ({
       actorId: a.actor_id, roleName: a.role_name, startOffset: 0, duration: 240,
@@ -636,6 +642,9 @@ export default function ScheduleCalendar() {
       customerPhone: formData.customerPhone || undefined,
       playerCount: formData.playerCount ? parseInt(formData.playerCount) : undefined,
       note: formData.note || undefined,
+      storeCarSequence: formData.storeCarSequence ? parseInt(formData.storeCarSequence) : undefined,
+      externalNpcs: formData.externalNpcs,
+      lingqiCommissions: formData.lingqiCommissions,
       actors: selectedActors.map(sa => {
         const actorStart = new Date(startDateTime.getTime() + sa.startOffset * 60000);
         const actorEnd = new Date(actorStart.getTime() + sa.duration * 60000);
@@ -1204,7 +1213,12 @@ export default function ScheduleCalendar() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-gray-800">{format(sd, 'HH:mm')}-{format(ed, 'HH:mm')}</td>
-                    <td className="px-4 py-3 font-medium text-gray-900">{sc?.name || '未知剧本'}</td>
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-gray-900">{sc?.name || '未知剧本'}</p>
+                      {s.computed_car_sequence && (
+                        <p className="mt-1 text-xs text-indigo-600">本店第 {s.computed_car_sequence} 车</p>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-gray-600">{s.room_name || '-'}</td>
                     <td className="px-4 py-3">
                       <span className="text-sm">{s.player_count || '-'}人</span>
@@ -1235,6 +1249,7 @@ export default function ScheduleCalendar() {
         editingSchedule={editingSchedule}
         isPendingMode={isPendingMode}
         scripts={scripts} rooms={rooms} actors={actors}
+        lingqiMasters={lingqiMasters}
         formData={formData} selectedActors={selectedActors}
         loading={loading}
         onClose={() => setShowModal(false)}

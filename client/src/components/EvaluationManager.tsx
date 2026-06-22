@@ -12,6 +12,7 @@ interface EvaluationRow {
     roomName?: string | null;
     startTime: string;
     status: string;
+    computedCarSequence?: number | null;
   } | null;
 }
 
@@ -19,11 +20,12 @@ interface EvaluationData {
   evaluations: EvaluationRow[];
   stats: { total: number; avgRating: number | null };
   scriptStats: { scriptName: string; count: number; avgRating: number | null }[];
+  carStats: { scheduleId: string; scriptName: string; roomName?: string | null; carSequence?: number | null; startTime: string; count: number; avgRating: number | null }[];
 }
 
 export default function EvaluationManager() {
   const { get, loading } = useApi();
-  const [data, setData] = useState<EvaluationData>({ evaluations: [], stats: { total: 0, avgRating: null }, scriptStats: [] });
+  const [data, setData] = useState<EvaluationData>({ evaluations: [], stats: { total: 0, avgRating: null }, scriptStats: [], carStats: [] });
   const [message, setMessage] = useState('');
 
   const loadData = async () => {
@@ -81,18 +83,39 @@ export default function EvaluationManager() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4">
-        <section className="bg-white rounded-lg shadow p-5">
-          <h3 className="font-bold text-gray-900 mb-4">剧本评分</h3>
-          <div className="space-y-3">
-            {data.scriptStats.map(item => (
-              <div key={item.scriptName} className="rounded-lg border border-gray-100 p-3">
-                <p className="font-semibold text-gray-800">{item.scriptName}</p>
-                <p className="text-sm text-gray-500 mt-1">{item.count} 条 · 均分 {item.avgRating ?? '暂无'}</p>
-              </div>
-            ))}
-            {data.scriptStats.length === 0 && (
-              <p className="py-8 text-center text-sm text-gray-400">暂无剧本评分</p>
-            )}
+        <section className="space-y-4">
+          <div className="bg-white rounded-lg shadow p-5">
+            <h3 className="font-bold text-gray-900 mb-4">剧本总评分</h3>
+            <div className="space-y-3">
+              {data.scriptStats.map(item => (
+                <div key={item.scriptName} className="rounded-lg border border-gray-100 p-3">
+                  <p className="font-semibold text-gray-800">{item.scriptName}</p>
+                  <p className="text-sm text-gray-500 mt-1">{item.count} 条 · 均分 {item.avgRating ?? '暂无'}</p>
+                </div>
+              ))}
+              {data.scriptStats.length === 0 && (
+                <p className="py-8 text-center text-sm text-gray-400">暂无剧本评分</p>
+              )}
+            </div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-5">
+            <h3 className="font-bold text-gray-900 mb-4">按车评分</h3>
+            <div className="space-y-3">
+              {data.carStats.map(item => (
+                <div key={item.scheduleId} className="rounded-lg border border-indigo-100 p-3">
+                  <p className="font-semibold text-gray-800">{item.scriptName}</p>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {item.carSequence ? `第 ${item.carSequence} 车` : '未编号车次'} · {item.count} 条 · 均分 {item.avgRating ?? '暂无'}
+                  </p>
+                  <p className="mt-1 text-xs text-gray-400">
+                    {item.roomName || '未指定房间'} · {item.startTime ? new Date(item.startTime).toLocaleString('zh-CN') : ''}
+                  </p>
+                </div>
+              ))}
+              {data.carStats.length === 0 && (
+                <p className="py-8 text-center text-sm text-gray-400">暂无按车评分</p>
+              )}
+            </div>
           </div>
         </section>
 
@@ -108,6 +131,7 @@ export default function EvaluationManager() {
                     <p className="font-semibold text-gray-900">{item.guest_name || '匿名玩家'}</p>
                     <p className="text-sm text-gray-500 mt-1">
                       {item.schedule?.scriptName || '未知剧本'}
+                      {item.schedule?.computedCarSequence ? ` · 第 ${item.schedule.computedCarSequence} 车` : ''}
                       {item.schedule?.roomName ? ` · ${item.schedule.roomName}` : ''}
                       {item.schedule?.startTime ? ` · ${new Date(item.schedule.startTime).toLocaleString('zh-CN')}` : ''}
                     </p>

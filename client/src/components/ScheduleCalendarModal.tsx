@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import type { ScheduleWithDetails, ScheduleFormData, SelectedActor } from '../types/schedule';
+import type { LingqiCommissionMaster, ScheduleExternalNpc, ScheduleLingqiCommission, ScheduleWithDetails, ScheduleFormData, SelectedActor } from '../types/schedule';
 import type { Script, Actor, Room, ScriptBoardRole } from '../types';
 import CheckInRoles from './CheckInRoles';
+import { uploadImageFile } from '../utils/imageUpload';
 
 interface ScheduleCalendarModalProps {
   visible: boolean;
@@ -10,6 +11,7 @@ interface ScheduleCalendarModalProps {
   scripts: Script[];
   rooms: Room[];
   actors: Actor[];
+  lingqiMasters: LingqiCommissionMaster[];
   formData: ScheduleFormData;
   selectedActors: SelectedActor[];
   loading: boolean;
@@ -28,6 +30,7 @@ export default function ScheduleCalendarModal({
   scripts,
   rooms,
   actors,
+  lingqiMasters,
   formData,
   selectedActors,
   loading,
@@ -41,6 +44,7 @@ export default function ScheduleCalendarModal({
 }: ScheduleCalendarModalProps) {
   const selectedScript = scripts.find(s => s.id === formData.scriptId);
   const [conflicts, setConflicts] = useState<any[]>([]);
+  const [npcUploadingIndex, setNpcUploadingIndex] = useState<number | null>(null);
   const selectedActorIds = selectedActors.map(a => a.actorId).filter(Boolean).join(',');
   const allActorRoleDetails = selectedScript?.actor_role_details?.length
     ? selectedScript.actor_role_details
@@ -178,11 +182,89 @@ export default function ScheduleCalendarModal({
 
   const playerRoles = selectedScript?.player_roles || [];
 
+  const updateExternalNpc = (index: number, patch: Partial<ScheduleExternalNpc>) => {
+    onFormDataChange({
+      ...formData,
+      externalNpcs: (formData.externalNpcs || []).map((row, i) => i === index ? { ...row, ...patch } : row),
+    });
+  };
+
+  const addExternalNpc = () => {
+    onFormDataChange({
+      ...formData,
+      externalNpcs: [...(formData.externalNpcs || []), { role_name: '', provided_by: '', note: '', photo_url: '', count_as_player: false, count_in_settlement: false }],
+    });
+  };
+
+  const removeExternalNpc = (index: number) => {
+    onFormDataChange({ ...formData, externalNpcs: (formData.externalNpcs || []).filter((_, i) => i !== index) });
+  };
+
+  const uploadExternalNpcPhoto = async (index: number, file?: File | null) => {
+    if (!file) return;
+    setNpcUploadingIndex(index);
+    try {
+      const url = await uploadImageFile(file, 'external_npc');
+      updateExternalNpc(index, { photo_url: url });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '图片上传失败');
+    } finally {
+      setNpcUploadingIndex(null);
+    }
+  };
+
+  const addLingqiCommission = (profileId: string) => {
+    const master = lingqiMasters.find(item => item.id === profileId);
+    if (!master) return;
+    const exists = (formData.lingqiCommissions || []).some(row => row.lc_profile_id === profileId);
+    if (exists) return;
+    onFormDataChange({
+      ...formData,
+      lingqiCommissions: [
+        ...(formData.lingqiCommissions || []),
+        {
+          lc_profile_id: master.id,
+          display_name: master.display_name,
+          avatar_url: master.avatar || null,
+          role_name: '',
+          service_type: 'experience_support',
+          status: 'pending',
+          note: '',
+        },
+      ],
+    });
+  };
+
+  const updateLingqiCommission = (index: number, patch: Partial<ScheduleLingqiCommission>) => {
+    onFormDataChange({
+      ...formData,
+      lingqiCommissions: (formData.lingqiCommissions || []).map((row, i) => i === index ? { ...row, ...patch } : row),
+    });
+  };
+
+  const removeLingqiCommission = (index: number) => {
+    onFormDataChange({ ...formData, lingqiCommissions: (formData.lingqiCommissions || []).filter((_, i) => i !== index) });
+  };
+
+  const serviceTypeText: Record<string, string> = {
+    experience_support: '体验协助',
+    npc_support: 'NPC 协助',
+    review_support: '复盘协助',
+    host_support: '主持辅助',
+  };
+  const commissionStatusText: Record<string, string> = {
+    pending: '待发起',
+    invited: '已邀请',
+    accepted: '已接受',
+    confirmed: '已确认上车',
+    cancelled: '已取消',
+  };
+
   if (!visible) return null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto">
-      <div className="bg-white rounded-lg p-6 w-full max-w-2xl my-8">
+      <div className="bg-white rounded-lg p-6 w-full max-w-4xl max-h-[92vh] overflow-y-auto my-8">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-bold">
             {editingSchedule ? '编辑排期' : '新建排期'}
@@ -259,6 +341,23 @@ export default function ScheduleCalendarModal({
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 required
               />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-[160px_1fr] gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">本店同本第几车</label>
+              <input
+                type="number"
+                min="1"
+                value={formData.storeCarSequence}
+                onChange={(e) => onFormDataChange({ ...formData, storeCarSequence: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                placeholder="自动"
+              />
+            </div>
+            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+              不填时按本店同一剧本的历史排期自动计算；如果店家有自己的车次口径，可以在这里手动指定。
             </div>
           </div>
 
@@ -427,6 +526,144 @@ export default function ScheduleCalendarModal({
               </div>
             </div>
           )}
+
+          <div className="border-t pt-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <label className="block text-sm font-medium text-gray-700">外带 NPC</label>
+              <button type="button" onClick={addExternalNpc} className="text-sm text-blue-500 hover:text-blue-700">+ 添加 NPC</button>
+            </div>
+            <div className="space-y-2">
+              {(formData.externalNpcs || []).map((npc, index) => (
+                <div key={index} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                  <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                    <input
+                      value={npc.role_name}
+                      onChange={(e) => updateExternalNpc(index, { role_name: e.target.value })}
+                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      placeholder="角色名，如 伯纳德"
+                    />
+                    <input
+                      value={npc.provided_by || ''}
+                      onChange={(e) => updateExternalNpc(index, { provided_by: e.target.value })}
+                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      placeholder="由谁自带"
+                    />
+                    <button type="button" onClick={() => removeExternalNpc(index)} className="px-3 py-2 text-sm text-red-500 hover:text-red-700">删除</button>
+                  </div>
+                  <div className="mt-2 grid grid-cols-[auto_1fr] gap-3">
+                    <div className="flex items-center gap-2">
+                      {npc.photo_url ? (
+                        <img src={npc.photo_url} alt="" className="h-12 w-12 rounded-lg object-cover border border-gray-200" />
+                      ) : (
+                        <div className="h-12 w-12 rounded-lg border border-dashed border-gray-300 bg-white" />
+                      )}
+                      <label className="cursor-pointer rounded-lg border border-gray-300 px-3 py-2 text-xs text-gray-700 hover:bg-white">
+                        {npcUploadingIndex === index ? '上传中' : '可选照片'}
+                        <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadExternalNpcPhoto(index, e.target.files?.[0])} disabled={npcUploadingIndex === index} />
+                      </label>
+                    </div>
+                    <input
+                      value={npc.note || ''}
+                      onChange={(e) => updateExternalNpc(index, { note: e.target.value })}
+                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      placeholder="备注，如 只参与某一幕、由玩家自带服装"
+                    />
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-600">
+                    <label className="inline-flex items-center gap-1">
+                      <input type="checkbox" checked={!!npc.count_as_player} onChange={(e) => updateExternalNpc(index, { count_as_player: e.target.checked })} />
+                      计入上车人数
+                    </label>
+                    <label className="inline-flex items-center gap-1">
+                      <input type="checkbox" checked={!!npc.count_in_settlement} onChange={(e) => updateExternalNpc(index, { count_in_settlement: e.target.checked })} />
+                      参与结算
+                    </label>
+                  </div>
+                </div>
+              ))}
+              {(formData.externalNpcs || []).length === 0 && (
+                <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-400">没有玩家自带 NPC 时可以不填。</p>
+              )}
+            </div>
+          </div>
+
+          <div className="border-t pt-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <label className="block text-sm font-medium text-gray-700">委托灵契师上车</label>
+              <select
+                value=""
+                onChange={(e) => addLingqiCommission(e.target.value)}
+                className="max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              >
+                <option value="">选择灵契师</option>
+                {lingqiMasters.map(master => (
+                  <option key={master.id} value={master.id}>
+                    {master.display_name}{master.city ? ` · ${master.city}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              {(formData.lingqiCommissions || []).map((commission, index) => (
+                <div key={`${commission.lc_profile_id || commission.display_name}-${index}`} className="rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
+                  <div className="flex items-center gap-3">
+                    {commission.avatar_url ? (
+                      <img src={commission.avatar_url} alt="" className="h-10 w-10 rounded-full object-cover border border-white" />
+                    ) : (
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-sm font-bold text-indigo-600">
+                        {commission.display_name.slice(0, 1)}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-gray-900">{commission.display_name}</p>
+                      <p className="text-xs text-indigo-600">{serviceTypeText[commission.service_type || 'experience_support'] || '体验协助'} · {commissionStatusText[commission.status || 'pending'] || commission.status}</p>
+                    </div>
+                    <button type="button" onClick={() => removeLingqiCommission(index)} className="text-sm text-red-500 hover:text-red-700">删除</button>
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    <input
+                      value={commission.role_name || ''}
+                      onChange={(e) => updateLingqiCommission(index, { role_name: e.target.value })}
+                      className="px-3 py-2 border border-indigo-100 rounded-lg text-sm"
+                      placeholder="上车职责/角色"
+                    />
+                    <select
+                      value={commission.service_type || 'experience_support'}
+                      onChange={(e) => updateLingqiCommission(index, { service_type: e.target.value })}
+                      className="px-3 py-2 border border-indigo-100 rounded-lg text-sm"
+                    >
+                      <option value="experience_support">体验协助</option>
+                      <option value="npc_support">NPC 协助</option>
+                      <option value="review_support">复盘协助</option>
+                      <option value="host_support">主持辅助</option>
+                    </select>
+                    <select
+                      value={commission.status || 'pending'}
+                      onChange={(e) => updateLingqiCommission(index, { status: e.target.value })}
+                      className="px-3 py-2 border border-indigo-100 rounded-lg text-sm"
+                    >
+                      <option value="pending">待发起</option>
+                      <option value="invited">已邀请</option>
+                      <option value="accepted">已接受</option>
+                      <option value="confirmed">已确认上车</option>
+                      <option value="cancelled">已取消</option>
+                    </select>
+                  </div>
+                  <input
+                    value={commission.note || ''}
+                    onChange={(e) => updateLingqiCommission(index, { note: e.target.value })}
+                    className="mt-2 w-full px-3 py-2 border border-indigo-100 rounded-lg text-sm"
+                    placeholder="委托备注，如出场幕次、互动边界、复盘要求"
+                  />
+                </div>
+              ))}
+              {(formData.lingqiCommissions || []).length === 0 && (
+                <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-500">
+                  可从灵契已开启服务的灵契师中选择，记录本车是否邀请、接受或确认上车。
+                </p>
+              )}
+            </div>
+          </div>
 
           {/* 底部按钮 */}
           <div className="flex justify-between pt-4">

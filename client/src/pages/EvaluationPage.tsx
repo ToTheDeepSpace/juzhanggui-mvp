@@ -9,6 +9,8 @@ interface ScheduleInfo {
   script_name: string;
   start_time: string;
   room_name?: string;
+  computed_car_sequence?: number | null;
+  rating_summary?: { carRating: number | null; carEvaluationCount: number; scriptAvgRating: number | null; scriptEvaluationCount: number };
   customer_name?: string;
   status: string;
 }
@@ -69,6 +71,18 @@ export default function EvaluationPage() {
               <br />
               {format(parseISO(schedule.start_time), 'MM月dd日 HH:mm', { locale: zhCN })}
               {schedule.room_name && ` · ${schedule.room_name}`}
+              {schedule.computed_car_sequence ? (
+                <>
+                  <br />
+                  本店第 {schedule.computed_car_sequence} 车
+                </>
+              ) : null}
+              {schedule.rating_summary ? (
+                <>
+                  <br />
+                  本车 {schedule.rating_summary.carRating ?? '暂无'} 分 / 本剧本 {schedule.rating_summary.scriptAvgRating ?? '暂无'} 分
+                </>
+              ) : null}
             </div>
           )}
         </div>
