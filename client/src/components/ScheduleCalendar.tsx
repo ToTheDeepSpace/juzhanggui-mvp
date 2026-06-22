@@ -137,8 +137,6 @@ export default function ScheduleCalendar() {
   const [stores, setStores] = useState<StoreRecord[]>([]);
   const [lingqiMasters, setLingqiMasters] = useState<LingqiCommissionMaster[]>([]);
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [defaultDepositDraft, setDefaultDepositDraft] = useState('100');
-  const [depositSettingMsg, setDepositSettingMsg] = useState('');
   const [showFeeSettings, setShowFeeSettings] = useState(false);
   const [extraFeeDraft, setExtraFeeDraft] = useState<ExtraFeeDraft>(defaultExtraFeeDraft);
   const [extraFeeMsg, setExtraFeeMsg] = useState('');
@@ -235,7 +233,6 @@ export default function ScheduleCalendar() {
       setStores(nextStores);
       const first = nextStores[0];
       if (first) {
-        setDefaultDepositDraft(String(Math.round(Number(first.default_deposit_amount || 10000) / 100)));
         setExtraFeeDraft(draftFromStore(first));
       }
     }
@@ -506,19 +503,6 @@ export default function ScheduleCalendar() {
     if (saved) await lockSchedule(financeSchedule);
   };
 
-  const saveDepositSetting = async () => {
-    if (!currentStore) return;
-    setDepositSettingMsg('');
-    const amount = Math.max(0, Math.round((Number(defaultDepositDraft || 0) || 0) * 100));
-    const result = await put<StoreRecord>(`/stores/${currentStore.id}/settings`, { defaultDepositAmount: amount });
-    if (result.success) {
-      setDepositSettingMsg('默认定金已保存');
-      loadData();
-    } else {
-      setDepositSettingMsg(result.error || '保存失败');
-    }
-  };
-
   const saveExtraFeeSetting = async () => {
     if (!currentStore) return;
     setExtraFeeMsg('');
@@ -545,12 +529,11 @@ export default function ScheduleCalendar() {
     if (fee.perPlayer <= 0) return;
     setFinanceRows(rows => rows.map(row => row.extra_fee_applied ? row : {
       ...row,
-      final_amount: Number(row.final_amount || 0) + fee.perPlayer,
       extra_fee_applied: true,
-      settlement_note: row.settlement_note || [
-        fee.earlyHours > 0 ? `早起费${fee.earlyHours}小时` : '',
+      settlement_note: row.settlement_note || `DM单独结算：${[
+        fee.earlyHours > 0 ? `早场费${fee.earlyHours}小时` : '',
         fee.nightHours > 0 ? `修仙费${fee.nightHours}小时` : '',
-      ].filter(Boolean).join('，'),
+      ].filter(Boolean).join('，')}，¥${fee.perPlayer}/人，不计入店家收入`,
     }));
   };
 
@@ -1021,37 +1004,6 @@ export default function ScheduleCalendar() {
         </div>
       )}
 
-      {!showEnded && currentStore && (
-        <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-sm font-semibold text-amber-900">锁车规则</p>
-              <p className="mt-1 text-xs text-amber-700">定金在锁车前确认。默认定金用于快速填入每个玩家的定金金额，特殊玩家可在弹窗内单独修改。</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-amber-700">默认定金</span>
-              <input
-                type="number"
-                min="0"
-                value={defaultDepositDraft}
-                onChange={e => setDefaultDepositDraft(e.target.value)}
-                className="w-24 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-900"
-              />
-              <span className="text-xs text-amber-700">元/人</span>
-              <button
-                type="button"
-                onClick={saveDepositSetting}
-                disabled={loading}
-                className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
-              >
-                保存
-              </button>
-            </div>
-          </div>
-          {depositSettingMsg && <p className="mt-2 text-xs text-amber-700">{depositSettingMsg}</p>}
-        </div>
-      )}
-
       {!showEnded ? (
         <>
         {/* 5月5日（今天）大框 */}
@@ -1440,7 +1392,7 @@ export default function ScheduleCalendar() {
                 <p className="text-sm font-semibold text-emerald-900">{financeRows.filter(r => r.settlement_status === 'settled').length}/{financeRows.length}</p>
               </div>
               <div className="rounded-lg border border-violet-100 bg-violet-50 px-2 py-1.5">
-                <p className="text-[11px] text-violet-700">附加费</p>
+                <p className="text-[11px] text-violet-700">DM 单独结算</p>
                 <p className="text-sm font-semibold text-violet-900">¥{extraFeeSuggestion.perPlayer}/人</p>
               </div>
             </div>
@@ -1450,7 +1402,7 @@ export default function ScheduleCalendar() {
                 <div className="grid gap-2 md:grid-cols-2">
                   <div className="rounded-lg bg-white p-3">
                     <label className="flex items-center justify-between gap-2 text-sm font-semibold text-slate-900">
-                      <span>早起费</span>
+                      <span>早场费</span>
                       <input type="checkbox" checked={extraFeeDraft.earlyFeeEnabled} onChange={e => setExtraFeeDraft(d => ({ ...d, earlyFeeEnabled: e.target.checked }))} />
                     </label>
                     <div className="mt-2 grid grid-cols-[1fr_1fr_116px] gap-2">
@@ -1461,7 +1413,7 @@ export default function ScheduleCalendar() {
                         <span className="whitespace-nowrap text-[11px] text-slate-500">元/小时</span>
                       </label>
                     </div>
-                    <p className="mt-1 text-[11px] text-slate-500">默认 12 点前，每小时每人加收；可设 0。</p>
+                    <p className="mt-1 text-[11px] text-slate-500">默认 12 点前，每小时每人给 DM 单独结算；不计入店家收入，可设 0。</p>
                   </div>
                   <div className="rounded-lg bg-white p-3">
                     <label className="flex items-center justify-between gap-2 text-sm font-semibold text-slate-900">
@@ -1476,11 +1428,11 @@ export default function ScheduleCalendar() {
                         <span className="whitespace-nowrap text-[11px] text-slate-500">元/小时</span>
                       </label>
                     </div>
-                    <p className="mt-1 text-[11px] text-slate-500">默认 00:30 后，每小时每人加收。</p>
+                    <p className="mt-1 text-[11px] text-slate-500">默认 00:30 后，每小时每人给 DM 单独结算；不计入店家收入。</p>
                   </div>
                 </div>
                 <div className="mt-3 flex items-center justify-between gap-3">
-                  <p className="text-xs text-indigo-700">当前车建议：早起 {extraFeeSuggestion.earlyHours} 小时，修仙 {extraFeeSuggestion.nightHours} 小时，合计 ¥{extraFeeSuggestion.total}。</p>
+                  <p className="text-xs text-indigo-700">当前车建议：早场 {extraFeeSuggestion.earlyHours} 小时，修仙 {extraFeeSuggestion.nightHours} 小时，DM 单独结算合计 ¥{extraFeeSuggestion.total}，不计入店家收入。</p>
                   <button type="button" onClick={saveExtraFeeSetting} disabled={loading} className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50">保存默认</button>
                 </div>
                 {extraFeeMsg && <p className="mt-2 text-xs text-indigo-700">{extraFeeMsg}</p>}
@@ -1490,12 +1442,12 @@ export default function ScheduleCalendar() {
             {financeMode === 'settlement' && extraFeeSuggestion.perPlayer > 0 && (
               <div className="mb-3 flex flex-col gap-2 rounded-lg border border-violet-100 bg-violet-50 px-3 py-2 md:flex-row md:items-center md:justify-between">
                 <p className="text-xs text-violet-800">
-                  本车按当前规则建议每人加收 ¥{extraFeeSuggestion.perPlayer}
-                  {extraFeeSuggestion.earlyHours > 0 ? `，早起费 ${extraFeeSuggestion.earlyHours} 小时` : ''}
-                  {extraFeeSuggestion.nightHours > 0 ? `，修仙费 ${extraFeeSuggestion.nightHours} 小时` : ''}。
+                  本车按当前规则建议给 DM 单独结算 ¥{extraFeeSuggestion.perPlayer}/人
+                  {extraFeeSuggestion.earlyHours > 0 ? `，早场费 ${extraFeeSuggestion.earlyHours} 小时` : ''}
+                  {extraFeeSuggestion.nightHours > 0 ? `，修仙费 ${extraFeeSuggestion.nightHours} 小时` : ''}，不计入店家收入。
                 </p>
                 <button type="button" onClick={applyExtraFeeToRows} className="rounded-md bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-700">
-                  加到每人收款
+                  写入 DM 结算备注
                 </button>
               </div>
             )}

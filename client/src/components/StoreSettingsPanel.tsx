@@ -208,7 +208,7 @@ export default function StoreSettingsPanel() {
                 </label>
                 <div className="rounded-lg border border-gray-200 p-3">
                   <label className="mb-3 flex items-center justify-between gap-3 text-sm font-medium text-gray-700">
-                    早起费
+                    早场费（DM 单独结算）
                     <input
                       type="checkbox"
                       checked={form.earlyFeeEnabled}
@@ -224,10 +224,11 @@ export default function StoreSettingsPanel() {
                       <span className="whitespace-nowrap text-xs text-gray-500">元/小时</span>
                     </label>
                   </div>
+                  <p className="mt-2 text-xs text-gray-500">默认 12 点前按小时给 DM 单独结算，不计入店家收入。</p>
                 </div>
                 <div className="rounded-lg border border-gray-200 p-3">
                   <label className="mb-3 flex items-center justify-between gap-3 text-sm font-medium text-gray-700">
-                    修仙费
+                    修仙费（DM 单独结算）
                     <input
                       type="checkbox"
                       checked={form.nightFeeEnabled}
@@ -243,6 +244,7 @@ export default function StoreSettingsPanel() {
                       <span className="whitespace-nowrap text-xs text-gray-500">元/小时</span>
                     </label>
                   </div>
+                  <p className="mt-2 text-xs text-gray-500">默认 00:30 后按小时给 DM 单独结算，不计入店家收入。</p>
                 </div>
               </div>
             </section>
