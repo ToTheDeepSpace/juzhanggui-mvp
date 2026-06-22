@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useApi } from '../hooks/useApi';
 import { useAuth } from '../contexts/AuthContext';
 import type { StoreRecord } from '../types';
+import CityInput from './CityInput';
 
 interface PlatformStoreRecord extends StoreRecord {
   admin_count?: number;
@@ -83,7 +84,7 @@ export default function StoreManager() {
           <form onSubmit={submit} className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="店家名称"
               className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
-            <input value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} placeholder="城市"
+            <CityInput value={form.city} onChange={city => setForm({ ...form, city })} placeholder="搜索城市，如 成都"
               className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />
             <input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} placeholder="地址"
               className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent" />

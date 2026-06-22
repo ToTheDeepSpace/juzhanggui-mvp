@@ -4,6 +4,7 @@ import { useApi } from '../hooks/useApi';
 import { useAuth } from '../contexts/AuthContext';
 import type { StoreRecord } from '../types';
 import { selectStoreForSettings } from '../utils/storeSettings';
+import CityInput from './CityInput';
 
 type StoreSettingsForm = {
   name: string;
@@ -70,7 +71,6 @@ export default function StoreSettingsPanel() {
   const [form, setForm] = useState<StoreSettingsForm>(emptyForm);
   const [message, setMessage] = useState('');
   const [loadMessage, setLoadMessage] = useState('');
-  const [extrasReturned, setExtrasReturned] = useState(false);
 
   const loadStore = async () => {
     setMessage('');
@@ -82,7 +82,6 @@ export default function StoreSettingsPanel() {
       return;
     }
     const selected = selectStoreForSettings(result.data, user);
-    setExtrasReturned(selected.extrasReturned);
     setStore(selected.store);
     if (selected.store) {
       setForm(formFromStore(selected.store));
@@ -144,12 +143,6 @@ export default function StoreSettingsPanel() {
           </span>
         </div>
 
-        {extrasReturned && (
-          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700">
-            接口返回了多条店铺记录，页面已只保留当前账号绑定店铺；请联系超管检查账号绑定。
-          </div>
-        )}
-
         {loadMessage && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {loadMessage}
@@ -172,11 +165,11 @@ export default function StoreSettingsPanel() {
                 </label>
                 <label className="block text-sm">
                   <span className="mb-1 block text-gray-600">城市</span>
-                  <input
+                  <CityInput
                     value={form.city}
-                    onChange={event => updateForm('city', event.target.value)}
+                    onChange={value => updateForm('city', value)}
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500"
-                    placeholder="城市"
+                    placeholder="搜索城市，如 成都"
                   />
                 </label>
                 <label className="block text-sm">
