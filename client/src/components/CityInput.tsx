@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { CHINA_CITIES } from '../utils/chinaCities';
+import { STORE_CITIES } from '../utils/chinaCities';
 
 type CityInputProps = {
   value: string;
@@ -27,7 +27,7 @@ export default function CityInput({
         autoComplete="off"
       />
       <datalist id={listId}>
-        {CHINA_CITIES.map(city => (
+        {STORE_CITIES.map(city => (
           <option key={`${city.province}-${city.name}`} value={city.name}>
             {city.province}
           </option>

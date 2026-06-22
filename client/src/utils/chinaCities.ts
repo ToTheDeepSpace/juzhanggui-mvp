@@ -37,19 +37,53 @@ const CITY_GROUPS: Array<{ province: string; cities: string[] }> = [
   { province: '台湾', cities: ['台北', '新北', '桃园', '台中', '台南', '高雄', '基隆', '新竹', '嘉义'] },
 ];
 
-export const CHINA_CITIES: ChinaCity[] = CITY_GROUPS.flatMap(group =>
+const OVERSEAS_CITY_GROUPS: Array<{ province: string; cities: string[] }> = [
+  { province: '日本', cities: ['东京', '大阪', '京都', '名古屋', '横滨', '福冈', '札幌'] },
+  { province: '韩国', cities: ['首尔', '釜山', '仁川'] },
+  { province: '新加坡', cities: ['新加坡'] },
+  { province: '泰国', cities: ['曼谷', '清迈', '普吉'] },
+  { province: '马来西亚', cities: ['吉隆坡', '槟城', '新山'] },
+  { province: '越南', cities: ['河内', '胡志明市', '岘港'] },
+  { province: '菲律宾', cities: ['马尼拉', '宿务'] },
+  { province: '印度尼西亚', cities: ['雅加达', '巴厘岛'] },
+  { province: '印度', cities: ['新德里', '孟买', '班加罗尔'] },
+  { province: '阿联酋', cities: ['迪拜', '阿布扎比'] },
+  { province: '英国', cities: ['伦敦', '曼彻斯特', '爱丁堡'] },
+  { province: '法国', cities: ['巴黎', '里昂', '马赛'] },
+  { province: '德国', cities: ['柏林', '慕尼黑', '法兰克福', '汉堡'] },
+  { province: '意大利', cities: ['罗马', '米兰', '佛罗伦萨', '威尼斯'] },
+  { province: '西班牙', cities: ['马德里', '巴塞罗那'] },
+  { province: '荷兰', cities: ['阿姆斯特丹', '鹿特丹'] },
+  { province: '瑞士', cities: ['苏黎世', '日内瓦'] },
+  { province: '奥地利', cities: ['维也纳'] },
+  { province: '俄罗斯', cities: ['莫斯科', '圣彼得堡'] },
+  { province: '土耳其', cities: ['伊斯坦布尔'] },
+  { province: '美国', cities: ['纽约', '洛杉矶', '旧金山', '西雅图', '芝加哥', '波士顿', '华盛顿', '休斯敦', '达拉斯', '迈阿密', '拉斯维加斯'] },
+  { province: '加拿大', cities: ['多伦多', '温哥华', '蒙特利尔', '渥太华', '卡尔加里'] },
+  { province: '墨西哥', cities: ['墨西哥城'] },
+  { province: '巴西', cities: ['圣保罗', '里约热内卢'] },
+  { province: '阿根廷', cities: ['布宜诺斯艾利斯'] },
+  { province: '澳大利亚', cities: ['悉尼', '墨尔本', '布里斯班', '珀斯', '阿德莱德'] },
+  { province: '新西兰', cities: ['奥克兰', '惠灵顿', '基督城'] },
+  { province: '埃及', cities: ['开罗'] },
+  { province: '南非', cities: ['约翰内斯堡', '开普敦'] },
+];
+
+export const STORE_CITIES: ChinaCity[] = [...CITY_GROUPS, ...OVERSEAS_CITY_GROUPS].flatMap(group =>
   group.cities.map(name => ({ name, province: group.province })),
 );
+
+export const CHINA_CITIES = STORE_CITIES;
 
 function normalize(input: string) {
   return input.trim().toLowerCase();
 }
 
-export function searchChinaCities(query: string, limit = 30): ChinaCity[] {
+export function searchStoreCities(query: string, limit = 30): ChinaCity[] {
   const keyword = normalize(query);
-  if (!keyword) return CHINA_CITIES.slice(0, limit);
+  if (!keyword) return STORE_CITIES.slice(0, limit);
 
-  return CHINA_CITIES
+  return STORE_CITIES
     .map(city => {
       const name = normalize(city.name);
       const province = normalize(city.province);
@@ -66,3 +100,5 @@ export function searchChinaCities(query: string, limit = 30): ChinaCity[] {
     .slice(0, limit)
     .map(item => item.city);
 }
+
+export const searchChinaCities = searchStoreCities;

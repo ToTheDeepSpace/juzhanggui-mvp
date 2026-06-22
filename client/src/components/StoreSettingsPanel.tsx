@@ -219,7 +219,10 @@ export default function StoreSettingsPanel() {
                   <div className="grid grid-cols-3 gap-2">
                     <input type="time" value={form.earlyFeeStartTime} onChange={event => updateForm('earlyFeeStartTime', event.target.value)} className="rounded-md border border-gray-300 px-2 py-1.5 text-sm" />
                     <input type="time" value={form.earlyFeeEndTime} onChange={event => updateForm('earlyFeeEndTime', event.target.value)} className="rounded-md border border-gray-300 px-2 py-1.5 text-sm" />
-                    <input type="number" min="0" value={form.earlyFeeAmountPerHour} onChange={event => updateForm('earlyFeeAmountPerHour', event.target.value)} className="rounded-md border border-gray-300 px-2 py-1.5 text-sm" placeholder="元/时" />
+                    <label className="flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500">
+                      <input type="number" min="0" value={form.earlyFeeAmountPerHour} onChange={event => updateForm('earlyFeeAmountPerHour', event.target.value)} className="w-full border-0 p-0 text-sm focus:outline-none focus:ring-0" />
+                      <span className="whitespace-nowrap text-xs text-gray-500">元/小时</span>
+                    </label>
                   </div>
                 </div>
                 <div className="rounded-lg border border-gray-200 p-3">
@@ -235,7 +238,10 @@ export default function StoreSettingsPanel() {
                   <div className="grid grid-cols-3 gap-2">
                     <input type="time" value={form.nightFeeStartTime} onChange={event => updateForm('nightFeeStartTime', event.target.value)} className="rounded-md border border-gray-300 px-2 py-1.5 text-sm" />
                     <input type="time" value={form.nightFeeEndTime} onChange={event => updateForm('nightFeeEndTime', event.target.value)} className="rounded-md border border-gray-300 px-2 py-1.5 text-sm" />
-                    <input type="number" min="0" value={form.nightFeeAmountPerHour} onChange={event => updateForm('nightFeeAmountPerHour', event.target.value)} className="rounded-md border border-gray-300 px-2 py-1.5 text-sm" placeholder="元/时" />
+                    <label className="flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500">
+                      <input type="number" min="0" value={form.nightFeeAmountPerHour} onChange={event => updateForm('nightFeeAmountPerHour', event.target.value)} className="w-full border-0 p-0 text-sm focus:outline-none focus:ring-0" />
+                      <span className="whitespace-nowrap text-xs text-gray-500">元/小时</span>
+                    </label>
                   </div>
                 </div>
               </div>

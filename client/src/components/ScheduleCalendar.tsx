@@ -1438,10 +1438,13 @@ export default function ScheduleCalendar() {
                       <span>早起费</span>
                       <input type="checkbox" checked={extraFeeDraft.earlyFeeEnabled} onChange={e => setExtraFeeDraft(d => ({ ...d, earlyFeeEnabled: e.target.checked }))} />
                     </label>
-                    <div className="mt-2 grid grid-cols-[1fr_1fr_72px] gap-2">
+                    <div className="mt-2 grid grid-cols-[1fr_1fr_116px] gap-2">
                       <input type="time" value={extraFeeDraft.earlyFeeStartTime} onChange={e => setExtraFeeDraft(d => ({ ...d, earlyFeeStartTime: e.target.value }))} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
                       <input type="time" value={extraFeeDraft.earlyFeeEndTime} onChange={e => setExtraFeeDraft(d => ({ ...d, earlyFeeEndTime: e.target.value }))} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
-                      <input type="number" min="0" value={extraFeeDraft.earlyFeeAmountPerHour} onChange={e => setExtraFeeDraft(d => ({ ...d, earlyFeeAmountPerHour: e.target.value }))} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
+                      <label className="flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1.5 text-sm">
+                        <input type="number" min="0" value={extraFeeDraft.earlyFeeAmountPerHour} onChange={e => setExtraFeeDraft(d => ({ ...d, earlyFeeAmountPerHour: e.target.value }))} className="w-full border-0 p-0 text-sm focus:outline-none focus:ring-0" />
+                        <span className="whitespace-nowrap text-[11px] text-slate-500">元/小时</span>
+                      </label>
                     </div>
                     <p className="mt-1 text-[11px] text-slate-500">默认 12 点前，每小时每人加收；可设 0。</p>
                   </div>
@@ -1450,10 +1453,13 @@ export default function ScheduleCalendar() {
                       <span>修仙费</span>
                       <input type="checkbox" checked={extraFeeDraft.nightFeeEnabled} onChange={e => setExtraFeeDraft(d => ({ ...d, nightFeeEnabled: e.target.checked }))} />
                     </label>
-                    <div className="mt-2 grid grid-cols-[1fr_1fr_72px] gap-2">
+                    <div className="mt-2 grid grid-cols-[1fr_1fr_116px] gap-2">
                       <input type="time" value={extraFeeDraft.nightFeeStartTime} onChange={e => setExtraFeeDraft(d => ({ ...d, nightFeeStartTime: e.target.value }))} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
                       <input type="time" value={extraFeeDraft.nightFeeEndTime} onChange={e => setExtraFeeDraft(d => ({ ...d, nightFeeEndTime: e.target.value }))} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
-                      <input type="number" min="0" value={extraFeeDraft.nightFeeAmountPerHour} onChange={e => setExtraFeeDraft(d => ({ ...d, nightFeeAmountPerHour: e.target.value }))} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
+                      <label className="flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1.5 text-sm">
+                        <input type="number" min="0" value={extraFeeDraft.nightFeeAmountPerHour} onChange={e => setExtraFeeDraft(d => ({ ...d, nightFeeAmountPerHour: e.target.value }))} className="w-full border-0 p-0 text-sm focus:outline-none focus:ring-0" />
+                        <span className="whitespace-nowrap text-[11px] text-slate-500">元/小时</span>
+                      </label>
                     </div>
                     <p className="mt-1 text-[11px] text-slate-500">默认 00:30 后，每小时每人加收。</p>
                   </div>
