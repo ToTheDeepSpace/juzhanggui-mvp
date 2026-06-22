@@ -104,6 +104,13 @@ const scriptPlayerSummary = (script: Pick<Script, 'player_count' | 'role_count' 
   };
 };
 
+const scriptActorPreview = (script: Script) => {
+  const roles = script.actor_role_details?.length
+    ? script.actor_role_details
+    : (script.actor_roles || []).map(name => ({ name, role_kind: 'dm' }));
+  return roles.map(role => `${role.name}/${roleKindLabel(role.role_kind)}`).join('、');
+};
+
 export default function ScriptManager() {
   const { get, post, put, del, loading } = useApi();
   const [scripts, setScripts] = useState<Script[]>([]);
@@ -472,26 +479,40 @@ const handleSubmit = async (e: React.FormEvent) => {
   ].filter(Boolean);
 
   return (
-    <div className="bg-white rounded-lg shadow p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-bold text-gray-800">剧本管理</h2>
+    <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-xl font-bold text-gray-800">剧本管理</h2>
+          <span
+            className="inline-flex items-center gap-1 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-sm font-semibold text-indigo-700"
+            title="老板/店长维护剧本、角色库和演绎板子；关键操作会记录到店内操作日志。"
+          >
+            使用说明
+            <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 text-[10px] leading-none">?</span>
+          </span>
+        </div>
         <button
           onClick={() => {
             setEditingScript(null);
             setFormData(emptyScriptForm());
             setShowForm(true);
           }}
-          className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors"
+          className="inline-flex items-center justify-center rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-orange-600"
         >
           + 添加剧本
         </button>
       </div>
 
-      <section className="mb-6 rounded-lg border border-indigo-100 bg-indigo-50/60 p-4">
-        <div className="flex items-center justify-between gap-3 mb-3">
-          <div>
-            <h3 className="font-bold text-gray-800">公共剧本模版库</h3>
-            <p className="text-sm text-gray-500 mt-1">这里展示超管审核通过的公共模版；你新建的剧本会先进入主库候选，审核通过后其他店家可导入。</p>
+      <section className="mb-5 rounded-lg border border-indigo-100 bg-indigo-50/60 p-4">
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <h3 className="font-bold text-gray-800">公共剧本模板库</h3>
+            <span
+              className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-indigo-300 text-[10px] font-semibold text-indigo-500"
+              title="这里展示超管审核通过的公共模板；店家可搜索后导入。"
+            >
+              ?
+            </span>
           </div>
           {templateMsg && <span className="text-sm text-indigo-600 font-medium">{templateMsg}</span>}
         </div>
@@ -508,15 +529,11 @@ const handleSubmit = async (e: React.FormEvent) => {
         </div>
         {templates.length === 0 ? (
           <p className="text-sm text-gray-500">暂无公共模版</p>
-        ) : !normalizedTemplateSearch ? (
-          <p className="rounded-lg border border-dashed border-indigo-100 bg-white/70 px-3 py-4 text-sm text-gray-500">
-            输入关键词后显示匹配模版，避免公共主库一次性铺满页面。
-          </p>
-        ) : visibleTemplates.length === 0 ? (
+        ) : normalizedTemplateSearch && visibleTemplates.length === 0 ? (
           <p className="rounded-lg border border-dashed border-indigo-100 bg-white/70 px-3 py-4 text-sm text-gray-500">
             没有匹配的公共模版，换个剧本名或角色名试试。
           </p>
-        ) : (
+        ) : normalizedTemplateSearch ? (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {visibleTemplates.map(template => (
               <article key={template.id} className="rounded-lg border border-indigo-100 bg-white p-3">
@@ -537,6 +554,8 @@ const handleSubmit = async (e: React.FormEvent) => {
               </article>
             ))}
           </div>
+        ) : (
+          null
         )}
       </section>
 
@@ -936,59 +955,75 @@ const handleSubmit = async (e: React.FormEvent) => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {scripts.map((script) => {
           const missingItems = scriptMissingItems(script);
           const playerSummary = scriptPlayerSummary(script);
+          const actorPreview = scriptActorPreview(script);
+          const stats = [
+            { label: '时长', value: formatDuration(script.min_duration, script.max_duration) },
+            { label: '开本', value: `${playerSummary.players || script.player_count || '-'}人` },
+            { label: '候选', value: `${playerSummary.candidates || 0}个` },
+            { label: '本型', value: playerSummary.rule || (playerSummary.players ? `${playerSummary.players}人本` : '-') },
+            { label: '板子', value: `${script.boards?.length || 0}套` },
+          ];
           return (
-          <div
+          <article
             key={script.id}
-            className={`border rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer ${missingItems.length ? 'border-orange-200 bg-orange-50/40' : 'border-gray-200'}`}
+            className={`cursor-pointer rounded-xl border bg-white p-5 transition-shadow hover:shadow-md ${missingItems.length ? 'border-orange-200 bg-orange-50/40' : 'border-gray-200'}`}
             onClick={() => openDetail(script)}
           >
-            <div className="flex justify-between items-start">
-              <div>
-                <h3 className="font-medium text-lg text-gray-800">{script.name}</h3>
-                <div className="mt-1 flex flex-wrap gap-1.5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h3 className="truncate text-lg font-bold text-gray-900">{script.name}</h3>
+                <div className="mt-3 flex flex-wrap gap-1.5">
                   <span className="rounded-full bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700">{scriptTypeLabel(script.script_type)}</span>
                   <span className="rounded-full bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-600">{distributionTypeLabel(script.distribution_type)}</span>
                 </div>
-                <p className="text-sm text-gray-500 mt-1">
-                  ⏱️ {formatDuration(script.min_duration, script.max_duration)} · 👤 {playerSummary.text} · 🎭 演绎角色库{script.actor_count || 0}个 · 板子{script.boards?.length || 0}套
-                </p>
-                {(script.actor_role_details || []).length > 0 && (
-                  <p className="mt-1 text-xs text-gray-500">
-                    演绎角色库：{(script.actor_role_details || []).slice(0, 4).map(role => `${role.name}/${roleKindLabel(role.role_kind)}`).join('、')}
-                  </p>
-                )}
-                {missingItems.length > 0 ? (
-                  <p className="mt-2 inline-flex rounded-full bg-orange-100 px-2 py-1 text-xs font-medium text-orange-700">待补：{missingItems.join('、')}</p>
-                ) : (
-                  <p className="mt-2 inline-flex rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">资料完整，可排期</p>
-                )}
               </div>
-              <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+              <div className="flex shrink-0 items-center gap-3 text-xs font-semibold" onClick={(e) => e.stopPropagation()}>
                 <button
+                  type="button"
                   onClick={() => openEdit(script)}
-                  className="text-blue-500 hover:text-blue-700 text-sm"
+                  className="text-blue-600 hover:text-blue-800"
                 >
                   编辑
                 </button>
                 <button
+                  type="button"
                   onClick={() => publishTemplate(script)}
-                  className="text-indigo-500 hover:text-indigo-700 text-sm"
+                  className="text-indigo-600 hover:text-indigo-800"
                 >
                   提交主库审核
                 </button>
                 <button
+                  type="button"
                   onClick={() => handleDelete(script.id)}
-                  className="text-red-500 hover:text-red-700 text-sm"
+                  className="text-red-500 hover:text-red-700"
                 >
                   删除
                 </button>
               </div>
             </div>
-          </div>
+            <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-5">
+              {stats.map(item => (
+                <div key={item.label} className="min-w-0">
+                  <p className="text-xs text-gray-400">{item.label}</p>
+                  <p className="mt-1 truncate text-sm font-bold text-gray-800" title={item.value}>{item.value}</p>
+                </div>
+              ))}
+            </div>
+            {actorPreview && (
+              <p className="mt-4 text-sm leading-6 text-gray-500">
+                演绎角色库：{actorPreview}
+              </p>
+            )}
+            {missingItems.length > 0 ? (
+              <p className="mt-4 inline-flex rounded-full bg-orange-100 px-2 py-1 text-xs font-medium text-orange-700">待补：{missingItems.join('、')}</p>
+            ) : (
+              <p className="mt-4 inline-flex rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700">资料完整，可排期</p>
+            )}
+          </article>
           );
         })}
       </div>

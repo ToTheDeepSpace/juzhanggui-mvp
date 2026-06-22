@@ -12,6 +12,7 @@ import CustomerManager from './CustomerManager';
 import EvaluationManager from './EvaluationManager';
 import ConflictResolutionPage from '../pages/ConflictResolutionPage';
 import StoreManager from './StoreManager';
+import StoreSettingsPanel from './StoreSettingsPanel';
 import { useApi } from '../hooks/useApi';
 import type { ScriptBoard, StoreRecord } from '../types';
 
@@ -142,17 +143,10 @@ export default function MainLayout() {
 
       {/* 主内容区 */}
       <main className="max-w-7xl mx-auto px-4 py-6">
-        {!isSuperAdmin && (
-          <div className="mb-4 rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
-            <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-              <p className="font-semibold">内测试用说明</p>
-              <p className="text-xs md:text-sm">当前版本建议由老板/店长使用；遇到数据异常或流程建议，请通过右侧“建议反馈”提交，关键操作会记录到店内操作日志。</p>
-            </div>
-          </div>
-        )}
         <Routes>
           {isSuperAdmin && <Route path="platform" element={<PlatformOverview />} />}
-          <Route path="stores" element={<StoreManager />} />
+          {isSuperAdmin && <Route path="stores" element={<StoreManager />} />}
+          {!isSuperAdmin && <Route path="stores" element={<StoreSettingsPanel />} />}
           {isSuperAdmin && <Route path="admin-users" element={<AdminUsersPanel />} />}
           {isSuperAdmin && <Route path="templates" element={<TemplateCenterPanel />} />}
           {isSuperAdmin && <Route path="feedback-inbox" element={<FeedbackInboxPanel />} />}

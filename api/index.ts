@@ -2104,9 +2104,11 @@ app.put('/api/platform/feedback/:id', async (req: any, res: any) => {
 // ===== Stores / 多店家后台 =====
 app.get('/api/stores', async (req: any, res: any) => {
   try {
+    const tenantId = cleanText(req.user?.tenantId, 80);
+    if (!isSuperAdminReq(req) && !tenantId) return res.status(403).json(err(new Error('当前账号没有绑定店铺，请重新登录或联系超管')));
     const data = isSuperAdminReq(req)
       ? await db.select().from(jzgStores).orderBy(desc(jzgStores.created_at))
-      : await db.select().from(jzgStores).where(eq(jzgStores.id, currentTenantId(req))).orderBy(desc(jzgStores.created_at));
+      : await db.select().from(jzgStores).where(eq(jzgStores.id, tenantId)).orderBy(desc(jzgStores.created_at));
     res.json(ok(data || []));
   } catch (e) {
     if (String((e as any)?.message || '').includes('jzg_stores')) return res.json(ok([{ id: TENANT_ID, name: '默认店家', city: '未设置', status: 'active' }]));
@@ -2143,11 +2145,20 @@ app.post('/api/stores', async (req: any, res: any) => {
 
 app.put('/api/stores/:id/settings', async (req: any, res: any) => {
   try {
-    const tenantId = currentTenantId(req);
+    const tenantId = cleanText(req.user?.tenantId, 80);
     const storeId = cleanText(req.params.id, 80);
     if (!storeId) return res.status(400).json(err(new Error('店家不存在')));
+    if (!isSuperAdminReq(req) && !tenantId) return res.status(403).json(err(new Error('当前账号没有绑定店铺，请重新登录或联系超管')));
     if (!isSuperAdminReq(req) && storeId !== tenantId) return res.status(403).json(err(new Error('不能修改其他店家的设置')));
     const fields: any = {};
+    if (req.body.name !== undefined) {
+      const name = cleanText(req.body.name, 120);
+      if (!name) return res.status(400).json(err(new Error('请填写店铺名称')));
+      fields.name = name;
+    }
+    if (req.body.city !== undefined) fields.city = cleanText(req.body.city, 80) || null;
+    if (req.body.address !== undefined) fields.address = cleanText(req.body.address, 240) || null;
+    if (req.body.contact !== undefined) fields.contact = cleanText(req.body.contact, 160) || null;
     if (req.body.defaultDepositAmount !== undefined) fields.default_deposit_amount = moneyCents(req.body.defaultDepositAmount);
     if (req.body.earlyFeeEnabled !== undefined) fields.early_fee_enabled = Boolean(req.body.earlyFeeEnabled);
     if (req.body.earlyFeeStartTime !== undefined) fields.early_fee_start_time = clockTime(req.body.earlyFeeStartTime, '00:00');
@@ -2158,8 +2169,15 @@ app.put('/api/stores/:id/settings', async (req: any, res: any) => {
     if (req.body.nightFeeEndTime !== undefined) fields.night_fee_end_time = clockTime(req.body.nightFeeEndTime, '06:00');
     if (req.body.nightFeeAmountPerHour !== undefined) fields.night_fee_amount_per_hour = moneyCents(req.body.nightFeeAmountPerHour);
     if (!Object.keys(fields).length) return res.status(400).json(err(new Error('没有可保存的设置')));
+    const changedFields = Object.keys(fields);
+    fields.updated_at = new Date();
     const [data] = await db.update(jzgStores).set(fields).where(eq(jzgStores.id, storeId)).returning();
     if (!data) return res.status(404).json(err(new Error('店家不存在')));
+    if (isSuperAdminReq(req)) {
+      await logPlatformAction(req, 'store_settings_updated', { type: 'store', id: data.id, label: data.name }, { fields: changedFields });
+    } else {
+      await logStoreAction(req, 'store_settings_updated', { type: 'store', id: data.id, label: data.name }, { fields: changedFields });
+    }
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
