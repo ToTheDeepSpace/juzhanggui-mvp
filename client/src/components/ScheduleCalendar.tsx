@@ -9,6 +9,7 @@ import { zhCN } from 'date-fns/locale';
 import ScheduleCalendarModal from './ScheduleCalendarModal';
 import QRCodeModal from './QRCodeModal';
 import ConfirmScheduleModal from './ConfirmScheduleModal';
+import { uploadImageFile } from '../utils/imageUpload';
 
 type ExtraFeeDraft = {
   earlyFeeEnabled: boolean;
@@ -355,20 +356,10 @@ export default function ScheduleCalendar() {
     }
     setFeedbackUploading(true);
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(new Error('读取图片失败'));
-        reader.readAsDataURL(file);
-      });
-      const result = await post<{ url: string }>('/uploads/positive-feedback', { dataUrl });
-      if (!result.success || !result.data?.url) {
-        alert(result.error || '图片上传失败');
-        return;
-      }
-      setPositiveFeedbackDraft(d => ({ ...d, screenshotUrl: result.data!.url }));
-    } catch {
-      alert('图片上传失败');
+      const url = await uploadImageFile(file, 'positive_feedback');
+      setPositiveFeedbackDraft(d => ({ ...d, screenshotUrl: url }));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '图片上传失败');
     } finally {
       setFeedbackUploading(false);
     }

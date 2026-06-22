@@ -13,6 +13,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import fs from 'node:fs';
 import path from 'node:path';
+import { sanitizeUploadedImageDataUrl } from './uploadSecurity.js';
 
 function hashPhone(phone: string): string {
   return crypto.createHash('sha256').update(`juzhanggui:${phone.trim()}`).digest('hex');
@@ -76,7 +77,14 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use('/uploads', express.static(LOCAL_UPLOAD_ROOT));
+const uploadStaticOptions = {
+  setHeaders(res: any) {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  },
+};
+app.use('/uploads', express.static(LOCAL_UPLOAD_ROOT, uploadStaticOptions));
+app.use('/api/uploads', express.static(LOCAL_UPLOAD_ROOT, uploadStaticOptions));
 app.use(express.json({ limit: '25mb' }));
 
 // Auth middleware
@@ -469,21 +477,15 @@ function boolValue(input: unknown): boolean {
   return input === true || input === 'true' || input === 1 || input === '1';
 }
 
-function saveUploadDataUrl(dataUrl: unknown, folder: string) {
-  const value = cleanText(dataUrl, 25 * 1024 * 1024);
-  const match = value.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,([A-Za-z0-9+/=]+)$/);
-  if (!match) throw new Error('请上传 png、jpg 或 webp 图片');
-  const contentType = match[1] === 'image/jpg' ? 'image/jpeg' : match[1];
-  const ext = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
-  const buffer = Buffer.from(match[2], 'base64');
-  if (buffer.length > 8 * 1024 * 1024) throw new Error('图片不能超过 8MB');
+async function saveUploadDataUrl(dataUrl: unknown, folder: string) {
+  const image = await sanitizeUploadedImageDataUrl(dataUrl);
   const safeFolder = cleanText(folder, 80).replace(/[^a-z0-9/_-]/gi, '') || 'misc';
   const day = new Date().toISOString().slice(0, 10);
   const dir = path.join(LOCAL_UPLOAD_ROOT, safeFolder, day);
   fs.mkdirSync(dir, { recursive: true });
-  const name = `${Date.now()}-${crypto.randomUUID()}.${ext}`;
-  fs.writeFileSync(path.join(dir, name), buffer);
-  return `/uploads/${safeFolder}/${day}/${name}`;
+  const name = `${Date.now()}-${crypto.randomUUID()}.${image.ext}`;
+  fs.writeFileSync(path.join(dir, name), image.buffer, { mode: 0o644 });
+  return `/api/uploads/${safeFolder}/${day}/${name}`;
 }
 
 function scheduleSortKey(row: any) {
@@ -2472,7 +2474,7 @@ app.post('/api/uploads/images', async (req: any, res: any) => {
       positive_feedback: 'positive-feedback',
     };
     const folder = allowedFolders[kind] || 'misc';
-    const url = saveUploadDataUrl(req.body?.dataUrl, folder);
+    const url = await saveUploadDataUrl(req.body?.dataUrl, folder);
     res.json(ok({ url }));
   } catch (e) { res.status(400).json(err(e)); }
 });
@@ -4115,20 +4117,9 @@ app.get('/api/schedules/:id/positive-feedbacks', async (req: any, res: any) => {
 });
 app.post('/api/uploads/positive-feedback', async (req: any, res: any) => {
   try {
-    const dataUrl = typeof req.body?.dataUrl === 'string' ? req.body.dataUrl : '';
-    const match = dataUrl.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,([A-Za-z0-9+/=]+)$/);
-    if (!match) return res.status(400).json(err(new Error('请上传 png、jpg 或 webp 图片')));
-    const contentType = match[1] === 'image/jpg' ? 'image/jpeg' : match[1];
-    const ext = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
-    const buffer = Buffer.from(match[2], 'base64');
-    if (buffer.length > 8 * 1024 * 1024) return res.status(400).json(err(new Error('图片不能超过 8MB')));
-    const day = new Date().toISOString().slice(0, 10);
-    const dir = path.join(LOCAL_UPLOAD_ROOT, 'positive-feedback', day);
-    fs.mkdirSync(dir, { recursive: true });
-    const name = `${Date.now()}-${crypto.randomUUID()}.${ext}`;
-    fs.writeFileSync(path.join(dir, name), buffer);
-    res.json(ok({ url: `/uploads/positive-feedback/${day}/${name}` }));
-  } catch (e) { res.status(500).json(err(e)); }
+    const url = await saveUploadDataUrl(req.body?.dataUrl, 'positive-feedback');
+    res.json(ok({ url }));
+  } catch (e) { res.status(400).json(err(e)); }
 });
 app.post('/api/schedules/:id/positive-feedbacks', async (req: any, res: any) => {
   try {

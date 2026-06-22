@@ -42,6 +42,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^7.14.1",
+    "sharp": "^0.35.2",
     "sqlite": "^5.1.1",
     "sqlite3": "^6.0.1",
     "tencentcloud-sdk-nodejs": "^4.1.242",
