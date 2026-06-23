@@ -117,8 +117,7 @@ export async function saveSanitizedUploadImage(
 
 function cosEncode(value: string) {
   return encodeURIComponent(value)
-    .replace(/[!'()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
-    .toLowerCase();
+    .replace(/[!'()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
 function createCosAuthorization(input: {
@@ -132,10 +131,10 @@ function createCosAuthorization(input: {
   const now = input.now || Math.floor(Date.now() / 1000);
   const signTime = `${now};${now + 600}`;
   const headerPairs = Object.entries(input.headers)
-    .map(([key, value]) => [key.toLowerCase(), String(value).trim()] as const)
+    .map(([key, value]) => [cosEncode(key).toLowerCase(), cosEncode(String(value).trim())] as const)
     .sort(([a], [b]) => a.localeCompare(b));
   const headerList = headerPairs.map(([key]) => key).join(';');
-  const httpHeaders = headerPairs.map(([key, value]) => `${cosEncode(key)}=${cosEncode(value)}`).join('&');
+  const httpHeaders = headerPairs.map(([key, value]) => `${key}=${value}`).join('&');
   const httpString = `${input.method.toLowerCase()}\n${input.pathname}\n\n${httpHeaders}\n`;
   const httpStringSha1 = crypto.createHash('sha1').update(httpString).digest('hex');
   const stringToSign = `sha1\n${signTime}\n${httpStringSha1}\n`;
@@ -164,6 +163,7 @@ export function createTencentCosUploadTransport(config: CosUploadConfig): CosUpl
   const host = cosHost(config);
   async function request(method: string, key: string, body?: Buffer, contentType?: string): Promise<CosGetObjectResult> {
     const pathname = cosPathname(key);
+    const signedHeaders: Record<string, string> = { host };
     const headers: Record<string, string> = { host };
     if (contentType) headers['content-type'] = contentType;
     if (body) {
@@ -173,7 +173,7 @@ export function createTencentCosUploadTransport(config: CosUploadConfig): CosUpl
     const authorization = createCosAuthorization({
       method,
       pathname,
-      headers,
+      headers: signedHeaders,
       secretId: config.secretId,
       secretKey: config.secretKey,
     });
