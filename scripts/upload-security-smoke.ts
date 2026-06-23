@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { sanitizeUploadedImageDataUrl } from '../api/uploadSecurity';
+import { sanitizeUploadedImageDataUrl } from '../api/uploadSecurity.js';
 
 const onePixelPng = await sharp({
   create: {

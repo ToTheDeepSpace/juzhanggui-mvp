@@ -14,6 +14,13 @@ import bcrypt from 'bcryptjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { sanitizeUploadedImageDataUrl } from './uploadSecurity.js';
+import {
+  buildCosObjectKey,
+  createTencentCosUploadTransport,
+  getCosUploadConfig,
+  normalizeUploadRelativePath,
+  saveSanitizedUploadImage,
+} from './uploadStorage.js';
 
 function hashPhone(phone: string): string {
   return crypto.createHash('sha256').update(`juzhanggui:${phone.trim()}`).digest('hex');
@@ -60,6 +67,8 @@ const JZG_WECHAT_OPEN_APP_ID = process.env.JZG_WECHAT_OPEN_APP_ID || process.env
 const JZG_WECHAT_OPEN_APP_SECRET = process.env.JZG_WECHAT_OPEN_APP_SECRET || process.env.WECHAT_OPEN_APP_SECRET || '';
 const JZG_WECHAT_REDIRECT_URI = process.env.JZG_WECHAT_REDIRECT_URI || `${JUZHANGGUI_SITE_URL}/api/player/wechat/callback`;
 const LOCAL_UPLOAD_ROOT = process.env.LOCAL_UPLOAD_ROOT || path.join(process.cwd(), 'public', 'uploads');
+const COS_UPLOAD_CONFIG = getCosUploadConfig(process.env);
+const COS_UPLOAD_TRANSPORT = COS_UPLOAD_CONFIG ? createTencentCosUploadTransport(COS_UPLOAD_CONFIG) : null;
 
 const app = express();
 app.use(cors({
@@ -84,6 +93,22 @@ const uploadStaticOptions = {
   },
 };
 app.use('/uploads', express.static(LOCAL_UPLOAD_ROOT, uploadStaticOptions));
+app.get('/api/uploads/*', async (req: any, res: any, next: any) => {
+  if (!COS_UPLOAD_CONFIG || !COS_UPLOAD_TRANSPORT?.getObject) return next();
+  try {
+    const relativePath = normalizeUploadRelativePath(req.params[0]);
+    if (!relativePath) return res.status(400).json({ error: '图片路径不合法' });
+    const object = await COS_UPLOAD_TRANSPORT.getObject(buildCosObjectKey(COS_UPLOAD_CONFIG, relativePath));
+    if (object.status === 404) return next();
+    if (!object.ok) throw new Error(`COS 图片读取失败：${object.status}`);
+    res.setHeader('Content-Type', object.contentType || 'image/jpeg');
+    res.setHeader('Cache-Control', object.cacheControl || 'public, max-age=31536000, immutable');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.send(object.body);
+  } catch (e) {
+    next(e);
+  }
+});
 app.use('/api/uploads', express.static(LOCAL_UPLOAD_ROOT, uploadStaticOptions));
 app.use(express.json({ limit: '25mb' }));
 
@@ -479,13 +504,12 @@ function boolValue(input: unknown): boolean {
 
 async function saveUploadDataUrl(dataUrl: unknown, folder: string) {
   const image = await sanitizeUploadedImageDataUrl(dataUrl);
-  const safeFolder = cleanText(folder, 80).replace(/[^a-z0-9/_-]/gi, '') || 'misc';
-  const day = new Date().toISOString().slice(0, 10);
-  const dir = path.join(LOCAL_UPLOAD_ROOT, safeFolder, day);
-  fs.mkdirSync(dir, { recursive: true });
-  const name = `${Date.now()}-${crypto.randomUUID()}.${image.ext}`;
-  fs.writeFileSync(path.join(dir, name), image.buffer, { mode: 0o644 });
-  return `/api/uploads/${safeFolder}/${day}/${name}`;
+  const result = await saveSanitizedUploadImage(image, folder, {
+    env: process.env,
+    localUploadRoot: LOCAL_UPLOAD_ROOT,
+    cosTransport: COS_UPLOAD_TRANSPORT,
+  });
+  return result.url;
 }
 
 function scheduleSortKey(row: any) {
