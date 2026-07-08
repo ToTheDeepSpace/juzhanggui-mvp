@@ -619,7 +619,7 @@ export default function ScheduleCalendar() {
       storeCarSequence: formData.storeCarSequence ? parseInt(formData.storeCarSequence) : undefined,
       externalNpcs: formData.externalNpcs,
       lingqiCommissions: formData.lingqiCommissions,
-      actors: selectedActors.map(sa => {
+      actors: selectedActors.filter(sa => sa.actorId && sa.roleName).map(sa => {
         const actorStart = new Date(startDateTime.getTime() + sa.startOffset * 60000);
         const actorEnd = new Date(actorStart.getTime() + sa.duration * 60000);
         return { actorId: sa.actorId, roleName: sa.roleName, startTime: actorStart.toISOString(), endTime: actorEnd.toISOString() };

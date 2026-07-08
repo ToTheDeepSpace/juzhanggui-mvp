@@ -4,6 +4,9 @@ import { tencentPgPool } from '../api/tencentPgSupabase';
 const requiredColumns = [
   ['rooms', 'photo_url'],
   ['actors', 'photo_url'],
+  ['schedules', 'customer_name'],
+  ['schedules', 'customer_phone'],
+  ['schedules', 'note'],
   ['schedules', 'store_car_sequence'],
 ];
 

@@ -177,6 +177,9 @@ function err(e: any) {
   }
   return { success: false, error: e?.message || String(e) };
 }
+function throwDbError(error: any) {
+  if (error) throw error;
+}
 function sha256(input: string): string { return crypto.createHash('sha256').update(input).digest('hex'); }
 function cleanText(input: unknown, max = 120): string {
   return typeof input === 'string' ? input.trim().slice(0, max) : '';
@@ -613,23 +616,29 @@ function lingqiCommissionPayload(row: any) {
 async function saveScheduleExternalData(req: any, scheduleId: string, tenantId: string, body: any) {
   if (Array.isArray(body.externalNpcs) || Array.isArray(body.external_npcs)) {
     const source = Array.isArray(body.externalNpcs) ? body.externalNpcs : body.external_npcs;
-    await supabase.from('schedule_external_npcs').delete().eq('tenant_id', tenantId).eq('schedule_id', scheduleId);
+    const { error: deleteNpcErr } = await supabase.from('schedule_external_npcs').delete().eq('tenant_id', tenantId).eq('schedule_id', scheduleId);
+    throwDbError(deleteNpcErr);
     const rows = source
       .map(externalNpcPayload)
       .filter((row: any) => row.role_name)
       .map((row: any) => ({ ...row, tenant_id: tenantId, schedule_id: scheduleId }));
-    if (rows.length) await supabase.from('schedule_external_npcs').insert(rows);
+    if (rows.length) {
+      const { error: insertNpcErr } = await supabase.from('schedule_external_npcs').insert(rows);
+      throwDbError(insertNpcErr);
+    }
   }
 
   if (Array.isArray(body.lingqiCommissions) || Array.isArray(body.lingqi_commissions)) {
     const source = Array.isArray(body.lingqiCommissions) ? body.lingqiCommissions : body.lingqi_commissions;
-    await supabase.from('schedule_lingqi_commissions').delete().eq('tenant_id', tenantId).eq('schedule_id', scheduleId);
+    const { error: deleteCommissionErr } = await supabase.from('schedule_lingqi_commissions').delete().eq('tenant_id', tenantId).eq('schedule_id', scheduleId);
+    throwDbError(deleteCommissionErr);
     const profileIds = source.map((row: any) => cleanText(row?.lc_profile_id || row?.lcProfileId, 80)).filter(Boolean);
     const profilesById = new Map<string, any>();
     if (profileIds.length) {
-      const { data: profiles } = await supabase.from('lc_profiles')
+      const { data: profiles, error: profileErr } = await supabase.from('lc_profiles')
         .select('id, display_name, avatar, role_type, identity_roles, verified_dm, is_visible, is_banned')
         .in('id', profileIds);
+      throwDbError(profileErr);
       for (const profile of profiles || []) profilesById.set(profile.id, profile);
     }
     const rows = source.map((raw: any) => {
@@ -643,7 +652,10 @@ async function saveScheduleExternalData(req: any, scheduleId: string, tenantId: 
         schedule_id: scheduleId,
       };
     }).filter((row: any) => row.display_name);
-    if (rows.length) await supabase.from('schedule_lingqi_commissions').insert(rows);
+    if (rows.length) {
+      const { error: insertCommissionErr } = await supabase.from('schedule_lingqi_commissions').insert(rows);
+      throwDbError(insertCommissionErr);
+    }
   }
 }
 
@@ -3103,18 +3115,21 @@ app.post('/api/schedules', async (req: any, res: any) => {
       const { data: room } = await supabase.from('rooms').select('id').eq('id', d.roomId).eq('tenant_id', tenantId).maybeSingle();
       if (!room) return res.status(404).json(err(new Error('房间不存在')));
     }
-    if (d.actors?.length) {
-      const actorsValid = await validateTenantActors(req, res, d.actors.map((a: any) => a.actorId));
+    const actorAssignments = Array.isArray(d.actors)
+      ? d.actors.filter((a: any) => cleanText(a?.actorId, 80) && cleanText(a?.roleName, 120))
+      : [];
+    if (actorAssignments.length) {
+      const actorsValid = await validateTenantActors(req, res, actorAssignments.map((a: any) => a.actorId));
       if (!actorsValid) return;
       const validRoleKeys = new Set(roleSelection.roles.map(role => roleNameKey(role.role_name)));
-      for (const actorRow of d.actors) {
+      for (const actorRow of actorAssignments) {
         const roleName = cleanText(actorRow?.roleName, 120);
         if (roleName && validRoleKeys.size && !validRoleKeys.has(roleNameKey(roleName))) {
           return res.status(400).json(err(new Error(`卡司角色“${roleName}”不在本场选择的演绎角色里`)));
         }
       }
     }
-    const { data } = await supabase.from('schedules').insert({
+    const { data, error: scheduleInsertErr } = await supabase.from('schedules').insert({
       script_id: d.scriptId, room_id: d.roomId || null,
       script_board_id: roleSelection.board?.id || null,
       actor_role_selection: roleSelection.roles,
@@ -3127,11 +3142,16 @@ app.post('/api/schedules', async (req: any, res: any) => {
       note: d.note || null,
       tenant_id: tenantId
     }).select().single();
-    if (d.actors && d.actors.length) await supabase.from('schedule_actors').insert(d.actors.map((a: any) => ({ schedule_id: data!.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime })));
-    await saveScheduleExternalData(req, data!.id, tenantId, d);
+    throwDbError(scheduleInsertErr);
+    if (!data?.id) throw new Error('排期保存失败，数据库没有返回新车次');
+    if (actorAssignments.length) {
+      const { error: scheduleActorErr } = await supabase.from('schedule_actors').insert(actorAssignments.map((a: any) => ({ schedule_id: data.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime })));
+      throwDbError(scheduleActorErr);
+    }
+    await saveScheduleExternalData(req, data.id, tenantId, d);
     let lingqiSync: any = { ok: true, skipped: true, reason: 'not_carpool' };
     try {
-      lingqiSync = await syncScheduleToLingqiCarpool(data!.id, tenantId);
+      lingqiSync = await syncScheduleToLingqiCarpool(data.id, tenantId);
     } catch (syncErr) {
       lingqiSync = { ok: false, skipped: false, reason: err(syncErr).error };
     }
@@ -3193,19 +3213,25 @@ app.put('/api/schedules/:id', async (req: any, res: any) => {
     if (d.playerCount !== undefined) fields.player_count = d.playerCount;
     if (d.note !== undefined) fields.note = d.note;
     if (d.storeCarSequence !== undefined || d.store_car_sequence !== undefined) fields.store_car_sequence = Number(d.storeCarSequence || d.store_car_sequence || 0) || null;
-    await supabase.from('schedules').update(fields).eq('id', req.params.id).eq('tenant_id', tenantId);
-    if (d.actors) {
-      const actorsValid = await validateTenantActors(req, res, d.actors.map((a: any) => a.actorId));
+    const { error: scheduleUpdateErr } = await supabase.from('schedules').update(fields).eq('id', req.params.id).eq('tenant_id', tenantId);
+    throwDbError(scheduleUpdateErr);
+    if (Array.isArray(d.actors)) {
+      const actorAssignments = d.actors.filter((a: any) => cleanText(a?.actorId, 80) && cleanText(a?.roleName, 120));
+      const actorsValid = await validateTenantActors(req, res, actorAssignments.map((a: any) => a.actorId));
       if (!actorsValid) return;
       const validRoleKeys = new Set(roleSelection.roles.map(role => roleNameKey(role.role_name)));
-      for (const actorRow of d.actors) {
+      for (const actorRow of actorAssignments) {
         const roleName = cleanText(actorRow?.roleName, 120);
         if (roleName && validRoleKeys.size && !validRoleKeys.has(roleNameKey(roleName))) {
           return res.status(400).json(err(new Error(`卡司角色“${roleName}”不在本场选择的演绎角色里`)));
         }
       }
-      await supabase.from('schedule_actors').delete().eq('schedule_id', req.params.id);
-      if (d.actors.length) await supabase.from('schedule_actors').insert(d.actors.map((a: any) => ({ schedule_id: req.params.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime })));
+      const { error: deleteActorErr } = await supabase.from('schedule_actors').delete().eq('schedule_id', req.params.id);
+      throwDbError(deleteActorErr);
+      if (actorAssignments.length) {
+        const { error: insertActorErr } = await supabase.from('schedule_actors').insert(actorAssignments.map((a: any) => ({ schedule_id: req.params.id, actor_id: a.actorId, role_name: a.roleName, start_time: a.startTime, end_time: a.endTime })));
+        throwDbError(insertActorErr);
+      }
     }
     await saveScheduleExternalData(req, req.params.id, tenantId, d);
     let lingqiSync: any = { ok: true, skipped: true, reason: 'not_carpool' };
