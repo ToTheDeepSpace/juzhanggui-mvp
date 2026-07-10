@@ -7,6 +7,7 @@
     "dev": "node scripts/dev.js",
     "test:pg-adapter": "tsx scripts/pg-adapter-smoke.ts",
     "test:tenant-isolation": "tsx scripts/tenant-isolation-smoke.ts",
+    "test:shared-script-library": "tsx --test tests/sharedScriptLibrary.test.ts",
     "server": "nodemon --exec tsx server/index.ts",
     "client": "vite",
     "build": "vite build",

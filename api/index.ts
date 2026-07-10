@@ -21,6 +21,14 @@ import {
   normalizeUploadRelativePath,
   saveSanitizedUploadImage,
 } from './uploadStorage.js';
+import {
+  mergeSharedCredits,
+  mergeSharedRoles,
+  normalizeSharedCredits,
+  normalizeSharedRoles,
+  normalizeSharedScriptKey,
+  publicSharedScriptTemplate,
+} from './sharedScriptLibrary.js';
 
 function hashPhone(phone: string): string {
   return crypto.createHash('sha256').update(`juzhanggui:${phone.trim()}`).digest('hex');
@@ -69,6 +77,7 @@ const JZG_WECHAT_REDIRECT_URI = process.env.JZG_WECHAT_REDIRECT_URI || `${JUZHAN
 const LOCAL_UPLOAD_ROOT = process.env.LOCAL_UPLOAD_ROOT || path.join(process.cwd(), 'public', 'uploads');
 const COS_UPLOAD_CONFIG = getCosUploadConfig(process.env);
 const COS_UPLOAD_TRANSPORT = COS_UPLOAD_CONFIG ? createTencentCosUploadTransport(COS_UPLOAD_CONFIG) : null;
+const SHARED_SCRIPT_LIBRARY_TOKEN = process.env.SHARED_SCRIPT_LIBRARY_TOKEN || '';
 
 const app = express();
 app.use(cors({
@@ -136,6 +145,9 @@ const PUBLIC_PATHS = [
   '/api/dm/auth/config',
   '/api/dm/login',
   '/api/dm/send-code',
+  '/api/shared/script-library',
+  '/api/shared/script-library/contributions',
+  '/api/shared/script-library/carpool-sync',
 ];
 const PUBLIC_SUFFIXES = ['/public', '/checkin', '/evaluate'];
 
@@ -1304,6 +1316,7 @@ function serializeRoles(rows: any[] | null | undefined) {
     role_name: r.role_name,
     gender: r.gender || '',
     role_kind: r.role_kind || 'dm',
+    tags: Array.isArray(r.tags) ? r.tags : [],
   }));
 }
 
@@ -1354,6 +1367,171 @@ function serializeBoards(rows: any[] | null | undefined) {
         }))
         .filter((role: any) => role.role_name),
     }));
+}
+
+function uuidValue(value: unknown) {
+  const text = cleanText(value, 80);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text) ? text : '';
+}
+
+function sharedLibraryTokenMatches(req: any) {
+  const provided = cleanText(req.headers['x-shared-library-token'], 500);
+  if (!SHARED_SCRIPT_LIBRARY_TOKEN || !provided) return false;
+  const expectedBuffer = Buffer.from(SHARED_SCRIPT_LIBRARY_TOKEN);
+  const providedBuffer = Buffer.from(provided);
+  return expectedBuffer.length === providedBuffer.length && crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+}
+
+function requireSharedLibraryToken(req: any, res: any) {
+  if (!SHARED_SCRIPT_LIBRARY_TOKEN) {
+    res.status(503).json(err(new Error('共享剧本库服务密钥未配置')));
+    return false;
+  }
+  if (!sharedLibraryTokenMatches(req)) {
+    res.status(401).json(err(new Error('共享剧本库服务认证失败')));
+    return false;
+  }
+  return true;
+}
+
+function sharedTemplateFields(input: any) {
+  const name = cleanText(input?.name, 160);
+  const playerRoles = normalizeSharedRoles(input?.player_roles ?? input?.playerRoles, 'player');
+  const actorRoles = normalizeSharedRoles(input?.actor_roles ?? input?.actorRoles, 'actor');
+  const boards = Array.isArray(input?.boards) ? input.boards : [];
+  const optionalNumber = (value: unknown) => {
+    if (value === undefined || value === null || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : null;
+  };
+  return {
+    name,
+    canonical_key: normalizeSharedScriptKey(name),
+    duration_minutes: optionalNumber(input?.duration_minutes ?? input?.durationMinutes),
+    min_duration_hours: optionalNumber(input?.min_duration_hours ?? input?.minDurationHours),
+    max_duration_hours: optionalNumber(input?.max_duration_hours ?? input?.maxDurationHours),
+    dm_gender: cleanText(input?.dm_gender ?? input?.dmGender, 40) || null,
+    player_count: optionalNumber(input?.player_count ?? input?.playerCount) || (playerRoles.length || null),
+    player_selection_rule: cleanText(input?.player_selection_rule ?? input?.playerSelectionRule, 300) || null,
+    player_roles: playerRoles,
+    actor_roles: actorRoles,
+    boards,
+    credits: normalizeSharedCredits(input?.credits),
+  };
+}
+
+async function findApprovedSharedTemplate(idInput: unknown, nameInput?: unknown) {
+  const id = uuidValue(idInput);
+  if (id) {
+    const byId = await supabase.from('jzg_script_templates').select('*').eq('id', id).eq('review_status', 'approved').maybeSingle();
+    if (byId.error) throw byId.error;
+    if (byId.data) return byId.data;
+  }
+  const canonicalKey = normalizeSharedScriptKey(nameInput);
+  if (!canonicalKey) return null;
+  const byKey = await supabase.from('jzg_script_templates').select('*').eq('canonical_key', canonicalKey).eq('review_status', 'approved').maybeSingle();
+  if (byKey.error) throw byKey.error;
+  return byKey.data || null;
+}
+
+async function upsertApprovedSharedTemplate(input: any) {
+  const fields = sharedTemplateFields(input);
+  if (!fields.name || !fields.canonical_key) throw new Error('请填写剧本名称');
+  const existing = await findApprovedSharedTemplate(input?.id ?? input?.script_id ?? input?.scriptId, fields.name);
+  const now = new Date().toISOString();
+  if (existing) {
+    const merged = {
+      name: fields.name || existing.name,
+      canonical_key: normalizeSharedScriptKey(fields.name || existing.name),
+      duration_minutes: fields.duration_minutes || existing.duration_minutes || 240,
+      min_duration_hours: fields.min_duration_hours || existing.min_duration_hours || 4,
+      max_duration_hours: fields.max_duration_hours || existing.max_duration_hours || 4,
+      dm_gender: fields.dm_gender || existing.dm_gender || '未指定',
+      player_count: Math.max(Number(existing.player_count || 0), Number(fields.player_count || 0), fields.player_roles.length),
+      player_selection_rule: fields.player_selection_rule || existing.player_selection_rule || null,
+      player_roles: mergeSharedRoles(existing.player_roles, fields.player_roles, 'player'),
+      actor_roles: mergeSharedRoles(existing.actor_roles, fields.actor_roles, 'actor'),
+      boards: fields.boards.length ? fields.boards : (Array.isArray(existing.boards) ? existing.boards : []),
+      credits: mergeSharedCredits(existing.credits, fields.credits),
+      source_system: cleanText(input?.source_system ?? input?.sourceSystem, 40) || existing.source_system || null,
+      source_record_id: cleanText(input?.source_record_id ?? input?.sourceRecordId, 120) || existing.source_record_id || null,
+      updated_at: now,
+    };
+    const updated = await supabase.from('jzg_script_templates').update(merged).eq('id', existing.id).select('*').single();
+    if (updated.error) throw updated.error;
+    return updated.data;
+  }
+
+  const inserted = await supabase.from('jzg_script_templates').insert({
+    ...fields,
+    duration_minutes: fields.duration_minutes || 240,
+    min_duration_hours: fields.min_duration_hours || 4,
+    max_duration_hours: fields.max_duration_hours || 4,
+    dm_gender: fields.dm_gender || '未指定',
+    player_count: Math.max(1, Number(fields.player_count || fields.player_roles.length || 1)),
+    source_script_id: uuidValue(input?.source_script_id ?? input?.sourceScriptId) || null,
+    source_tenant_id: uuidValue(input?.source_tenant_id ?? input?.sourceTenantId) || null,
+    source_system: cleanText(input?.source_system ?? input?.sourceSystem, 40) || null,
+    source_record_id: cleanText(input?.source_record_id ?? input?.sourceRecordId, 120) || null,
+    usage_count: 0,
+    created_by: cleanText(input?.created_by ?? input?.createdBy, 160) || '共享剧本库',
+    review_status: 'approved',
+    reviewed_at: now,
+    reviewed_by: uuidValue(input?.reviewed_by ?? input?.reviewedBy) || null,
+    reject_reason: null,
+    updated_at: now,
+  }).select('*').single();
+  if (inserted.error) throw inserted.error;
+  return inserted.data;
+}
+
+async function ensureTenantScriptFromSharedTemplate(templateIdInput: unknown, tenantId: string, fallbackNameInput: unknown, fallbackRolesInput: unknown) {
+  const template = await findApprovedSharedTemplate(templateIdInput, fallbackNameInput);
+  const name = cleanText(template?.name || fallbackNameInput, 160);
+  if (!name) throw new Error('缺少剧本名称');
+  const existing = await supabase.from('scripts').select('id,name').eq('tenant_id', tenantId).eq('name', name).maybeSingle();
+  if (existing.error) throw existing.error;
+  if (existing.data) return { script: existing.data, template, existing: true };
+
+  const playerRoles = template
+    ? normalizeSharedRoles(template.player_roles, 'player')
+    : normalizeSharedRoles(fallbackRolesInput, 'player');
+  const actorRoles = template ? normalizeSharedRoles(template.actor_roles, 'actor') : [];
+  const created = await supabase.from('scripts').insert({
+    name,
+    duration_minutes: Number(template?.duration_minutes || 240),
+    min_duration_hours: Number(template?.min_duration_hours || 4),
+    max_duration_hours: Number(template?.max_duration_hours || 4),
+    player_count: Math.max(1, Number(template?.player_count || playerRoles.length || 1)),
+    player_selection_rule: cleanText(template?.player_selection_rule, 300) || null,
+    tenant_id: tenantId,
+  }).select('*').single();
+  if (created.error) throw created.error;
+  if (playerRoles.length) {
+    const roleInsert = await supabase.from('script_player_roles').insert(playerRoles.map(role => ({
+      script_id: created.data.id,
+      role_name: role.role_name,
+      gender: role.gender || '',
+    })));
+    if (roleInsert.error) throw roleInsert.error;
+  }
+  if (actorRoles.length) {
+    const actorInsert = await supabase.from('script_actor_roles').insert(actorRoles.map(role => ({
+      script_id: created.data.id,
+      role_name: role.role_name,
+      gender: role.gender || '',
+      role_kind: roleKindValue(role.role_kind),
+    })));
+    if (actorInsert.error) throw actorInsert.error;
+  }
+  await saveScriptBoards(
+    created.data.id,
+    Array.isArray(template?.boards) ? template.boards : [],
+    actorRoles,
+    playerRoles,
+    Math.max(1, Number(template?.player_count || playerRoles.length || 1)),
+  );
+  return { script: created.data, template, existing: false };
 }
 
 function playerSelectionSummary(script: any, candidateCount?: number) {
@@ -1622,6 +1800,7 @@ async function publishScriptRowsAsTemplates(scripts: any[], createdBy: string, r
     source_script_id: s.id,
     source_tenant_id: s.tenant_id || TENANT_ID,
     name: s.name,
+    canonical_key: normalizeSharedScriptKey(s.name),
     duration_minutes: s.duration_minutes || s.duration || 240,
     min_duration_hours: s.min_duration_hours || ((s.min_duration || s.duration_minutes || 240) / 60),
     max_duration_hours: s.max_duration_hours || ((s.max_duration || s.duration_minutes || 240) / 60),
@@ -1631,6 +1810,7 @@ async function publishScriptRowsAsTemplates(scripts: any[], createdBy: string, r
     player_roles: serializeRoles(s.script_player_roles),
     actor_roles: serializeRoles(s.script_actor_roles),
     boards: serializeBoards(s.script_boards),
+    credits: normalizeSharedCredits(s.credits),
     created_by: createdBy,
     review_status: reviewStatus,
     reviewed_at: reviewStatus === 'approved' ? now : null,
@@ -1639,6 +1819,13 @@ async function publishScriptRowsAsTemplates(scripts: any[], createdBy: string, r
     updated_at: now,
   }));
   if (!rows.length) return [];
+  if (reviewStatus === 'approved') {
+    const approved = [];
+    for (const row of rows) {
+      approved.push(await upsertApprovedSharedTemplate({ ...row, reviewed_by: reviewedBy || null }));
+    }
+    return approved;
+  }
   const { data, error } = await supabase.from('jzg_script_templates')
     .upsert(rows, { onConflict: 'source_script_id,source_tenant_id' })
     .select();
@@ -2215,10 +2402,44 @@ app.put('/api/platform/script-templates/:id/review', async (req: any, res: any) 
     if (!requireSuperAdmin(req, res)) return;
     const action = cleanText(req.body?.action, 20);
     if (!['approve', 'reject'].includes(action)) return res.status(400).json(err(new Error('审核操作无效')));
+    const sourceResult = await supabase.from('jzg_script_templates').select('*').eq('id', req.params.id).single();
+    if (sourceResult.error) throw sourceResult.error;
+    if (!sourceResult.data) return res.status(404).json(err(new Error('公共剧本投稿不存在')));
+    const sourceTemplate = sourceResult.data;
+    const canonicalKey = normalizeSharedScriptKey(sourceTemplate.name);
+    if (action === 'approve') {
+      const duplicateResult = await supabase.from('jzg_script_templates')
+        .select('*')
+        .eq('canonical_key', canonicalKey)
+        .eq('review_status', 'approved')
+        .neq('id', req.params.id)
+        .maybeSingle();
+      if (duplicateResult.error) throw duplicateResult.error;
+      if (duplicateResult.data) {
+        const merged = await upsertApprovedSharedTemplate({
+          ...sourceTemplate,
+          id: duplicateResult.data.id,
+          reviewed_by: req.user?.adminUserId || null,
+        });
+        const mergeReason = `已合并到公共剧本 ${merged.id}`;
+        const mergedSource = await supabase.from('jzg_script_templates').update({
+          canonical_key: canonicalKey,
+          review_status: 'rejected',
+          reviewed_at: new Date().toISOString(),
+          reviewed_by: req.user?.adminUserId || null,
+          reject_reason: mergeReason,
+          updated_at: new Date().toISOString(),
+        }).eq('id', req.params.id).select().single();
+        if (mergedSource.error) throw mergedSource.error;
+        await logPlatformAction(req, 'script_template_merged', { type: 'script_template', id: merged.id, label: merged.name }, { mergedFrom: req.params.id });
+        return res.json(ok({ ...merged, merged_from: req.params.id }));
+      }
+    }
     const reviewStatus = action === 'approve' ? 'approved' : 'rejected';
     const rejectReason = action === 'reject' ? cleanText(req.body?.reason, 500) || '超管驳回' : null;
     const { data, error } = await supabase.from('jzg_script_templates')
       .update({
+        canonical_key: canonicalKey,
         review_status: reviewStatus,
         reviewed_at: new Date().toISOString(),
         reviewed_by: req.user?.adminUserId || null,
@@ -2415,6 +2636,98 @@ app.post('/api/feedback', async (req: any, res: any) => {
     if (error) throw error;
     await logStoreAction(req, 'feedback_submitted', { type: 'feedback', id: data.id, label: title }, { category, priority, moderation: moderationPrecheck });
     res.json(ok(data));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+// ===== Shared Script Library / 两站共用公共剧本库 =====
+app.get('/api/shared/script-library', async (_req: any, res: any) => {
+  try {
+    const { data, error } = await supabase.from('jzg_script_templates')
+      .select('id,name,canonical_key,duration_minutes,min_duration_hours,max_duration_hours,player_count,player_selection_rule,player_roles,actor_roles,boards,credits,updated_at')
+      .eq('review_status', 'approved')
+      .order('name', { ascending: true })
+      .limit(1000);
+    if (error && String(error.message || '').includes('jzg_script_templates')) return res.json(ok([]));
+    if (error) throw error;
+    res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
+    res.json(ok((data || []).map(publicSharedScriptTemplate)));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/shared/script-library/contributions', async (req: any, res: any) => {
+  try {
+    if (!requireSharedLibraryToken(req, res)) return;
+    const template = await upsertApprovedSharedTemplate({
+      id: req.body?.scriptId || null,
+      name: req.body?.scriptName,
+      duration_minutes: req.body?.durationMinutes,
+      min_duration_hours: req.body?.minDurationHours,
+      max_duration_hours: req.body?.maxDurationHours,
+      player_roles: req.body?.playerRoles,
+      actor_roles: req.body?.actorRoles,
+      credits: req.body?.credits,
+      source_script_id: req.body?.legacyScriptId,
+      source_system: 'lingqi',
+      source_record_id: req.body?.contributionId,
+      created_by: cleanText(req.body?.contributorName, 80) ? `灵契共建 · ${cleanText(req.body?.contributorName, 80)}` : '灵契共建',
+    });
+    res.json(ok(publicSharedScriptTemplate(template)));
+  } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.post('/api/shared/script-library/carpool-sync', async (req: any, res: any) => {
+  try {
+    if (!requireSharedLibraryToken(req, res)) return;
+    const carpoolId = cleanText(req.body?.carpoolId, 120);
+    const scriptName = cleanText(req.body?.scriptName, 160);
+    const eventDate = cleanText(req.body?.eventDate, 20);
+    if (!carpoolId || !scriptName || !/^\d{4}-\d{2}-\d{2}$/.test(eventDate)) {
+      return res.status(400).json(err(new Error('拼车同步缺少拼车ID、剧本名或有效日期')));
+    }
+    const reused = await supabase.from('schedules').select('id,script_id').eq('lingqi_carpool_id', carpoolId).maybeSingle();
+    if (reused.error) throw reused.error;
+    if (reused.data) return res.json(ok({ scheduleId: reused.data.id, storeScriptId: reused.data.script_id, reused: true }));
+
+    const imported = await ensureTenantScriptFromSharedTemplate(req.body?.scriptId, TENANT_ID, scriptName, req.body?.scriptRoles);
+    const roomName = cleanText(req.body?.storeName, 100) || `灵契拼车-${cleanText(req.body?.city, 40) || '待定城市'}`;
+    const roomResult = await supabase.from('rooms').select('id').eq('tenant_id', TENANT_ID).eq('name', roomName).maybeSingle();
+    if (roomResult.error) throw roomResult.error;
+    let roomId = roomResult.data?.id;
+    if (!roomId) {
+      const createdRoom = await supabase.from('rooms').insert({
+        name: roomName,
+        capacity: Math.max(0, Number(req.body?.neededCount || 0)),
+        tenant_id: TENANT_ID,
+        status: 'active',
+      }).select('id').single();
+      if (createdRoom.error) throw createdRoom.error;
+      roomId = createdRoom.data?.id;
+    }
+
+    const startTime = normalizeClockTime(req.body?.startTime, '19:30');
+    const [startHour, startMinute] = startTime.split(':').map(Number);
+    const endMinutes = ((startHour || 0) * 60 + (startMinute || 0) + 240) % 1440;
+    const endTime = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+    const createdSchedule = await supabase.from('schedules').insert({
+      script_id: imported.script.id,
+      room_id: roomId || null,
+      scheduled_date: eventDate,
+      start_time: startTime,
+      end_time: endTime,
+      status: 'pending',
+      player_count: Math.max(0, Number(req.body?.neededCount || imported.template?.player_count || 0)),
+      customer_name: cleanText(req.body?.customerName, 160) || '灵契拼车',
+      note: cleanText(req.body?.note, 2000) || null,
+      tenant_id: TENANT_ID,
+      lingqi_carpool_id: carpoolId,
+    }).select('id').single();
+    if (createdSchedule.error) throw createdSchedule.error;
+    res.json(ok({
+      scheduleId: createdSchedule.data?.id || null,
+      storeScriptId: imported.script.id,
+      sharedScriptId: imported.template?.id || null,
+      reused: false,
+    }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 
