@@ -11,8 +11,7 @@ import StorePortal from './pages/StorePortal';
 import DmDashboard from './pages/DmDashboard';
 import PlayerJoinSchedulePage from './pages/PlayerJoinSchedulePage';
 import { AiReadablePage, BusinessLicensePage, ContactPage, PrivacyPage, SecurityCompliancePage, TermsPage } from './pages/LegalPages';
-
-const LINGQI_SITE_URL = (import.meta.env.VITE_LINGQI_SITE_URL || 'https://lingqi.jusichen.com').replace(/\/$/, '');
+import { JUMULU_SITE_URL } from './config';
 
 function ExternalRedirect({ to, label }: { to: string; label: string }) {
   useEffect(() => {
@@ -90,14 +89,14 @@ function App() {
           <Route path="/business-license" element={<BusinessLicensePage />} />
           <Route path="/ai-readable" element={<AiReadablePage />} />
 
-          {/* 用户身份统一放到灵契 */}
-          <Route path="/player/login" element={<ExternalRedirect to={`${LINGQI_SITE_URL}/login?from=jusichen&role=player`} label="灵契玩家页" />} />
-          <Route path="/player/dashboard" element={<ExternalRedirect to={`${LINGQI_SITE_URL}/dashboard?from=jusichen`} label="灵契玩家页" />} />
+          {/* 用户身份统一放到剧幕录 */}
+          <Route path="/player/login" element={<ExternalRedirect to={`${JUMULU_SITE_URL}/login?from=jusichen&role=player`} label="剧幕录玩家页" />} />
+          <Route path="/player/dashboard" element={<ExternalRedirect to={`${JUMULU_SITE_URL}/dashboard?from=jusichen`} label="剧幕录玩家页" />} />
 
           {/* 店家端入口 */}
           <Route path="/store" element={<StorePortal />} />
 
-          {/* DM 公开身份在灵契，店内工作流保留在剧司辰 */}
+          {/* DM 公开身份在剧幕录，店内工作流保留在剧司辰 */}
           <Route path="/dm" element={<DmDashboard />} />
           <Route path="/store/dm" element={<DmDashboard />} />
 

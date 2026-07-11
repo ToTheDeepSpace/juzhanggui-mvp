@@ -16,7 +16,7 @@ export default function StorePortal() {
 
       <section className="max-w-4xl mx-auto px-6 pt-16 pb-20">
         <h1 className="text-3xl font-bold text-center mb-2">店家管理</h1>
-        <p className="text-gray-400 text-center mb-12">剧司辰处理店内经营和 DM 工作流；玩家公开身份、DM 公开资料与社区内容统一放在灵契。</p>
+        <p className="text-gray-400 text-center mb-12">剧司辰处理店内经营和 DM 工作流；玩家公开身份、DM 公开资料与社区内容统一放在剧幕录。</p>
 
         <div className="grid gap-5 md:grid-cols-2">
           <button

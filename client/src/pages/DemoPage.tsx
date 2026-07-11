@@ -17,8 +17,8 @@ export default function DemoPage() {
       items: ['剧本与角色管理', '玩家/卡司角色分离', '角色性别标注', '剧本热度统计'],
     },
     {
-      icon: '🎮', title: '灵契用户端联动', color: 'from-green-500 to-emerald-500',
-      items: ['玩家主页在灵契', 'DM 公开身份在灵契', '拼车同步到灵契', '店内工作流保留'],
+      icon: '🎮', title: '剧幕录用户端联动', color: 'from-green-500 to-emerald-500',
+      items: ['玩家主页在剧幕录', 'DM 公开身份在剧幕录', '拼车同步到剧幕录', '店内工作流保留'],
     },
     {
       icon: '⭐', title: '会员管理', color: 'from-yellow-500 to-amber-500',
@@ -44,7 +44,7 @@ export default function DemoPage() {
       <section className="max-w-6xl mx-auto px-6 pt-10 pb-20">
         <h1 className="text-4xl font-bold text-center mb-4">功能介绍</h1>
         <p className="text-gray-400 text-center mb-16 max-w-xl mx-auto">
-          剧司辰负责店家排期、经营数据和 DM 内部工作流，用户身份与内容资产沉淀到灵契
+          剧司辰负责店家排期、经营数据和 DM 内部工作流，用户身份与内容资产沉淀到剧幕录
         </p>
 
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">

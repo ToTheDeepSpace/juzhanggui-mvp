@@ -3,7 +3,7 @@
 > **版本**：v0.5.0  
 > **状态**：生产部署中  
 > **线上地址**：https://script-scheduler.vercel.app  
-> **灵契（创作者端）**：https://lingqi.vercel.app  
+> **剧幕录（用户与口碑端）**：https://jumulu.jusichen.com
 
 面向演绎剧场/密室/沉浸式戏剧的一站式运营系统。排期管理、抢车模式、玩家签到、卡司管理、数据看板。
 
@@ -26,7 +26,7 @@
 
 ### 🎭 卡司管理
 - **卡司资料**：姓名、电话、技能绑定
-- **灵契打通**：自动匹配灵契创作者主页，一键跳转
+- **剧幕录打通**：自动匹配剧幕录卡司主页，一键跳转
 - **冲突检测**：选卡司时自动检测时段冲突
 
 ### ✅ 结束登记
@@ -35,8 +35,8 @@
 - **矛盾登记**：内嵌矛盾录入，自动同步到矛盾调解页
 - **打扫确认**：房间打扫、道具归集、衣物整理三选确认
 
-### 🔗 灵契打通
-- 剧掌柜的卡司自动匹配灵契的个人主页
+### 🔗 剧幕录打通
+- 剧掌柜的卡司自动匹配剧幕录的个人主页
 - 支持跳转查看/邀请入驻
 - 同一套 Supabase 底层数据
 
@@ -79,7 +79,7 @@ script-scheduler/
 │   ├── components/         # 管理后台组件
 │   │   ├── ScheduleCalendar.tsx      # 排班核心（抢车模式+结束登记）
 │   │   ├── ScheduleCalendarModal.tsx # 排班创建/编辑
-│   │   ├── ActorManager.tsx          # 卡司管理（含灵契打通）
+│   │   ├── ActorManager.tsx          # 卡司管理（含剧幕录打通）
 │   │   ├── RoomManager.tsx           # 房间管理
 │   │   ├── ScriptManager.tsx         # 剧本管理
 │   │   ├── CustomerManager.tsx       # 会员管理
@@ -106,7 +106,7 @@ script-scheduler/
 |------|------|
 | `POST /api/auth/login` | 管理员登录 |
 | `GET/POST/PUT/DELETE /api/rooms` | 房间 CRUD |
-| `GET/POST/PUT/DELETE /api/actors` | 卡司 CRUD（含灵契主页匹配） |
+| `GET/POST/PUT/DELETE /api/actors` | 卡司 CRUD（含剧幕录主页匹配） |
 | `GET/POST/PUT/DELETE /api/scripts` | 剧本 CRUD |
 | `GET/POST/PUT/DELETE /api/schedules` | 排期 CRUD（含抢车模式） |
 | `PUT /api/schedules/:id/confirm` | 确认排期 |
@@ -119,7 +119,7 @@ script-scheduler/
 | `POST /api/player/send-code` | 发送验证码 |
 | `POST /api/player/verify-code` | 验证码登录/注册 |
 | `POST /api/conflicts` | 创建矛盾记录 |
-| `GET/POST/DELETE /api/lc/...` | 灵契创作者 API |
+| `GET/POST/DELETE /api/lc/...` | 剧幕录兼容 API |
 
 ## 本地开发
 

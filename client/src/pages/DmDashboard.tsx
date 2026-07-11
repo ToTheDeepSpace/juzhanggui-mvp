@@ -423,7 +423,7 @@ export default function DmDashboard() {
             <p className="text-sm text-indigo-300 mb-2">店内卡司专用</p>
             <h1 className="text-3xl font-bold mb-3">DM 工作台</h1>
             <p className="text-sm text-slate-400 leading-6">
-              使用店家在卡司管理里登记的手机号登录。公开主页、认证身份和社区资料仍在灵契，这里只处理店内工作流。
+              使用店家在卡司管理里登记的手机号登录。公开主页、认证身份和社区资料仍在剧幕录，这里只处理店内工作流。
             </p>
           </div>
 

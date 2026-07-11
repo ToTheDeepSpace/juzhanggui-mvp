@@ -70,7 +70,10 @@ const TENCENT_SES_REPLY_TO = process.env.TENCENT_SES_REPLY_TO || 'basara-twenty@
 const TENCENT_SES_TEMPLATE_ID = process.env.TENCENT_SES_TEMPLATE_ID || '';
 const TENCENT_SES_ALLOW_SIMPLE = process.env.TENCENT_SES_ALLOW_SIMPLE === 'true';
 const JUZHANGGUI_SITE_URL = (process.env.JUZHANGGUI_SITE_URL || process.env.PUBLIC_SITE_URL || 'https://jusichen.com').replace(/\/$/, '');
-const LINGQI_SITE_URL = (process.env.LINGQI_SITE_URL || process.env.VITE_LINGQI_SITE_URL || 'https://lingqi.jusichen.com').replace(/\/$/, '');
+const configuredJumuluSiteUrl = process.env.JUMULU_SITE_URL || process.env.VITE_JUMULU_SITE_URL || process.env.LINGQI_SITE_URL || process.env.VITE_LINGQI_SITE_URL || 'https://jumulu.jusichen.com';
+const JUMULU_SITE_URL = configuredJumuluSiteUrl
+  .replace(/^https:\/\/lingqi\.jusichen\.com(?=\/|$)/, 'https://jumulu.jusichen.com')
+  .replace(/\/$/, '');
 const JZG_WECHAT_OPEN_APP_ID = process.env.JZG_WECHAT_OPEN_APP_ID || process.env.WECHAT_OPEN_APP_ID || '';
 const JZG_WECHAT_OPEN_APP_SECRET = process.env.JZG_WECHAT_OPEN_APP_SECRET || process.env.WECHAT_OPEN_APP_SECRET || '';
 const JZG_WECHAT_REDIRECT_URI = process.env.JZG_WECHAT_REDIRECT_URI || `${JUZHANGGUI_SITE_URL}/api/player/wechat/callback`;
@@ -84,7 +87,8 @@ app.use(cors({
   origin: (origin, callback) => {
     const allowedOrigins = new Set([
       JUZHANGGUI_SITE_URL,
-      LINGQI_SITE_URL,
+      JUMULU_SITE_URL,
+      'https://lingqi.jusichen.com',
       ...(process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(item => item.trim()).filter(Boolean),
     ]);
     if (!origin || allowedOrigins.has(origin) || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
@@ -815,7 +819,7 @@ function extractLineValue(text: unknown, label: string) {
 
 function shouldSyncScheduleToLingqiCarpool(schedule: any) {
   const text = `${schedule?.customer_name || ''}\n${schedule?.note || ''}`;
-  if (/来源[：:]\s*灵契拼车区|拼车ID[：:]/.test(text)) return false;
+  if (/来源[：:]\s*(?:灵契|剧幕录)拼车区|拼车ID[：:]/.test(text)) return false;
   return /(拼车|车头|缺人|缺位|车位|组局|上车)/.test(text);
 }
 
@@ -2379,6 +2383,9 @@ app.get('/api/platform/script-templates', async (req: any, res: any) => {
     const storeMap = await getStoreMapByIds((data || []).map((template: any) => template.source_tenant_id));
     res.json(ok((data || []).map((template: any) => ({
       ...template,
+      created_by: typeof template.created_by === 'string'
+        ? template.created_by.replace(/^灵契共建/, '剧幕录共建')
+        : template.created_by,
       store: storeMap.get(template.source_tenant_id) || null,
     }))));
   } catch (e) { res.status(500).json(err(e)); }
@@ -2669,7 +2676,7 @@ app.post('/api/shared/script-library/contributions', async (req: any, res: any) 
       source_script_id: req.body?.legacyScriptId,
       source_system: 'lingqi',
       source_record_id: req.body?.contributionId,
-      created_by: cleanText(req.body?.contributorName, 80) ? `灵契共建 · ${cleanText(req.body?.contributorName, 80)}` : '灵契共建',
+      created_by: cleanText(req.body?.contributorName, 80) ? `剧幕录共建 · ${cleanText(req.body?.contributorName, 80)}` : '剧幕录共建',
     });
     res.json(ok(publicSharedScriptTemplate(template)));
   } catch (e) { res.status(500).json(err(e)); }
@@ -2689,7 +2696,7 @@ app.post('/api/shared/script-library/carpool-sync', async (req: any, res: any) =
     if (reused.data) return res.json(ok({ scheduleId: reused.data.id, storeScriptId: reused.data.script_id, reused: true }));
 
     const imported = await ensureTenantScriptFromSharedTemplate(req.body?.scriptId, TENANT_ID, scriptName, req.body?.scriptRoles);
-    const roomName = cleanText(req.body?.storeName, 100) || `灵契拼车-${cleanText(req.body?.city, 40) || '待定城市'}`;
+    const roomName = cleanText(req.body?.storeName, 100) || `剧幕录拼车-${cleanText(req.body?.city, 40) || '待定城市'}`;
     const roomResult = await supabase.from('rooms').select('id').eq('tenant_id', TENANT_ID).eq('name', roomName).maybeSingle();
     if (roomResult.error) throw roomResult.error;
     let roomId = roomResult.data?.id;
@@ -2716,7 +2723,7 @@ app.post('/api/shared/script-library/carpool-sync', async (req: any, res: any) =
       end_time: endTime,
       status: 'pending',
       player_count: Math.max(0, Number(req.body?.neededCount || imported.template?.player_count || 0)),
-      customer_name: cleanText(req.body?.customerName, 160) || '灵契拼车',
+      customer_name: cleanText(req.body?.customerName, 160) || '剧幕录拼车',
       note: cleanText(req.body?.note, 2000) || null,
       tenant_id: TENANT_ID,
       lingqi_carpool_id: carpoolId,
@@ -2881,8 +2888,8 @@ app.get('/api/actors', async (req: any, res: any) => {
         const lc = await ensureLingqiDmProfileForActor(a);
         return { ...a, lc_profile: lc };
       } catch (profileErr) {
-        console.warn('actor LingQi profile sync skipped', a?.id, err(profileErr).error);
-        return { ...a, lc_profile: null, lc_profile_error: '灵契档案同步失败' };
+        console.warn('actor Jumulu profile sync skipped', a?.id, err(profileErr).error);
+        return { ...a, lc_profile: null, lc_profile_error: '剧幕录档案同步失败' };
       }
     }));
     res.json(ok(enriched));

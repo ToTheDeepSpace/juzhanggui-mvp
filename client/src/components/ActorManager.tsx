@@ -2,8 +2,7 @@ import { useState, useEffect } from 'react';
 import { useApi } from '../hooks/useApi';
 import type { Actor, Script, ActorSkill } from '../types';
 import { uploadImageFile } from '../utils/imageUpload';
-
-const LINGQI_SITE_URL = (import.meta.env.VITE_LINGQI_SITE_URL || 'https://lingqi.jusichen.com').replace(/\/$/, '');
+import { JUMULU_SITE_URL } from '../config';
 const ROLE_KIND_LABEL: Record<string, string> = {
   dm: 'DM',
   field_control: '场控',
@@ -303,16 +302,16 @@ export default function ActorManager() {
                   <p className="text-sm text-gray-500 mt-1">📞 {actor.phone}</p>
                 )}
                 {actor.lc_profile ? (
-                  <a href={`${LINGQI_SITE_URL}/explore/${actor.lc_profile.id}`} target="_blank"
+                  <a href={`${JUMULU_SITE_URL}/explore/${actor.lc_profile.id}`} target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 mt-1 text-xs text-indigo-600 hover:text-indigo-800 transition-colors">
-                    已同步灵契 DM 主页 →
+                    已同步剧幕录 DM 主页 →
                   </a>
                 ) : actor.phone && (
-                  <a href={`${LINGQI_SITE_URL}/login?from=jusichen&role=dm`} target="_blank"
+                  <a href={`${JUMULU_SITE_URL}/login?from=jusichen&role=dm`} target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 mt-1 text-xs text-gray-400 hover:text-indigo-600 transition-colors">
-                    邀请入驻灵契
+                    邀请入驻剧幕录
                   </a>
                 )}
                 </div>

@@ -659,7 +659,7 @@ export default function ScheduleCalendarModal({
               ))}
               {(formData.lingqiCommissions || []).length === 0 && (
                 <p className="rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-500">
-                  可从灵契已开启服务的灵契师中选择，记录本车是否邀请、接受或确认上车。
+                  可从剧幕录已开启服务的灵契师中选择，记录本车是否邀请、接受或确认上车。
                 </p>
               )}
             </div>

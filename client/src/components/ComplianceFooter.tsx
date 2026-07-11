@@ -20,7 +20,7 @@ export default function ComplianceFooter({ variant = 'light' }: ComplianceFooter
     <footer className={`border-t ${border} px-6 py-8 text-center text-sm ${text}`}>
       <div className="mx-auto max-w-6xl space-y-3">
         <p className={dark ? 'text-gray-400' : 'text-gray-500'}>剧司辰 · 剧本杀行业数字化运营平台</p>
-        <p>剧司辰负责店家排期、经营数据与 DM 内部工作台，灵契负责玩家、DM 与社区身份沉淀</p>
+        <p>剧司辰负责店家排期、经营数据与 DM 内部工作台，剧幕录负责玩家、DM 与社区身份沉淀</p>
 
         <div className="flex flex-wrap justify-center gap-x-4 gap-y-2">
           <Link to="/terms" className={`${link} transition-colors`}>用户协议</Link>
@@ -28,7 +28,7 @@ export default function ComplianceFooter({ variant = 'light' }: ComplianceFooter
           <Link to="/security-compliance" className={`${link} transition-colors`}>安全合规说明</Link>
           <Link to="/contact" className={`${link} transition-colors`}>联系我们</Link>
           <Link to="/business-license" className={`${link} transition-colors`}>经营主体信息</Link>
-          <a href="https://lingqi.jusichen.com" target="_blank" rel="noopener noreferrer" className={`${link} transition-colors`}>灵契用户端</a>
+          <a href="https://jumulu.jusichen.com" target="_blank" rel="noopener noreferrer" className={`${link} transition-colors`}>剧幕录用户端</a>
           <Link to="/ai-readable" className={`${link} transition-colors`}>AI 可读说明</Link>
         </div>
 

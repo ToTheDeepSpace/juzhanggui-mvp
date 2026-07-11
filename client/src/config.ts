@@ -10,3 +10,13 @@
  */
 export const CHECKIN_BASE_URL =
   import.meta.env.VITE_CHECKIN_BASE_URL || window.location.origin;
+
+const configuredJumuluSiteUrl =
+  import.meta.env.VITE_JUMULU_SITE_URL ||
+  import.meta.env.VITE_LINGQI_SITE_URL ||
+  'https://jumulu.jusichen.com';
+
+// Keep the legacy env key compatible while sending users directly to the renamed site.
+export const JUMULU_SITE_URL = configuredJumuluSiteUrl
+  .replace(/^https:\/\/lingqi\.jusichen\.com(?=\/|$)/, 'https://jumulu.jusichen.com')
+  .replace(/\/$/, '');
