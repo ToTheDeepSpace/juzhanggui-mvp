@@ -83,6 +83,7 @@ const COS_UPLOAD_TRANSPORT = COS_UPLOAD_CONFIG ? createTencentCosUploadTransport
 const SHARED_SCRIPT_LIBRARY_TOKEN = process.env.SHARED_SCRIPT_LIBRARY_TOKEN || '';
 
 const app = express();
+app.disable('x-powered-by');
 app.set('trust proxy', 'loopback');
 app.use(cors({
   origin: (origin, callback) => {
