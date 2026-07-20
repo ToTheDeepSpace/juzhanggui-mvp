@@ -27,6 +27,11 @@ function decodeLoginPayload(payload: string) {
   }
 }
 
+function safePlayerRedirect(value: string | null): string {
+  if (!value || !value.startsWith('/') || value.startsWith('//')) return '/player/dashboard';
+  return value;
+}
+
 export default function PlayerLogin() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -38,6 +43,7 @@ export default function PlayerLogin() {
   const [sent, setSent] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [authConfig, setAuthConfig] = useState<AuthConfig>(DEFAULT_AUTH_CONFIG);
+  const redirectPath = safePlayerRedirect(new URLSearchParams(location.search).get('redirect'));
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -53,12 +59,12 @@ export default function PlayerLogin() {
     if (data?.token && data?.player) {
       localStorage.setItem('player_auth_token', data.token);
       localStorage.setItem('player_info', JSON.stringify(data.player));
-      navigate('/player/dashboard', { replace: true });
+      navigate(redirectPath, { replace: true });
     } else {
       setErrorMsg('微信登录结果无效，请重试');
       window.history.replaceState(null, '', '/player/login');
     }
-  }, [location.search, navigate]);
+  }, [location.search, navigate, redirectPath]);
 
   useEffect(() => {
     let mounted = true;
@@ -110,7 +116,7 @@ export default function PlayerLogin() {
     setErrorMsg(null);
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/player/wechat/url?redirect=/player/dashboard`);
+      const res = await fetch(`${API_BASE}/player/wechat/url?redirect=${encodeURIComponent(redirectPath)}`);
       const data = await res.json();
       if (data.success && data.data?.url) {
         window.location.href = data.data.url;
@@ -158,7 +164,7 @@ export default function PlayerLogin() {
       if (data.success) {
         localStorage.setItem('player_auth_token', data.data.token);
         localStorage.setItem('player_info', JSON.stringify(data.data.player));
-        navigate('/player/dashboard');
+        navigate(redirectPath);
       } else {
         setErrorMsg(data.error || '登录失败');
       }

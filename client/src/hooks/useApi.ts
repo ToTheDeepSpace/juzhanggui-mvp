@@ -9,6 +9,13 @@ function getRequestKey(endpoint: string, method: string, body?: unknown): string
   return `${method}:${endpoint}:${body ? JSON.stringify(body) : ''}`;
 }
 
+function authTokenForEndpoint(endpoint: string): string {
+  const playerRoute = endpoint.startsWith('/player/')
+    || /^\/schedules\/[^/]+\/(?:checkin|evaluate)$/.test(endpoint);
+  if (playerRoute) return localStorage.getItem('player_auth_token') || '';
+  return localStorage.getItem('admin_auth_token') || localStorage.getItem('auth_token') || '';
+}
+
 async function fetchApi<T>(
   endpoint: string,
   options?: RequestInit
@@ -24,13 +31,14 @@ async function fetchApi<T>(
 
   const controller = new AbortController();
   inFlight.set(key, controller);
+  const authToken = authTokenForEndpoint(endpoint);
 
   try {
     const response = await fetch(`${API_BASE}${endpoint}`, {
       headers: {
         'Content-Type': 'application/json',
         // 自动附加认证 token
-        ...((localStorage.getItem('admin_auth_token') || localStorage.getItem('auth_token')) ? { Authorization: `Bearer ${localStorage.getItem('admin_auth_token') || localStorage.getItem('auth_token')}` } : {}),
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       },
       ...options,
       signal: controller.signal,

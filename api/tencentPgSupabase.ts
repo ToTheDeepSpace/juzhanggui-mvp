@@ -91,6 +91,8 @@ const RELATIONS: Record<string, Record<string, RelationConfig>> = {
   evaluations: {
     schedules: { table: 'schedules', localKey: 'schedule_id', foreignKey: 'id' },
     scripts: { table: 'scripts', localKey: 'schedule_id', foreignKey: 'id', via: row => row.schedules?.script_id },
+    players: { table: 'players', localKey: 'player_id', foreignKey: 'id' },
+    checkins: { table: 'checkins', localKey: 'checkin_id', foreignKey: 'id' },
   },
   conflict_records: {
     customers: { table: 'customers', localKey: 'customer_id', foreignKey: 'id' },
@@ -98,6 +100,7 @@ const RELATIONS: Record<string, Record<string, RelationConfig>> = {
   },
   checkins: {
     schedules: { table: 'schedules', localKey: 'schedule_id', foreignKey: 'id' },
+    players: { table: 'players', localKey: 'player_id', foreignKey: 'id' },
   },
   jzg_carpool_join_requests: {
     schedules: { table: 'schedules', localKey: 'schedule_id', foreignKey: 'id' },

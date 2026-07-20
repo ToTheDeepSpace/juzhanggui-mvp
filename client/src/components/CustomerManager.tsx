@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useApi } from '../hooks/useApi';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -52,6 +52,7 @@ export default function CustomerManager() {
   const [showPackageModal, setShowPackageModal] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const transactionRequestId = useRef('');
   
   // 表单状态
   const [formData, setFormData] = useState({
@@ -202,6 +203,7 @@ export default function CustomerManager() {
     const amountInCents = Math.round(amount * 100);
 
     const res = await post<{ id: string }>(`/customers/${selectedCustomer.id}/transactions`, {
+      idempotencyKey: transactionRequestId.current || (transactionRequestId.current = crypto.randomUUID()),
       amount: amountInCents,
       transactionType: transactionData.transactionType,
       paymentMethod: transactionData.paymentMethod,
@@ -212,6 +214,7 @@ export default function CustomerManager() {
     });
 
     if (res.success) {
+      transactionRequestId.current = '';
       setSuccess('交易记录已添加');
       setTransactionData({ amount: '', transactionType: 'recharge', paymentMethod: 'wechat', packageId: '', bonusAmount: '', lockDmCredits: '', note: '' });
       setShowTransactionModal(false);
@@ -238,6 +241,7 @@ export default function CustomerManager() {
   // 打开交易模态框
   const openTransactionModal = (customer: Customer) => {
     setSelectedCustomer(customer);
+    transactionRequestId.current = crypto.randomUUID();
     setTransactionData({ amount: '', transactionType: 'recharge', paymentMethod: 'wechat', packageId: '', bonusAmount: '', lockDmCredits: '', note: '' });
     setShowTransactionModal(true);
   };

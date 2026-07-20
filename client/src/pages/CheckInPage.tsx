@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
 import { format, parseISO } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -23,72 +23,37 @@ interface ScheduleInfo {
   taken_roles?: string[];
   checkins?: CheckinInfo[];
 }
-interface PlayerVerifyResponse {
-  id: string;
-  display_name: string;
-  phone: string;
-  newUser: boolean;
-}
-
 export default function CheckInPage() {
   const { scheduleId } = useParams<{ scheduleId: string }>();
+  const navigate = useNavigate();
   const { get, post, loading } = useApi();
 
   const [schedule, setSchedule] = useState<ScheduleInfo | null>(null);
-  // 验证码登录
-  const [authPhone, setAuthPhone] = useState('');
-  const [authCode, setAuthCode] = useState('');
-  const [codeSent, setCodeSent] = useState(false);
-  const [codeSending, setCodeSending] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
-  // 签到表单
   const [guestName, setGuestName] = useState('');
-  const [guestPhone, setGuestPhone] = useState('');
   const [guestGender, setGuestGender] = useState('');
   const [selectedRole, setSelectedRole] = useState('');
   const [checkedIn, setCheckedIn] = useState(false);
   const [error, setError] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
 
-  // 尝试从 localStorage 获取已保存的客人信息
   useEffect(() => {
-    const savedName = localStorage.getItem('guest_name');
-    const savedPhone = localStorage.getItem('guest_phone');
-    if (savedName) setGuestName(savedName);
-    if (savedPhone) setGuestPhone(savedPhone);
+    const token = localStorage.getItem('player_auth_token');
+    const rawPlayer = localStorage.getItem('player_info');
+    if (!token || !rawPlayer) return;
+    try {
+      const player = JSON.parse(rawPlayer) as { displayName?: string };
+      setGuestName(player.displayName || '玩家');
+      setAuthenticated(true);
+    } catch {
+      localStorage.removeItem('player_info');
+    }
   }, []);
 
   // 加载排期信息
   useEffect(() => {
     if (scheduleId) { loadSchedule(); }
   }, [scheduleId]);
-
-  const sendCode = async () => {
-    if (!authPhone.trim()) { setError('请输入手机号'); return; }
-    setCodeSending(true); setError('');
-    const r = await post('/player/send-code', { phone: authPhone.trim() });
-    setCodeSending(false);
-    if (r.success) { setCodeSent(true); setError('验证码已发送，请查看短信或联系门店获取测试码'); }
-    else setError(r.error || '发送失败');
-  };
-
-  const verifyCode = async () => {
-    if (!authCode.trim()) { setError('请输入验证码'); return; }
-    const r = await post<PlayerVerifyResponse>('/player/verify-code', { phone: authPhone.trim(), code: authCode.trim() });
-    if (r.success) {
-      setGuestName(r.data?.display_name || '');
-      setGuestPhone(authPhone.trim());
-      localStorage.setItem('guest_name', r.data?.display_name || '');
-      localStorage.setItem('guest_phone', authPhone.trim());
-      // 先等 schedule 加载完再切到表单
-      if (scheduleId && !schedule) {
-        const res = await get<ScheduleInfo>(`/schedules/${scheduleId}/public`);
-        if (res.success && res.data) setSchedule(res.data);
-      }
-      setAuthenticated(true);
-      setError('');
-    } else { setError(r.error || '验证失败'); }
-  };
 
   const loadSchedule = async () => {
     const res = await get<ScheduleInfo>(`/schedules/${scheduleId}/public`);
@@ -123,16 +88,8 @@ export default function CheckInPage() {
   const handleConfirmCheckIn = async () => {
     if (!scheduleId) return;
 
-    // 保存客人信息到 localStorage
-    localStorage.setItem('guest_name', guestName);
-    localStorage.setItem('guest_phone', guestPhone);
-
     const res = await post(`/schedules/${scheduleId}/checkin`, {
-      name: guestName,
-      phone: guestPhone || null,
-      gender: guestGender,
       role: selectedRole,
-      avatar: null
     });
 
     if (res.success) {
@@ -144,7 +101,11 @@ export default function CheckInPage() {
     }
   };
 
-  if (error && !schedule && !authenticated) {
+  const goToPlayerLogin = () => {
+    navigate(`/player/login?redirect=${encodeURIComponent(`/checkin/${scheduleId || ''}`)}`);
+  };
+
+  if (error && !schedule) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
         <div className="bg-white rounded-xl shadow-lg p-8 text-center max-w-sm w-full">
@@ -157,7 +118,6 @@ export default function CheckInPage() {
   }
 
   if (checkedIn) {
-    const isStaff = new URLSearchParams(window.location.search).get('staff') === 'true';
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
         <div className="bg-white rounded-xl shadow-lg p-8 text-center max-w-sm w-full">
@@ -171,21 +131,7 @@ export default function CheckInPage() {
             <p>{schedule && format(parseISO(schedule.start_time), 'MM月dd日 HH:mm', { locale: zhCN })}</p>
             <p>{schedule?.room_name}</p>
           </div>
-          {isStaff ? (
-            <div className="space-y-2">
-              <button
-                onClick={() => { setCheckedIn(false); setGuestName(''); setGuestPhone(''); setGuestGender(''); setSelectedRole(''); setError(''); loadSchedule(); }}
-                className="w-full py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 transition-colors"
-              >
-                + 继续添加下一位玩家
-              </button>
-              <button onClick={() => window.close()} className="w-full py-2 text-sm text-gray-500 hover:text-gray-700">
-                完成，关闭页面
-              </button>
-            </div>
-          ) : (
-            <p className="text-xs text-gray-400 mt-4">您可以关闭此页面</p>
-          )}
+          <p className="text-xs text-gray-400 mt-4">您可以关闭此页面</p>
         </div>
       </div>
     );
@@ -200,32 +146,11 @@ export default function CheckInPage() {
         </div>
 
         {!authenticated ? (
-          /* 验证码登录步骤 */
-          <div className="space-y-4">
-            <div className="text-center mb-2">
-              <p className="text-sm text-gray-500">请先验证手机号</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">手机号</label>
-              <div className="flex gap-2">
-                <input type="tel" value={authPhone} onChange={e => setAuthPhone(e.target.value)}
-                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm" placeholder="请输入手机号" disabled={codeSent} />
-                <button onClick={sendCode} disabled={codeSending || codeSent}
-                  className="px-4 py-3 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200 disabled:opacity-50 whitespace-nowrap">
-                  {codeSending ? '发送中...' : codeSent ? '已发送' : '获取验证码'}
-                </button>
-              </div>
-            </div>
-            {codeSent && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">验证码</label>
-                <input type="text" value={authCode} onChange={e => setAuthCode(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm" placeholder="输入验证码" maxLength={6} />
-                <button onClick={verifyCode} className="w-full mt-3 py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 text-sm">
-                  验证并上车
-                </button>
-              </div>
-            )}
+          <div className="space-y-4 text-center">
+            <p className="text-sm text-gray-500 leading-6">请先登录玩家账号。登录后会自动返回本页，不会重复验证已登录账号。</p>
+            <button onClick={goToPlayerLogin} className="w-full py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 text-sm">
+              登录后上车
+            </button>
           </div>
         ) : (
         /* 已验证，显示签到表单 */
@@ -248,10 +173,8 @@ export default function CheckInPage() {
             <input
               type="text"
               value={guestName}
-              onChange={(e) => setGuestName(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="怎么称呼您"
-              required
+              readOnly
+              className="w-full px-4 py-3 border border-gray-200 rounded-lg bg-gray-50 text-gray-600"
             />
           </div>
 
@@ -272,19 +195,6 @@ export default function CheckInPage() {
             <p className="text-xs text-gray-400 mt-2">
               🛈 默认上车配对为异性恋，如有其他性取向需求请跟客服私聊
             </p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              手机号（选填）
-            </label>
-            <input
-              type="tel"
-              value={guestPhone}
-              onChange={(e) => setGuestPhone(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="方便客服联系您"
-            />
           </div>
 
           {(() => {

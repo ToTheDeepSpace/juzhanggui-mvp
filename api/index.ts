@@ -3,7 +3,7 @@
 
 import express from 'express';
 import cors from 'cors';
-import { createTencentPgClient } from './tencentPgSupabase.js';
+import { createTencentPgClient, tencentPgPool } from './tencentPgSupabase.js';
 import { db } from './db/drizzle.js';
 import { jzgStores, rooms } from './db/schema.js';
 import { and, eq, desc } from 'drizzle-orm';
@@ -83,6 +83,7 @@ const COS_UPLOAD_TRANSPORT = COS_UPLOAD_CONFIG ? createTencentCosUploadTransport
 const SHARED_SCRIPT_LIBRARY_TOKEN = process.env.SHARED_SCRIPT_LIBRARY_TOKEN || '';
 
 const app = express();
+app.set('trust proxy', 'loopback');
 app.use(cors({
   origin: (origin, callback) => {
     const allowedOrigins = new Set([
@@ -95,7 +96,7 @@ app.use(cors({
       callback(null, true);
       return;
     }
-    callback(null, false);
+    callback(new Error('CORS origin denied'));
   },
   credentials: true,
 }));
@@ -123,7 +124,54 @@ app.get('/api/uploads/*', async (req: any, res: any, next: any) => {
   }
 });
 app.use('/api/uploads', express.static(LOCAL_UPLOAD_ROOT, uploadStaticOptions));
-app.use(express.json({ limit: '25mb' }));
+app.use(express.json({ limit: '12mb' }));
+
+function createRateLimiter(name: string, windowMs: number, max: number) {
+  const entries = new Map<string, { count: number; resetAt: number }>();
+  let cleanupCounter = 0;
+  return (req: any, res: any, next: any) => {
+    const now = Date.now();
+    cleanupCounter += 1;
+    if (cleanupCounter >= 500 || entries.size > 10_000) {
+      cleanupCounter = 0;
+      for (const [key, entry] of entries) if (entry.resetAt <= now) entries.delete(key);
+    }
+    const key = `${name}:${req.ip || req.socket?.remoteAddress || 'unknown'}`;
+    const existing = entries.get(key);
+    const entry = !existing || existing.resetAt <= now
+      ? { count: 0, resetAt: now + windowMs }
+      : existing;
+    entry.count += 1;
+    entries.set(key, entry);
+    res.setHeader('RateLimit-Limit', String(max));
+    res.setHeader('RateLimit-Remaining', String(Math.max(0, max - entry.count)));
+    res.setHeader('RateLimit-Reset', String(Math.ceil(entry.resetAt / 1000)));
+    if (entry.count > max) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil((entry.resetAt - now) / 1000))));
+      return res.status(429).json({ success: false, error: '操作太频繁，请稍后再试' });
+    }
+    next();
+  };
+}
+
+const authRateLimit = createRateLimiter('auth', 15 * 60 * 1000, 40);
+const verificationRateLimit = createRateLimiter('verification', 10 * 60 * 1000, 6);
+const playerActionRateLimit = createRateLimiter('player-action', 15 * 60 * 1000, 20);
+const uploadRateLimit = createRateLimiter('upload', 10 * 60 * 1000, 30);
+
+app.use((req: any, res: any, next: any) => {
+  const pathname = req.path;
+  if (req.method === 'POST' && /\/(?:send-code)$/.test(pathname)) return verificationRateLimit(req, res, next);
+  if (req.method === 'POST' && (
+    pathname.startsWith('/api/auth/')
+    || pathname === '/api/player/login'
+    || pathname === '/api/dm/login'
+    || pathname === '/api/player/verify-code'
+  )) return authRateLimit(req, res, next);
+  if (req.method === 'POST' && isPlayerScheduleAction(pathname)) return playerActionRateLimit(req, res, next);
+  if (req.method === 'POST' && pathname.startsWith('/api/uploads/')) return uploadRateLimit(req, res, next);
+  next();
+});
 
 // Auth middleware
 const PUBLIC_PATHS = [
@@ -153,7 +201,11 @@ const PUBLIC_PATHS = [
   '/api/shared/script-library/contributions',
   '/api/shared/script-library/carpool-sync',
 ];
-const PUBLIC_SUFFIXES = ['/public', '/checkin', '/evaluate'];
+const PUBLIC_SUFFIXES = ['/public'];
+
+function isPlayerScheduleAction(pathname: string): boolean {
+  return /^\/api\/schedules\/[^/]+\/(?:checkin|evaluate)$/.test(pathname);
+}
 
 function isPublicPath(path: string): boolean {
   if (PUBLIC_PATHS.includes(path)) return true;
@@ -169,6 +221,10 @@ app.use((req: any, res: any, next: any) => {
   try {
     const decoded = jwt.verify(auth.substring(7), JWT_SECRET) as any;
     req.user = decoded;
+    if (isPlayerScheduleAction(req.path)) {
+      if (decoded.role !== 'player') return res.status(403).json({ success: false, error: '请使用玩家账号操作' });
+      return next();
+    }
     const isPlayerApi = req.path.startsWith('/api/player/');
     const isDmApi = req.path.startsWith('/api/dm/');
     if (isPlayerApi && decoded.role !== 'player' && decoded.role !== 'admin') {
@@ -679,6 +735,307 @@ function signedMoneyCents(input: unknown): number {
   const value = Number(input || 0);
   if (!Number.isFinite(value)) return 0;
   return Math.round(value);
+}
+
+async function createCustomerTransactionOnPostgres(input: {
+  tenantId: string;
+  customerId: string;
+  transactionType: string;
+  amount: number;
+  bonusAmount: number;
+  lockDmCredits: number;
+  paymentMethod: string | null;
+  packageId: string | null;
+  scheduleId: string | null;
+  note: string | null;
+  idempotencyKey: string;
+}) {
+  const client = await tencentPgPool.connect();
+  try {
+    await client.query('BEGIN');
+    if (input.idempotencyKey) {
+      const existing = await client.query(
+        `select * from membership_transactions where idempotency_key = $1 for update`,
+        [input.idempotencyKey],
+      );
+      if (existing.rows[0]) {
+        if (String(existing.rows[0].customer_id) !== input.customerId) throw new Error('重复请求标识已被其他交易使用');
+        await client.query('COMMIT');
+        return existing.rows[0];
+      }
+    }
+
+    const customerResult = await client.query(
+      `select * from customers where id = $1 and tenant_id = $2 for update`,
+      [input.customerId, input.tenantId],
+    );
+    const customer = customerResult.rows[0];
+    if (!customer) throw new Error('客户不存在');
+
+    let amount = input.amount;
+    let bonusAmount = input.bonusAmount;
+    let lockDmCredits = input.lockDmCredits;
+    let packageRow: any = null;
+    if (input.packageId) {
+      const packageResult = await client.query(
+        `select * from jzg_membership_packages where id = $1 and tenant_id = $2 and is_active = true`,
+        [input.packageId, input.tenantId],
+      );
+      packageRow = packageResult.rows[0];
+      if (!packageRow) throw new Error('套餐不存在或已停用');
+      amount = moneyCents(packageRow.recharge_amount);
+      bonusAmount = moneyCents(packageRow.bonus_amount);
+      lockDmCredits = moneyCents(packageRow.lock_dm_credits);
+    }
+    if (input.scheduleId) {
+      const scheduleResult = await client.query(
+        `select id from schedules where id = $1 and tenant_id = $2`,
+        [input.scheduleId, input.tenantId],
+      );
+      if (!scheduleResult.rows[0]) throw new Error('排期不存在');
+    }
+
+    let balanceDelta = 0;
+    let bonusDelta = 0;
+    let lockDmDelta = 0;
+    let balance = Number(customer.balance || 0);
+    let bonusBalance = Number(customer.bonus_balance || 0);
+    let lockDmBalance = Number(customer.lock_dm_credits || 0);
+    let totalRecharged = Number(customer.total_recharged || 0);
+    let totalConsumed = Number(customer.total_consumed || 0);
+    let totalBonusGranted = Number(customer.total_bonus_granted || 0);
+    let totalLockDmGranted = Number(customer.total_lock_dm_granted || 0);
+
+    if (input.transactionType === 'recharge') {
+      if (amount <= 0) throw new Error('充值金额必须大于 0');
+      balanceDelta = amount + bonusAmount;
+      bonusDelta = bonusAmount;
+      lockDmDelta = lockDmCredits;
+      balance += balanceDelta;
+      bonusBalance += bonusDelta;
+      lockDmBalance += lockDmDelta;
+      totalRecharged += amount;
+      totalBonusGranted += bonusDelta;
+      totalLockDmGranted += lockDmDelta;
+    } else if (input.transactionType === 'consume') {
+      if (amount <= 0) throw new Error('消费金额必须大于 0');
+      balanceDelta = -amount;
+      balance += balanceDelta;
+      totalConsumed += amount;
+    } else if (input.transactionType === 'refund') {
+      if (amount <= 0) throw new Error('退款金额必须大于 0');
+      balanceDelta = amount;
+      balance += balanceDelta;
+    } else if (input.transactionType === 'adjust') {
+      balanceDelta = amount;
+      bonusDelta = input.bonusAmount;
+      lockDmDelta = input.lockDmCredits;
+      balance += balanceDelta;
+      bonusBalance += bonusDelta;
+      lockDmBalance += lockDmDelta;
+    } else {
+      throw new Error('交易类型无效');
+    }
+    if (balance < 0) throw new Error('余额不足，不能完成本次交易');
+    if (bonusBalance < 0) throw new Error('赠送余额不足，不能完成本次调整');
+    if (lockDmBalance < 0) throw new Error('锁 DM 权益不足，不能完成本次调整');
+
+    await client.query(
+      `update customers
+          set balance = $3, bonus_balance = $4, lock_dm_credits = $5,
+              total_recharged = $6, total_consumed = $7,
+              total_bonus_granted = $8, total_lock_dm_granted = $9,
+              updated_at = now()
+        where id = $1 and tenant_id = $2`,
+      [
+        input.customerId,
+        input.tenantId,
+        balance,
+        bonusBalance,
+        lockDmBalance,
+        totalRecharged,
+        totalConsumed,
+        totalBonusGranted,
+        totalLockDmGranted,
+      ],
+    );
+    const transactionResult = await client.query(
+      `insert into membership_transactions
+        (customer_id, schedule_id, amount, transaction_type, note,
+         balance_delta, bonus_delta, lock_dm_delta, payment_method,
+         package_id, metadata, idempotency_key)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)
+       returning *`,
+      [
+        input.customerId,
+        input.scheduleId,
+        amount,
+        input.transactionType,
+        input.note,
+        balanceDelta,
+        bonusDelta,
+        lockDmDelta,
+        input.paymentMethod,
+        packageRow?.id || null,
+        JSON.stringify(packageRow ? { package_name: packageRow.name } : {}),
+        input.idempotencyKey || null,
+      ],
+    );
+    await client.query('COMMIT');
+    return transactionResult.rows[0];
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function updateDmAssignmentOnPostgres(input: {
+  tenantId: string;
+  scheduleId: string;
+  mode: 'assign' | 'request' | 'clear' | 'not_needed';
+  customerId?: string | null;
+  actorId?: string | null;
+  roleName?: string | null;
+  checkinId?: string | null;
+}) {
+  const client = await tencentPgPool.connect();
+  try {
+    await client.query('BEGIN');
+    const scheduleResult = await client.query(
+      `select * from schedules where id = $1 and tenant_id = $2 for update`,
+      [input.scheduleId, input.tenantId],
+    );
+    const schedule = scheduleResult.rows[0];
+    if (!schedule) throw new Error('排期不存在');
+    if (['cancelled', 'bombed', 'completed'].includes(schedule.status)) throw new Error('当前状态不能指定 DM');
+    if (input.mode === 'request' && !['locked', 'confirmed', 'ongoing', 'settling'].includes(schedule.status)) {
+      throw new Error('锁车后才能指定 DM');
+    }
+
+    const customerIds = [...new Set([
+      schedule.dm_lock_customer_id,
+      input.customerId,
+    ].filter(Boolean).map(String))].sort();
+    const customersResult = customerIds.length
+      ? await client.query(
+        `select * from customers where tenant_id = $1 and id = any($2::uuid[]) order by id for update`,
+        [input.tenantId, customerIds],
+      )
+      : { rows: [] as any[] };
+    const customers = new Map<string, any>(customersResult.rows.map((row: any) => [String(row.id), row]));
+
+    const sameAssignment = input.mode !== 'clear'
+      && input.mode !== 'not_needed'
+      && String(schedule.dm_lock_customer_id || '') === String(input.customerId || '')
+      && String(schedule.requested_dm_actor_id || '') === String(input.actorId || '')
+      && String(schedule.requested_dm_role_name || '') === String(input.roleName || '')
+      && Boolean(schedule.dm_lock_credit_transaction_id);
+    if (sameAssignment) {
+      await client.query('COMMIT');
+      return schedule;
+    }
+
+    if (schedule.dm_lock_customer_id && schedule.dm_lock_credit_transaction_id) {
+      const oldCustomer = customers.get(String(schedule.dm_lock_customer_id));
+      if (!oldCustomer) throw new Error('原锁 DM 权益所属会员不存在，请先修复会员关联');
+      await client.query(
+        `update customers
+            set lock_dm_credits = coalesce(lock_dm_credits, 0) + 1,
+                total_lock_dm_used = greatest(0, coalesce(total_lock_dm_used, 0) - 1),
+                updated_at = now()
+          where id = $1 and tenant_id = $2`,
+        [oldCustomer.id, input.tenantId],
+      );
+      await client.query(
+        `insert into membership_transactions
+          (customer_id, schedule_id, amount, transaction_type, note,
+           balance_delta, bonus_delta, lock_dm_delta, metadata, idempotency_key)
+         values ($1, $2, 0, 'lock_dm_refund', $3, 0, 0, 1, $4::jsonb, $5)
+         on conflict (idempotency_key) where idempotency_key is not null do nothing`,
+        [
+          oldCustomer.id,
+          schedule.id,
+          `取消指定卡司，退回锁卡司次数：${schedule.requested_dm_role_name || '未记录角色'}`,
+          JSON.stringify({
+            actor_id: schedule.requested_dm_actor_id,
+            role_name: schedule.requested_dm_role_name,
+            refund_for_transaction_id: schedule.dm_lock_credit_transaction_id,
+          }),
+          `dm-lock-refund:${schedule.dm_lock_credit_transaction_id}`,
+        ],
+      );
+    }
+
+    if (input.mode === 'clear' || input.mode === 'not_needed') {
+      const cleared = await client.query(
+        `update schedules
+            set dm_lock_customer_id = null,
+                requested_dm_actor_id = null,
+                requested_dm_role_name = null,
+                dm_lock_status = $3,
+                dm_lock_credit_transaction_id = null
+          where id = $1 and tenant_id = $2
+          returning *`,
+        [schedule.id, input.tenantId, input.mode === 'not_needed' ? 'not_needed' : 'none'],
+      );
+      await client.query('COMMIT');
+      return cleared.rows[0];
+    }
+
+    if (!input.customerId || !input.actorId) throw new Error('请选择会员和 DM');
+    const customer = customers.get(String(input.customerId));
+    if (!customer) throw new Error('玩家会员不存在');
+    if (Number(customer.lock_dm_credits || 0) <= 0) throw new Error('该玩家没有可用锁卡司次数，请先充卡或调整权益');
+    await client.query(
+      `update customers
+          set lock_dm_credits = coalesce(lock_dm_credits, 0) - 1,
+              total_lock_dm_used = coalesce(total_lock_dm_used, 0) + 1,
+              updated_at = now()
+        where id = $1 and tenant_id = $2`,
+      [customer.id, input.tenantId],
+    );
+    const transactionResult = await client.query(
+      `insert into membership_transactions
+        (customer_id, schedule_id, amount, transaction_type, note,
+         balance_delta, bonus_delta, lock_dm_delta, metadata)
+       values ($1, $2, 0, 'lock_dm', $3, 0, 0, -1, $4::jsonb)
+       returning id`,
+      [
+        customer.id,
+        schedule.id,
+        input.roleName ? `指定卡司：${input.roleName}` : '指定 DM 权益使用',
+        JSON.stringify({ actor_id: input.actorId, role_name: input.roleName || null, checkin_id: input.checkinId || null }),
+      ],
+    );
+    const updated = await client.query(
+      `update schedules
+          set dm_lock_customer_id = $3,
+              requested_dm_actor_id = $4,
+              requested_dm_role_name = $5,
+              dm_lock_status = $6,
+              dm_lock_credit_transaction_id = $7
+        where id = $1 and tenant_id = $2
+        returning *`,
+      [
+        schedule.id,
+        input.tenantId,
+        customer.id,
+        input.actorId,
+        input.roleName || null,
+        input.mode === 'request' ? 'requested' : 'confirmed',
+        transactionResult.rows[0].id,
+      ],
+    );
+    await client.query('COMMIT');
+    return updated.rows[0];
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 function buildScheduleProgress(schedule: any, checkins: any[], playerRoles: any[], evaluations: any[] = []) {
@@ -3822,17 +4179,28 @@ app.put('/api/schedules/:id/checkins/:checkinId/finance', async (req: any, res: 
 
 app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
   try {
-    const name = cleanText(req.body?.name, 80);
-    const phone = cleanText(req.body?.phone, 40);
     const role = cleanText(req.body?.role, 80);
-    const avatar = cleanText(req.body?.avatar, 500);
-    if (!name) return res.status(400).json(err(new Error('请填写姓名')));
+    if (!req.user?.playerId) return res.status(401).json(err(new Error('请先登录玩家账号')));
     const { data: sched } = await supabase.from('schedules')
       .select('id,tenant_id,script_id,status,player_count')
       .eq('id', req.params.id)
+      .eq('tenant_id', currentTenantId(req))
       .maybeSingle();
     if (!sched) return res.status(404).json(err(new Error('排期不存在')));
     if (!canPublicJoinSchedule(sched.status)) return res.status(400).json(err(new Error('当前排期不允许报名')));
+    const { data: player, error: playerErr } = await supabase.from('players')
+      .select('id,tenant_id,display_name,phone_hash,wechat_avatar')
+      .eq('id', req.user.playerId)
+      .eq('tenant_id', sched.tenant_id)
+      .maybeSingle();
+    if (playerErr) throw playerErr;
+    if (!player) return res.status(401).json(err(new Error('玩家账号不存在，请重新登录')));
+    const { data: existingCheckin } = await supabase.from('checkins')
+      .select('*')
+      .eq('schedule_id', req.params.id)
+      .eq('player_id', player.id)
+      .maybeSingle();
+    if (existingCheckin) return res.json(ok({ ...existingCheckin, existing: true, full: false }));
     const { data: allRoles } = await supabase.from('script_player_roles').select('role_name').eq('script_id', sched.script_id);
     const validRoles = (allRoles || []).map((item: any) => publicRoleKey(item.role_name)).filter(Boolean);
     if (role && validRoles.length && !validRoles.includes(publicRoleKey(role))) {
@@ -3846,13 +4214,18 @@ app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
         .maybeSingle();
       if (taken) return res.status(409).json(err(new Error('这个角色已经被选择')));
     }
-    const { data } = await supabase.from('checkins').insert({
+    const { data, error: insertErr } = await supabase.from('checkins').insert({
       schedule_id: req.params.id,
-      guest_name: name,
-      guest_phone: phone ? hashPhone(phone) : null,
+      player_id: player.id,
+      guest_name: cleanText(player.display_name, 80) || '玩家',
+      guest_phone: player.phone_hash || null,
       role: role || null,
-      guest_avatar: avatar || null
+      guest_avatar: cleanText(player.wechat_avatar, 500) || null,
     }).select().single();
+    if (insertErr) {
+      if (String(insertErr.code || '') === '23505') return res.status(409).json(err(new Error('这个角色已经被选择，或你已经上车')));
+      throw insertErr;
+    }
     let full = false;
     if (sched && data) {
       const { count } = await supabase.from('checkins').select('*', { count: 'exact', head: true }).eq('schedule_id', req.params.id);
@@ -3866,7 +4239,7 @@ app.post('/api/schedules/:id/checkin', async (req: any, res: any) => {
         full = true;
       }
     }
-    res.json(ok({ ...data, full }));
+    res.json(ok({ ...data, existing: false, full }));
   } catch (e) { res.status(500).json(err(e)); }
 });
 
@@ -3905,6 +4278,7 @@ app.post('/api/schedules/:id/lock', async (req: any, res: any) => {
 
 app.put('/api/schedules/:id/dm-assignment', async (req: any, res: any) => {
   try {
+    if (!useTencentPg) return res.status(503).json(err(new Error('锁 DM 权益当前只允许在正式 PostgreSQL 主库执行')));
     const tenantId = currentTenantId(req);
     const mode = cleanText(req.body?.mode, 30);
     const actorId = cleanText(req.body?.actorId, 80);
@@ -3918,46 +4292,12 @@ app.put('/api/schedules/:id/dm-assignment', async (req: any, res: any) => {
     if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
     if (['cancelled', 'bombed', 'completed'].includes(schedule.status)) return res.status(400).json(err(new Error('当前状态不能指定 DM')));
 
-    const refundExistingLockCredit = async () => {
-      if (!schedule.dm_lock_customer_id || !schedule.dm_lock_credit_transaction_id) return;
-      const { data: customer } = await supabase.from('customers')
-        .select('*')
-        .eq('id', schedule.dm_lock_customer_id)
-        .eq('tenant_id', tenantId)
-        .maybeSingle();
-      if (!customer) return;
-      await supabase.from('customers').update({
-        lock_dm_credits: Number(customer.lock_dm_credits || 0) + 1,
-        total_lock_dm_used: Math.max(0, Number(customer.total_lock_dm_used || 0) - 1),
-        updated_at: new Date().toISOString(),
-      }).eq('id', customer.id).eq('tenant_id', tenantId);
-      await supabase.from('membership_transactions').insert({
-        customer_id: customer.id,
-        schedule_id: schedule.id,
-        amount: 0,
-        transaction_type: 'lock_dm_refund',
-        note: `取消指定卡司，退回锁卡司次数：${schedule.requested_dm_role_name || '未记录角色'}`,
-        balance_delta: 0,
-        bonus_delta: 0,
-        lock_dm_delta: 1,
-        metadata: {
-          actor_id: schedule.requested_dm_actor_id,
-          role_name: schedule.requested_dm_role_name,
-          refund_for_transaction_id: schedule.dm_lock_credit_transaction_id,
-        },
-      });
-    };
-
     if (mode === 'not_needed' || mode === 'clear') {
-      await refundExistingLockCredit();
-      const { data, error } = await supabase.from('schedules').update({
-        dm_lock_customer_id: null,
-        requested_dm_actor_id: null,
-        requested_dm_role_name: null,
-        dm_lock_status: mode === 'not_needed' ? 'not_needed' : 'none',
-        dm_lock_credit_transaction_id: null,
-      }).eq('id', schedule.id).eq('tenant_id', tenantId).select().single();
-      if (error) throw error;
+      const data = await updateDmAssignmentOnPostgres({
+        tenantId,
+        scheduleId: schedule.id,
+        mode,
+      });
       await logStoreAction(req, mode === 'not_needed' ? 'dm_assignment_not_needed' : 'dm_assignment_cleared', { type: 'schedule', id: schedule.id });
       return res.json(ok(data));
     }
@@ -3978,48 +4318,15 @@ app.put('/api/schedules/:id/dm-assignment', async (req: any, res: any) => {
       .eq('customer_id', customerId)
       .maybeSingle();
     if (!checkin) return res.status(400).json(err(new Error('请选择本车已上车玩家扣除锁卡司次数')));
-    const { data: customer } = await supabase.from('customers')
-      .select('*')
-      .eq('id', customerId)
-      .eq('tenant_id', tenantId)
-      .maybeSingle();
-    if (!customer) return res.status(404).json(err(new Error('玩家会员不存在')));
-
-    const sameAssignment = schedule.dm_lock_customer_id === customerId && schedule.requested_dm_actor_id === actorId && schedule.requested_dm_role_name === roleName && schedule.dm_lock_credit_transaction_id;
-    if (!sameAssignment && !schedule.dm_lock_credit_transaction_id && Number(customer.lock_dm_credits || 0) <= 0) return res.status(400).json(err(new Error('该玩家没有可用锁卡司次数，请先充卡或调整权益')));
-
-    let txId = schedule.dm_lock_credit_transaction_id || null;
-    if (!sameAssignment) {
-      await refundExistingLockCredit();
-      const { data: latestCustomer } = await supabase.from('customers').select('*').eq('id', customerId).eq('tenant_id', tenantId).maybeSingle();
-      if (!latestCustomer || Number(latestCustomer.lock_dm_credits || 0) <= 0) return res.status(400).json(err(new Error('该玩家没有可用锁卡司次数，请先充卡或调整权益')));
-      await supabase.from('customers').update({
-        lock_dm_credits: Number(latestCustomer.lock_dm_credits || 0) - 1,
-        total_lock_dm_used: Number(latestCustomer.total_lock_dm_used || 0) + 1,
-        updated_at: new Date().toISOString(),
-      }).eq('id', customerId).eq('tenant_id', tenantId);
-      const { data: tx } = await supabase.from('membership_transactions').insert({
-        customer_id: customerId,
-        schedule_id: schedule.id,
-        amount: 0,
-        transaction_type: 'lock_dm',
-        note: `指定卡司：${roleName}`,
-        balance_delta: 0,
-        bonus_delta: 0,
-        lock_dm_delta: -1,
-        metadata: { actor_id: actorId, role_name: roleName, checkin_id: checkin.id },
-      }).select().single();
-      txId = tx?.id || null;
-    }
-
-    const { data, error } = await supabase.from('schedules').update({
-      dm_lock_customer_id: customerId,
-      requested_dm_actor_id: actorId,
-      requested_dm_role_name: roleName,
-      dm_lock_status: 'confirmed',
-      dm_lock_credit_transaction_id: txId,
-    }).eq('id', schedule.id).eq('tenant_id', tenantId).select().single();
-    if (error) throw error;
+    const data = await updateDmAssignmentOnPostgres({
+      tenantId,
+      scheduleId: schedule.id,
+      mode: 'assign',
+      customerId,
+      actorId,
+      roleName,
+      checkinId: checkin.id,
+    });
     await logStoreAction(req, 'dm_assignment_confirmed', { type: 'schedule', id: schedule.id }, { roleName, actorId, customerId });
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
@@ -4027,6 +4334,7 @@ app.put('/api/schedules/:id/dm-assignment', async (req: any, res: any) => {
 
 app.post('/api/schedules/:id/dm-lock', async (req: any, res: any) => {
   try {
+    if (!useTencentPg) return res.status(503).json(err(new Error('锁 DM 权益当前只允许在正式 PostgreSQL 主库执行')));
     const tenantId = currentTenantId(req);
     const customerId = cleanText(req.body?.customerId, 80);
     const actorId = cleanText(req.body?.actorId, 80);
@@ -4039,42 +4347,16 @@ app.post('/api/schedules/:id/dm-lock', async (req: any, res: any) => {
       .maybeSingle();
     if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
     if (!['locked', 'confirmed', 'ongoing', 'settling'].includes(schedule.status)) return res.status(400).json(err(new Error('锁车后才能指定 DM')));
-    const { data: customer } = await supabase.from('customers')
-      .select('*')
-      .eq('id', customerId)
-      .eq('tenant_id', tenantId)
-      .maybeSingle();
-    if (!customer) return res.status(404).json(err(new Error('客户不存在')));
-    if (Number(customer.lock_dm_credits || 0) <= 0) return res.status(400).json(err(new Error('该客户没有可用锁 DM 权益，请先充卡或调整权益')));
     const { data: actor } = await supabase.from('actors').select('id').eq('id', actorId).eq('tenant_id', tenantId).maybeSingle();
     if (!actor) return res.status(404).json(err(new Error('DM 不存在')));
-
-    const nextCredits = Number(customer.lock_dm_credits || 0) - 1;
-    const nextUsed = Number(customer.total_lock_dm_used || 0) + 1;
-    await supabase.from('customers').update({
-      lock_dm_credits: nextCredits,
-      total_lock_dm_used: nextUsed,
-      updated_at: new Date().toISOString(),
-    }).eq('id', customer.id).eq('tenant_id', tenantId);
-    const { data: tx } = await supabase.from('membership_transactions').insert({
-      customer_id: customer.id,
-      schedule_id: schedule.id,
-      amount: 0,
-      transaction_type: 'lock_dm',
-      note: `指定 DM 权益使用`,
-      balance_delta: 0,
-      bonus_delta: 0,
-      lock_dm_delta: -1,
-      metadata: { actor_id: actorId },
-    }).select().single();
-    const { data, error } = await supabase.from('schedules').update({
-      dm_lock_customer_id: customer.id,
-      requested_dm_actor_id: actorId,
-      dm_lock_status: 'requested',
-      dm_lock_credit_transaction_id: tx?.id || null,
-    }).eq('id', schedule.id).eq('tenant_id', tenantId).select().single();
-    if (error) throw error;
-    await logStoreAction(req, 'dm_lock_used', { type: 'schedule', id: schedule.id }, { actorId, customerId: customer.id });
+    const data = await updateDmAssignmentOnPostgres({
+      tenantId,
+      scheduleId: schedule.id,
+      mode: 'request',
+      customerId,
+      actorId,
+    });
+    await logStoreAction(req, 'dm_lock_used', { type: 'schedule', id: schedule.id }, { actorId, customerId });
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -4189,11 +4471,15 @@ app.put('/api/schedules/:id/join-requests/:requestId', async (req: any, res: any
 
     const { data: checkin, error: checkinErr } = await supabase.from('checkins').insert({
       schedule_id: req.params.id,
+      player_id: request.player_id || null,
       guest_name: request.display_name,
       guest_phone: request.phone_hash || null,
       role: request.role_name || null,
     }).select().single();
-    if (checkinErr) throw checkinErr;
+    if (checkinErr) {
+      if (String(checkinErr.code || '') === '23505') return res.status(409).json(err(new Error('这个角色已经有人上车，或该玩家已经加入本车')));
+      throw checkinErr;
+    }
 
     const { data, error } = await supabase.from('jzg_carpool_join_requests')
       .update({
@@ -4296,32 +4582,7 @@ app.get('/api/player/auth/config', async (_req: any, res: any) => {
 });
 
 app.post('/api/player/verify-code', async (req: any, res: any) => {
-  try {
-    const { phone, code } = req.body;
-    const verifiedPhone = await verifyPhoneCode('player_login', phone, code);
-    const { data: existing } = await supabase.from('lc_profiles').select('*').eq('phone', verifiedPhone).maybeSingle();
-    if (existing) {
-      await supabase.from('lc_profiles').update({
-        phone_verified_at: new Date().toISOString(),
-        auth_provider: existing.auth_provider || 'phone',
-        identity_roles: normalizeIdentityRoles(existing, ['player']),
-        role_type: preferredRoleType(existing, ['player']),
-      }).eq('id', existing.id);
-      return res.json(ok({ id: existing.id, display_name: existing.display_name, phone: existing.phone, newUser: false }));
-    }
-    const { data: newPlayer } = await supabase.from('lc_profiles').insert({
-      phone: verifiedPhone,
-      display_name: `玩家${verifiedPhone.slice(-4)}`,
-      role: 'player',
-      role_type: 'player',
-      identity_roles: ['player'],
-      is_visible: true,
-      balance: 0,
-      phone_verified_at: new Date().toISOString(),
-      auth_provider: 'phone',
-    }).select().single();
-    res.json(ok({ id: newPlayer!.id, display_name: newPlayer!.display_name, phone: verifiedPhone, newUser: true }));
-  } catch (e) { res.status(500).json(err(e)); }
+  res.status(410).json(err(new Error('旧验证码上车入口已停用，请使用玩家账号登录')));
 });
 
 app.get('/api/player/wechat/url', async (req: any, res: any) => {
@@ -4436,37 +4697,50 @@ app.get('/api/schedules/:id/evaluation', async (req: any, res: any) => {
 });
 app.post('/api/schedules/:id/evaluate', async (req: any, res: any) => {
   try {
-    const guestName = cleanText(req.body?.guestName, 80);
     const rating = Number(req.body?.rating);
     const comment = cleanText(req.body?.comment, 1000);
-    if (!guestName) return res.status(400).json(err(new Error('请填写评价人')));
+    if (!req.user?.playerId) return res.status(401).json(err(new Error('请先登录玩家账号')));
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) return res.status(400).json(err(new Error('评分必须在 1 到 5 分之间')));
     const { data: schedule } = await supabase.from('schedules')
-      .select('id,status')
+      .select('id,tenant_id,status')
       .eq('id', req.params.id)
+      .eq('tenant_id', currentTenantId(req))
       .maybeSingle();
     if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
     if (!['completed', 'settling', 'ongoing'].includes(publicScheduleStatus(schedule.status))) {
       return res.status(400).json(err(new Error('当前排期暂不能评价')));
     }
+    const { data: player, error: playerErr } = await supabase.from('players')
+      .select('id,display_name')
+      .eq('id', req.user.playerId)
+      .eq('tenant_id', schedule.tenant_id)
+      .maybeSingle();
+    if (playerErr) throw playerErr;
+    if (!player) return res.status(401).json(err(new Error('玩家账号不存在，请重新登录')));
     const { data: checkin } = await supabase.from('checkins')
-      .select('id')
+      .select('id,guest_name')
       .eq('schedule_id', req.params.id)
-      .eq('guest_name', guestName)
+      .eq('player_id', player.id)
       .maybeSingle();
     if (!checkin) return res.status(403).json(err(new Error('只有已报名玩家可以评价')));
     const { data: existing } = await supabase.from('evaluations')
       .select('id')
       .eq('schedule_id', req.params.id)
-      .eq('guest_name', guestName)
+      .eq('player_id', player.id)
       .maybeSingle();
     if (existing) return res.status(409).json(err(new Error('你已经评价过这场')));
-    await supabase.from('evaluations').insert({
+    const { error: insertErr } = await supabase.from('evaluations').insert({
       schedule_id: req.params.id,
-      guest_name: guestName,
+      player_id: player.id,
+      checkin_id: checkin.id,
+      guest_name: cleanText(player.display_name, 80) || cleanText(checkin.guest_name, 80) || '玩家',
       rating,
-      comment: comment || null
+      comment: comment || null,
     });
+    if (insertErr) {
+      if (String(insertErr.code || '') === '23505') return res.status(409).json(err(new Error('你已经评价过这场')));
+      throw insertErr;
+    }
     res.json(ok());
   }
   catch (e) { res.status(500).json(err(e)); }
@@ -4762,81 +5036,31 @@ app.delete('/api/customers/:id', async (req: any, res: any) => {
 });
 app.post('/api/customers/:id/transactions', async (req: any, res: any) => {
   try {
+    if (!useTencentPg) return res.status(503).json(err(new Error('会员交易当前只允许在正式 PostgreSQL 主库执行')));
     const tenantId = currentTenantId(req);
     const transactionType = cleanText(req.body?.transactionType, 40) || 'recharge';
     const paymentMethod = cleanText(req.body?.paymentMethod, 40) || null;
     const packageId = cleanText(req.body?.packageId, 80) || null;
-    const { data: customer } = await supabase.from('customers').select('*').eq('id', req.params.id).eq('tenant_id', tenantId).maybeSingle();
-    if (!customer) return res.status(404).json(err(new Error('客户不存在')));
-
-    let amount = signedMoneyCents(req.body?.amount);
-    let bonusAmount = moneyCents(req.body?.bonusAmount);
-    let lockDmCredits = moneyCents(req.body?.lockDmCredits);
-    let packageRow: any = null;
-    if (packageId) {
-      const { data: pkg } = await supabase.from('jzg_membership_packages').select('*').eq('id', packageId).eq('tenant_id', tenantId).maybeSingle();
-      if (!pkg) return res.status(404).json(err(new Error('套餐不存在')));
-      packageRow = pkg;
-      amount = moneyCents(pkg.recharge_amount);
-      bonusAmount = moneyCents(pkg.bonus_amount);
-      lockDmCredits = moneyCents(pkg.lock_dm_credits);
-    }
-
-    let balanceDelta = 0;
-    let bonusDelta = 0;
-    let lockDmDelta = 0;
-    const updates: any = { updated_at: new Date().toISOString() };
-    if (transactionType === 'recharge') {
-      if (amount <= 0) return res.status(400).json(err(new Error('充值金额必须大于 0')));
-      balanceDelta = amount + bonusAmount;
-      bonusDelta = bonusAmount;
-      lockDmDelta = lockDmCredits;
-      updates.balance = Number(customer.balance || 0) + balanceDelta;
-      updates.bonus_balance = Number(customer.bonus_balance || 0) + bonusDelta;
-      updates.lock_dm_credits = Number(customer.lock_dm_credits || 0) + lockDmDelta;
-      updates.total_recharged = Number(customer.total_recharged || 0) + amount;
-      updates.total_bonus_granted = Number(customer.total_bonus_granted || 0) + bonusDelta;
-      updates.total_lock_dm_granted = Number(customer.total_lock_dm_granted || 0) + lockDmDelta;
-    } else if (transactionType === 'consume') {
-      if (amount <= 0) return res.status(400).json(err(new Error('消费金额必须大于 0')));
-      balanceDelta = -amount;
-      updates.balance = Number(customer.balance || 0) + balanceDelta;
-      updates.total_consumed = Number(customer.total_consumed || 0) + amount;
-    } else if (transactionType === 'refund') {
-      if (amount <= 0) return res.status(400).json(err(new Error('退款金额必须大于 0')));
-      balanceDelta = amount;
-      updates.balance = Number(customer.balance || 0) + balanceDelta;
-    } else if (transactionType === 'adjust') {
-      balanceDelta = amount;
-      bonusDelta = signedMoneyCents(req.body?.bonusAmount);
-      lockDmDelta = signedMoneyCents(req.body?.lockDmCredits);
-      updates.balance = Number(customer.balance || 0) + balanceDelta;
-      updates.bonus_balance = Number(customer.bonus_balance || 0) + bonusDelta;
-      updates.lock_dm_credits = Number(customer.lock_dm_credits || 0) + lockDmDelta;
-    } else {
-      return res.status(400).json(err(new Error('交易类型无效')));
-    }
-
     const scheduleId = cleanText(req.body?.scheduleId, 80) || null;
-    if (scheduleId) {
-      const { data: schedule } = await supabase.from('schedules').select('id').eq('id', scheduleId).eq('tenant_id', tenantId).maybeSingle();
-      if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
-    }
-    await supabase.from('customers').update(updates).eq('id', customer.id).eq('tenant_id', tenantId);
-    const { data, error } = await supabase.from('membership_transactions').insert({
-      customer_id: customer.id,
-      schedule_id: scheduleId,
-      amount,
-      transaction_type: transactionType,
+    const idempotencyKey = cleanText(req.body?.idempotencyKey || req.headers['idempotency-key'], 120) || crypto.randomUUID();
+    const data = await createCustomerTransactionOnPostgres({
+      tenantId,
+      customerId: req.params.id,
+      transactionType,
+      amount: signedMoneyCents(req.body?.amount),
+      bonusAmount: transactionType === 'adjust' ? signedMoneyCents(req.body?.bonusAmount) : moneyCents(req.body?.bonusAmount),
+      lockDmCredits: transactionType === 'adjust' ? signedMoneyCents(req.body?.lockDmCredits) : moneyCents(req.body?.lockDmCredits),
+      paymentMethod,
+      packageId,
+      scheduleId,
       note: cleanText(req.body?.note, 300) || null,
-      balance_delta: balanceDelta,
-      bonus_delta: bonusDelta,
-      lock_dm_delta: lockDmDelta,
-      payment_method: paymentMethod,
-      package_id: packageRow?.id || null,
-      metadata: packageRow ? { package_name: packageRow.name } : {},
-    }).select().single();
-    if (error) throw error;
+      idempotencyKey,
+    });
+    await logStoreAction(req, 'customer_transaction_created', { type: 'customer', id: req.params.id }, {
+      transactionId: data?.id,
+      transactionType,
+      idempotencyKey,
+    });
     res.json(ok(data));
   } catch (e) { res.status(500).json(err(e)); }
 });
@@ -5437,11 +5661,11 @@ app.get('/api/player/schedules', async (req: any, res: any) => {
   try {
     if (!req.user || req.user.role !== 'player') return res.status(403).json(err(new Error('无权限')));
     const tenantId = currentTenantId(req);
-    const { data: player } = await supabase.from('players').select('phone_hash').eq('id', req.user.playerId).eq('tenant_id', tenantId).maybeSingle();
-    if (!player?.phone_hash) return res.json(ok([]));
+    const { data: player } = await supabase.from('players').select('id').eq('id', req.user.playerId).eq('tenant_id', tenantId).maybeSingle();
+    if (!player) return res.status(401).json(err(new Error('玩家账号不存在，请重新登录')));
     const { data, error } = await supabase.from('checkins')
       .select('id, role, checked_at, schedules!inner(id, tenant_id, scheduled_date, start_time, end_time, status, player_count, script_id, room_id, scripts(name), rooms(name))')
-      .eq('guest_phone', player.phone_hash)
+      .eq('player_id', player.id)
       .eq('schedules.tenant_id', tenantId)
       .order('checked_at', { ascending: false });
     if (error) throw error;
@@ -5450,6 +5674,22 @@ app.get('/api/player/schedules', async (req: any, res: any) => {
       schedule: c.schedules ? { id: c.schedules.id, scriptName: c.schedules.scripts?.name, roomName: c.schedules.rooms?.name, startTime: c.schedules.start_time, endTime: c.schedules.end_time, status: c.schedules.status, customerName: null, playerCount: c.schedules.player_count } : null,
     }))));
   } catch (e) { res.status(500).json(err(e)); }
+});
+
+app.use((error: unknown, _req: any, res: any, next: any) => {
+  if (res.headersSent) return next(error);
+  const message = error instanceof Error ? error.message : String(error || '');
+  if (/request entity too large/i.test(message)) {
+    return res.status(413).json(err(new Error('提交内容过大')));
+  }
+  if (/CORS origin denied/i.test(message)) {
+    return res.status(403).json(err(new Error('当前来源不允许访问此接口')));
+  }
+  if (error instanceof SyntaxError) {
+    return res.status(400).json(err(new Error('请求内容格式不正确')));
+  }
+  console.error('[api] unhandled middleware error', message);
+  return res.status(500).json({ success: false, error: '服务器错误，请稍后重试' });
 });
 
 export default app;

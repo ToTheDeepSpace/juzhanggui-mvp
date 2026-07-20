@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { useApi } from '../hooks/useApi';
@@ -17,9 +17,11 @@ interface ScheduleInfo {
 
 export default function EvaluationPage() {
   const { scheduleId } = useParams<{ scheduleId: string }>();
+  const navigate = useNavigate();
   const { get, post, loading } = useApi();
   const [schedule, setSchedule] = useState<ScheduleInfo | null>(null);
   const [guestName, setGuestName] = useState('');
+  const [authenticated, setAuthenticated] = useState(false);
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState('');
   const [submitted, setSubmitted] = useState(false);
@@ -32,14 +34,25 @@ export default function EvaluationPage() {
     });
   }, [scheduleId]);
 
+  useEffect(() => {
+    const token = localStorage.getItem('player_auth_token');
+    const rawPlayer = localStorage.getItem('player_info');
+    if (!token || !rawPlayer) return;
+    try {
+      const player = JSON.parse(rawPlayer) as { displayName?: string };
+      setGuestName(player.displayName || '玩家');
+      setAuthenticated(true);
+    } catch {
+      localStorage.removeItem('player_info');
+    }
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!guestName.trim()) { setError('请输入您的称呼'); return; }
     if (rating === 0) { setError('请选择评分'); return; }
     setError('');
 
     const result = await post(`/schedules/${scheduleId}/evaluate`, {
-      guestName: guestName.trim(),
       rating,
       comment: comment.trim(),
     });
@@ -54,6 +67,24 @@ export default function EvaluationPage() {
           <div className="text-5xl mb-4">🎉</div>
           <h2 className="text-2xl font-bold text-gray-800 mb-2">感谢您的评价！</h2>
           <p className="text-gray-500">您的反馈是我们进步的动力</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authenticated) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-sm w-full text-center">
+          <div className="text-4xl mb-3">⭐</div>
+          <h1 className="text-xl font-bold text-gray-800">登录后评价本次体验</h1>
+          <p className="text-sm text-gray-500 mt-2 mb-6 leading-6">评价会绑定实际上车的玩家账号，避免他人冒名提交。</p>
+          <button
+            onClick={() => navigate(`/player/login?redirect=${encodeURIComponent(`/evaluate/${scheduleId || ''}`)}`)}
+            className="w-full py-3 bg-blue-500 text-white font-bold rounded-lg hover:bg-blue-600"
+          >
+            登录并返回评价
+          </button>
         </div>
       </div>
     );
@@ -88,15 +119,8 @@ export default function EvaluationPage() {
         </div>
 
         <form onSubmit={handleSubmit}>
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">您的称呼</label>
-            <input
-              type="text"
-              value={guestName}
-              onChange={e => setGuestName(e.target.value)}
-              placeholder="请输入您的称呼"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-            />
+          <div className="mb-4 px-3 py-2 rounded-lg bg-gray-50 text-sm text-gray-600">
+            评价人：<strong className="text-gray-800">{guestName}</strong>
           </div>
 
           <div className="mb-4">
