@@ -158,6 +158,7 @@ export default function PlayerJoinSchedulePage() {
       return false;
     }
     const payload: Record<string, string> = { phone: phone.trim(), displayName: displayName.trim() };
+    if (scheduleId) payload.scheduleId = scheduleId;
     if (code.trim()) payload.code = code.trim();
     const res = await fetch(`${API_BASE}/player/login`, {
       method: 'POST',

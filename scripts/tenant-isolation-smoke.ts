@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import { tencentPgPool } from '../api/tencentPgSupabase';
 
 const marker = `tenant-isolation-${Date.now()}-${randomUUID().slice(0, 8)}`;
@@ -18,6 +19,8 @@ type StoreBundle = {
   checkinId: string;
   conflictId: string;
   feedbackId: string;
+  playerId: string;
+  playerToken: string;
 };
 
 type Step = {
@@ -113,7 +116,16 @@ async function createStoreBundle(key: 'a' | 'b'): Promise<StoreBundle> {
     `insert into membership_transactions (customer_id, schedule_id, amount, transaction_type, note, balance_delta, payment_method) values ($1, $2, 1000, 'recharge', $3, 1000, 'cash')`,
     [customer.id, schedule.id, `${marker}-${key}-transaction`],
   );
+  const player = await queryOne<{ id: string }>(
+    `insert into players (tenant_id, phone_hash, display_name, name_encrypted, auth_provider, phone_verified_at) values ($1, $2, $3, $3, 'phone', now()) returning id`,
+    [store.id, `${marker}-${key}-phone-hash`, `${marker}-${key}-player`],
+  );
   const token = await login(email);
+  const playerToken = jwt.sign(
+    { role: 'player', playerId: player.id, tenantId: store.id },
+    process.env.JWT_SECRET!,
+    { expiresIn: '5m' },
+  );
   const bundle = { storeId: store.id, userId: user.id };
   return {
     ...bundle,
@@ -126,12 +138,18 @@ async function createStoreBundle(key: 'a' | 'b'): Promise<StoreBundle> {
     checkinId: checkin.id,
     conflictId: conflict.id,
     feedbackId: feedback.id,
+    playerId: player.id,
+    playerToken,
   };
 }
 
 async function cleanup() {
   await tencentPgPool.query(
     `delete from jzg_stores where name like $1`,
+    [`${marker}%`],
+  ).catch(() => {});
+  await tencentPgPool.query(
+    `delete from players where display_name like $1`,
     [`${marker}%`],
   ).catch(() => {});
 }
@@ -215,10 +233,39 @@ const steps: Step[] = [
   {
     name: 'A 店不能给 B 店会员记账或引用 B 店排期记账',
     run: async () => {
+      const before = await queryOne<{ balance: number; transaction_count: number }>(
+        `select c.balance, count(mt.id)::int as transaction_count
+           from customers c left join membership_transactions mt on mt.customer_id = c.id
+          where c.id = $1 group by c.id`,
+        [b.customerId],
+      );
       const bCustomer = await api(`/api/customers/${b.customerId}/transactions`, a.token, { method: 'POST', body: JSON.stringify({ transactionType: 'recharge', amount: 1, paymentMethod: 'cash' }) });
       expectStatus('transaction on B customer', bCustomer.response.status, [404]);
       const bSchedule = await api(`/api/customers/${a.customerId}/transactions`, a.token, { method: 'POST', body: JSON.stringify({ transactionType: 'recharge', amount: 1, paymentMethod: 'cash', scheduleId: b.scheduleId }) });
       expectStatus('transaction with B schedule', bSchedule.response.status, [404]);
+      const after = await queryOne<{ balance: number; transaction_count: number }>(
+        `select c.balance, count(mt.id)::int as transaction_count
+           from customers c left join membership_transactions mt on mt.customer_id = c.id
+          where c.id = $1 group by c.id`,
+        [b.customerId],
+      );
+      assertOk(Number(after.balance) === Number(before.balance), '跨店交易改变了 B 店客户余额');
+      assertOk(Number(after.transaction_count) === Number(before.transaction_count), '跨店交易写入了 B 店交易记录');
+    },
+  },
+  {
+    name: 'A 店玩家不能向 B 店排期提交加入申请',
+    run: async () => {
+      const result = await api(`/api/player/join-schedules/${b.scheduleId}/requests`, a.playerToken, {
+        method: 'POST',
+        body: JSON.stringify({ roleName: '角色一', note: `${marker}-cross-tenant` }),
+      });
+      expectStatus('player join B schedule', result.response.status, [404]);
+      const inserted = await queryOne<{ count: number }>(
+        `select count(*)::int as count from jzg_carpool_join_requests where schedule_id = $1 and player_id = $2`,
+        [b.scheduleId, a.playerId],
+      );
+      assertOk(Number(inserted.count) === 0, '跨店玩家申请被写入 B 店排期');
     },
   },
   {
@@ -255,6 +302,7 @@ const steps: Step[] = [
 
 async function main() {
   if (!process.env.DATABASE_URL && !process.env.PGHOST) throw new Error('缺少 DATABASE_URL 或 PGHOST');
+  if (!process.env.JWT_SECRET) throw new Error('缺少 JWT_SECRET');
   await cleanup();
   try {
     a = await createStoreBundle('a');

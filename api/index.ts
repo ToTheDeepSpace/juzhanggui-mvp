@@ -424,14 +424,19 @@ async function validateTenantActors(req: any, res: any, actorIds: string[]) {
   return true;
 }
 async function tenantIdFromRequest(req: any): Promise<string> {
-  const direct = cleanText(req?.body?.tenantId || req?.query?.tenantId, 80);
-  if (direct) return direct;
   const scheduleId = cleanText(req?.body?.scheduleId || req?.query?.scheduleId, 80);
   if (scheduleId) {
     const { data } = await supabase.from('schedules').select('tenant_id').eq('id', scheduleId).maybeSingle();
-    if (data?.tenant_id) return data.tenant_id;
+    if (!data?.tenant_id) throw new Error('排期不存在');
+    return data.tenant_id;
   }
   return TENANT_ID;
+}
+
+function scheduleIdFromPlayerRedirect(input: unknown): string {
+  const redirectPath = safeFrontendRedirect(input);
+  const match = redirectPath.match(/^\/join\/([^/?#]+)$/);
+  return cleanText(match?.[1], 80);
 }
 function currentAdminRole(req: any): string {
   return cleanText(req?.user?.adminRole || req?.user?.roleName || '', 40);
@@ -766,6 +771,8 @@ function signedMoneyCents(input: unknown): number {
   return Math.round(value);
 }
 
+class TenantResourceNotFoundError extends Error {}
+
 async function createCustomerTransactionOnPostgres(input: {
   tenantId: string;
   customerId: string;
@@ -782,6 +789,13 @@ async function createCustomerTransactionOnPostgres(input: {
   const client = await tencentPgPool.connect();
   try {
     await client.query('BEGIN');
+    const customerResult = await client.query(
+      `select * from customers where id = $1 and tenant_id = $2 for update`,
+      [input.customerId, input.tenantId],
+    );
+    const customer = customerResult.rows[0];
+    if (!customer) throw new TenantResourceNotFoundError('客户不存在');
+
     if (input.idempotencyKey) {
       const existing = await client.query(
         `select * from membership_transactions where idempotency_key = $1 for update`,
@@ -794,13 +808,6 @@ async function createCustomerTransactionOnPostgres(input: {
       }
     }
 
-    const customerResult = await client.query(
-      `select * from customers where id = $1 and tenant_id = $2 for update`,
-      [input.customerId, input.tenantId],
-    );
-    const customer = customerResult.rows[0];
-    if (!customer) throw new Error('客户不存在');
-
     let amount = input.amount;
     let bonusAmount = input.bonusAmount;
     let lockDmCredits = input.lockDmCredits;
@@ -811,7 +818,7 @@ async function createCustomerTransactionOnPostgres(input: {
         [input.packageId, input.tenantId],
       );
       packageRow = packageResult.rows[0];
-      if (!packageRow) throw new Error('套餐不存在或已停用');
+      if (!packageRow) throw new TenantResourceNotFoundError('套餐不存在或已停用');
       amount = moneyCents(packageRow.recharge_amount);
       bonusAmount = moneyCents(packageRow.bonus_amount);
       lockDmCredits = moneyCents(packageRow.lock_dm_credits);
@@ -821,7 +828,7 @@ async function createCustomerTransactionOnPostgres(input: {
         `select id from schedules where id = $1 and tenant_id = $2`,
         [input.scheduleId, input.tenantId],
       );
-      if (!scheduleResult.rows[0]) throw new Error('排期不存在');
+      if (!scheduleResult.rows[0]) throw new TenantResourceNotFoundError('排期不存在');
     }
 
     let balanceDelta = 0;
@@ -4557,9 +4564,11 @@ app.put('/api/schedules/:id/join-requests/:requestId', async (req: any, res: any
 app.post('/api/player/join-schedules/:id/requests', async (req: any, res: any) => {
   try {
     if (!req.user || req.user.role !== 'player') return res.status(403).json(err(new Error('请先登录玩家账号')));
+    const tenantId = currentTenantId(req);
     const { data: player, error: playerErr } = await supabase.from('players')
-      .select('id, display_name, phone_hash')
+      .select('id, tenant_id, display_name, phone_hash')
       .eq('id', req.user.playerId)
+      .eq('tenant_id', tenantId)
       .maybeSingle();
     if (playerErr) throw playerErr;
     if (!player) return res.status(401).json(err(new Error('玩家账号不存在，请重新登录')));
@@ -4567,6 +4576,7 @@ app.post('/api/player/join-schedules/:id/requests', async (req: any, res: any) =
     const { data: schedule, error: scheduleErr } = await supabase.from('schedules')
       .select('id, tenant_id, script_id, player_count')
       .eq('id', req.params.id)
+      .eq('tenant_id', tenantId)
       .maybeSingle();
     if (scheduleErr) throw scheduleErr;
     if (!schedule) return res.status(404).json(err(new Error('排期不存在')));
@@ -4656,6 +4666,11 @@ app.get('/api/player/wechat/callback', async (req: any, res: any) => {
     if (!code || !state) throw new Error('微信登录参数缺失');
     const statePayload = jwt.verify(state, JWT_SECRET) as { kind?: string; redirectPath?: string };
     if (statePayload.kind !== 'jzg_wechat_login') throw new Error('微信登录状态无效');
+    const redirectPath = safeFrontendRedirect(statePayload.redirectPath);
+    const scheduleId = scheduleIdFromPlayerRedirect(redirectPath);
+    const playerTenantId = scheduleId
+      ? await tenantIdFromRequest({ body: { scheduleId } })
+      : TENANT_ID;
 
     const tokenUrl = new URL('https://api.weixin.qq.com/sns/oauth2/access_token');
     tokenUrl.search = new URLSearchParams({
@@ -4685,7 +4700,7 @@ app.get('/api/player/wechat/callback', async (req: any, res: any) => {
     const avatar = typeof wxUser.headimgurl === 'string' ? wxUser.headimgurl : null;
     const nowIso = new Date().toISOString();
 
-    let query = supabase.from('players').select('*').eq('tenant_id', TENANT_ID);
+    let query = supabase.from('players').select('*').eq('tenant_id', playerTenantId);
     if (unionid) query = query.eq('wechat_unionid', unionid);
     else query = query.eq('wechat_openid', openid);
     let { data: player } = await query.maybeSingle();
@@ -4702,7 +4717,7 @@ app.get('/api/player/wechat/callback', async (req: any, res: any) => {
       }).eq('id', player.id);
     } else {
       const inserted = await supabase.from('players').insert({
-        tenant_id: TENANT_ID,
+        tenant_id: playerTenantId,
         display_name: nickname,
         name_encrypted: nickname,
         auth_provider: 'wechat',
@@ -4716,7 +4731,7 @@ app.get('/api/player/wechat/callback', async (req: any, res: any) => {
       player = inserted.data;
     }
 
-    const loginToken = jwt.sign({ role: 'player', playerId: player.id, tenantId: TENANT_ID }, JWT_SECRET, { expiresIn: '24h' });
+    const loginToken = jwt.sign({ role: 'player', playerId: player.id, tenantId: playerTenantId }, JWT_SECRET, { expiresIn: '24h' });
     const payload = Buffer.from(JSON.stringify({
       token: loginToken,
       player: {
@@ -4727,7 +4742,6 @@ app.get('/api/player/wechat/callback', async (req: any, res: any) => {
         authProvider: 'wechat',
       },
     })).toString('base64url');
-    const redirectPath = safeFrontendRedirect(statePayload.redirectPath);
     res.redirect(`${JUZHANGGUI_SITE_URL}/player/login?wechat_login=${encodeURIComponent(payload)}&redirect=${encodeURIComponent(redirectPath)}`);
   } catch (e) {
     res.redirect(`${JUZHANGGUI_SITE_URL}/player/login?auth_error=${encodeURIComponent(err(e).error || '微信登录失败')}`);
@@ -5111,7 +5125,10 @@ app.post('/api/customers/:id/transactions', async (req: any, res: any) => {
       idempotencyKey,
     });
     res.json(ok(data));
-  } catch (e) { res.status(500).json(err(e)); }
+  } catch (e) {
+    if (e instanceof TenantResourceNotFoundError) return res.status(404).json(err(e));
+    res.status(500).json(err(e));
+  }
 });
 
 // ===== Notifications =====
