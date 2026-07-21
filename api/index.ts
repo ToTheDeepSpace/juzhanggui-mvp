@@ -214,6 +214,14 @@ function isPublicPath(path: string): boolean {
   return false;
 }
 
+function jwtFailureReason(error: unknown): string {
+  const name = error instanceof Error ? error.name : '';
+  if (name === 'TokenExpiredError') return 'token_expired';
+  if (name === 'NotBeforeError') return 'token_not_active';
+  if (name === 'JsonWebTokenError') return 'token_invalid';
+  return 'session_check_failed';
+}
+
 app.use(async (req: any, res: any, next: any) => {
   if (req.originalUrl && req.originalUrl !== req.url) req.url = req.originalUrl;
   if (isPublicPath(req.path) || req.method === 'OPTIONS') return next();
@@ -265,7 +273,7 @@ app.use(async (req: any, res: any, next: any) => {
     next();
   }
   catch (authError) {
-    console.error('[auth] session validation failed', authError);
+    console.warn('[auth] session validation failed', jwtFailureReason(authError), req.method, req.path);
     res.status(401).json({ success: false, error: '登录已过期' });
   }
 });
