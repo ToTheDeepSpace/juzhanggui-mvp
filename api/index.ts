@@ -214,7 +214,7 @@ function isPublicPath(path: string): boolean {
   return false;
 }
 
-app.use((req: any, res: any, next: any) => {
+app.use(async (req: any, res: any, next: any) => {
   if (req.originalUrl && req.originalUrl !== req.url) req.url = req.originalUrl;
   if (isPublicPath(req.path) || req.method === 'OPTIONS') return next();
   const auth = req.headers.authorization;
@@ -237,9 +237,37 @@ app.use((req: any, res: any, next: any) => {
     if (!isPlayerApi && !isDmApi && decoded.role !== 'admin') {
       return res.status(403).json({ success: false, error: '无管理员权限' });
     }
+
+    if (decoded.role === 'admin') {
+      const adminUser = await getAdminUserById(decoded.adminUserId);
+      if (!adminUser || adminUser.status !== 'active') {
+        return res.status(401).json({ success: false, error: '后台账号已停用或不存在，请重新登录' });
+      }
+      if (Number(decoded.sessionVersion || 0) !== Number(adminUser.session_version || 1)) {
+        return res.status(401).json({ success: false, error: '登录状态已失效，请重新登录' });
+      }
+      if (decoded.impersonating) {
+        if (adminUser.role !== 'super_admin') {
+          return res.status(403).json({ success: false, error: '已无权进入店家视角' });
+        }
+      } else {
+        req.user = {
+          ...decoded,
+          adminRole: adminUser.role,
+          tenantId: adminUser.tenant_id || TENANT_ID,
+          storeId: adminUser.store_id || null,
+          email: adminUser.email || undefined,
+          phone: adminUser.phone || undefined,
+          displayName: adminUser.display_name || undefined,
+        };
+      }
+    }
     next();
   }
-  catch { res.status(401).json({ success: false, error: '登录已过期' }); }
+  catch (authError) {
+    console.error('[auth] session validation failed', authError);
+    res.status(401).json({ success: false, error: '登录已过期' });
+  }
 });
 
 function ok(d?: any) { return { success: true, data: d }; }
@@ -1568,6 +1596,7 @@ function makeAdminToken(user?: any) {
   if (user?.phone) payload.phone = user.phone;
   if (user?.display_name) payload.displayName = user.display_name;
   if (user?.impersonating) payload.impersonating = true;
+  payload.sessionVersion = Number(user?.session_version || 1);
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' });
 }
 async function getAdminUserById(id: unknown) {
@@ -2524,11 +2553,25 @@ app.post('/api/auth/password/change-email', async (req: any, res: any) => {
     res.json(ok({ token: makeAdminToken(updated), user: publicAdminUser(updated) }));
   } catch (e) { res.status(500).json(err(e)); }
 });
-app.get('/api/auth/verify', (req: any, res: any) => {
+app.get('/api/auth/verify', async (req: any, res: any) => {
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Bearer ')) return res.json(ok({ valid: false }));
-  try { const payload = jwt.verify(auth.substring(7), JWT_SECRET); res.json(ok({ valid: true, payload })); }
-  catch { res.json(ok({ valid: false })); }
+  try {
+    const payload = jwt.verify(auth.substring(7), JWT_SECRET) as any;
+    if (payload.role === 'admin') {
+      const user = await getAdminUserById(payload.adminUserId);
+      const valid = Boolean(
+        user
+        && user.status === 'active'
+        && Number(payload.sessionVersion || 0) === Number(user.session_version || 1)
+        && (!payload.impersonating || user.role === 'super_admin'),
+      );
+      return res.json(ok({ valid, payload: valid ? payload : undefined }));
+    }
+    res.json(ok({ valid: true, payload }));
+  } catch {
+    res.json(ok({ valid: false }));
+  }
 });
 
 // ===== Platform / 超级管理员 =====
@@ -2713,15 +2756,20 @@ app.post('/api/platform/impersonate-store', async (req: any, res: any) => {
     const { data: store, error } = await supabase.from('jzg_stores').select('*').eq('id', storeId).single();
     if (error) throw error;
     if (!store) return res.status(404).json(err(new Error('店家不存在')));
+    const actor = await getAdminUserById(req.user?.adminUserId);
+    if (!actor || actor.status !== 'active' || actor.role !== 'super_admin') {
+      return res.status(403).json(err(new Error('超级管理员账号状态已变更，请重新登录')));
+    }
     const sessionUser = {
-      id: req.user?.adminUserId,
+      id: actor.id,
       tenant_id: store.id,
       store_id: store.id,
-      email: req.user?.email,
+      email: actor.email,
       display_name: `超管查看：${store.name}`,
       role: 'store_admin',
       status: 'active',
       impersonating: true,
+      session_version: actor.session_version,
     };
     await logPlatformAction(req, 'impersonate_store', { type: 'store', id: store.id, label: store.name });
     res.json(ok({ token: makeAdminToken(sessionUser), user: publicAdminUser(sessionUser), store }));
